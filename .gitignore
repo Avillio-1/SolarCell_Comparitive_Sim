@@ -1,0 +1,28 @@
+# Python caches and build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Local environments
+.venv/
+.venv*/
+venv/
+env/
+
+# Generated test and run artifacts
+pytest_tmp/
+pytest-cache-files-*/
+outputs/
+data/cache/
+
+# Local editor and OS files
+.DS_Store
+Thumbs.db
+

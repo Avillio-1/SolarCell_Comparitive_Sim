@@ -1,0 +1,56 @@
+simulation:
+  start: "2025-01-01T00:00:00+03:00"
+  end: "2025-01-02T23:00:00+03:00"
+  target_timezone: Asia/Riyadh
+  run_id_prefix: offline-fixture
+site:
+  name: Riyadh
+  latitude: 24.7136
+  longitude: 46.6753
+  timezone: Asia/Riyadh
+weather:
+  provider: fixture
+  cache_enabled: true
+  cache_directory: data/cache/weather
+  missing_data_policy: error
+pv_system:
+  panel_count: 10000
+  panel_capacity_w: 400
+  tilt_degrees: 25
+  azimuth_degrees: 180
+  inverter_efficiency: 0.96
+  dc_ac_ratio: 1.15
+farm:
+  representation: cohort
+  total_panels: 10000
+  panel_capacity_w: 400
+  cohort_count: 100
+  panels_per_cohort: 100
+  store_cohort_daily_details: true
+  cohort_soiling_variation_fraction: 0.0
+soiling:
+  base_daily_soiling_loss_fraction: 0.0025
+  seasonal_multipliers:
+    1: 1.0
+  dust_event_probability: 0.2
+  dust_event_loss_min_fraction: 0.005
+  dust_event_loss_max_fraction: 0.01
+  minimum_soiling_ratio: 0.7
+  stochastic_std_fraction: 0.0
+  random_seed: 42
+rainfall_cleaning:
+  partial_rain_threshold_mm: 1.0
+  full_rain_cleaning_threshold_mm: 5.0
+  partial_rain_cleaning_efficiency: 0.45
+  full_rain_cleaning_efficiency: 0.95
+bird_droppings:
+  event_probability_per_cohort_day: 0.02
+  coverage_min_fraction: 0.001
+  coverage_max_fraction: 0.004
+  loss_per_coverage_fraction: 0.8
+  rain_removal_efficiency: 0.3
+output:
+  base_directory: outputs
+  include_cohort_daily_details: true
+logging:
+  level: INFO

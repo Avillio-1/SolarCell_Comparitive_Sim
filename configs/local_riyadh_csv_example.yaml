@@ -1,0 +1,42 @@
+simulation:
+  start: "2025-01-01T00:00:00+03:00"
+  end: "2025-01-01T23:00:00+03:00"
+  target_timezone: Asia/Riyadh
+  run_id_prefix: local-csv-example
+site:
+  name: Riyadh
+  latitude: 24.7136
+  longitude: 46.6753
+  timezone: Asia/Riyadh
+weather:
+  provider: csv
+  cache_enabled: false
+  cache_directory: data/cache/weather
+  local_csv_path: data/local_weather/riyadh_weather_example.csv
+  timestamp_column: timestamp
+  column_mapping:
+    ghi: ghi_w_m2
+    dni: dni_w_m2
+    dhi: dhi_w_m2
+    temp_c: temp_air_c
+    wind_m_s: wind_speed_m_s
+    rh_pct: relative_humidity_pct
+    precip_mm: precipitation_mm
+  unit_mapping:
+    ghi_w_m2: W/m2
+    dni_w_m2: W/m2
+    dhi_w_m2: W/m2
+    temp_air_c: deg C
+    wind_speed_m_s: m/s
+    relative_humidity_pct: "%"
+    precipitation_mm: mm/hour
+  missing_data_policy: error
+pv_system:
+  panel_count: 10000
+  panel_capacity_w: 400
+farm:
+  representation: representative
+  total_panels: 10000
+  panel_capacity_w: 400
+soiling:
+  random_seed: 42
