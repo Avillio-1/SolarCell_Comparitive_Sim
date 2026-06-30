@@ -1,12 +1,21 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import get_type_hints
 
 import pytest
 
 from solarclean.config.loader import load_config
-from solarclean.config.models import CoatingCostConfig, CoatingDeploymentConfig, FarmConfig
-from solarclean.domain.coating.costs import build_coating_cost_basis
+from solarclean.config.models import (
+    AssumptionLevel,
+    CoatingConfig,
+    CoatingCostConfig,
+    CoatingDeploymentConfig,
+    CoatingDeploymentMode,
+    FarmConfig,
+    SourceStatus,
+)
+from solarclean.domain.coating.costs import CoatingCostBasis, build_coating_cost_basis
 
 
 def test_coating_config_loads_default_offline_fixture() -> None:
@@ -54,3 +63,35 @@ def test_coating_cost_rejects_free_or_negative_material_cost() -> None:
         CoatingCostConfig(material_cost_per_m2=0.0)
     with pytest.raises(ValueError):
         CoatingCostConfig(material_cost_per_m2=-1.0)
+
+
+def test_coating_deployment_rejects_reapplication_after_useful_life() -> None:
+    with pytest.raises(ValueError, match="reapplication interval"):
+        CoatingDeploymentConfig(useful_life_years=3.0, reapplication_interval_years=4.0)
+
+
+def test_coating_cost_rejects_reapplication_after_useful_life() -> None:
+    with pytest.raises(ValueError, match="reapplication interval"):
+        CoatingCostConfig(useful_life_years=3.0, reapplication_interval_years=4.0)
+
+
+def test_coating_config_rejects_mismatched_lifecycle_basis() -> None:
+    with pytest.raises(ValueError, match="coating lifecycle"):
+        CoatingConfig(
+            deployment=CoatingDeploymentConfig(
+                useful_life_years=3.0,
+                reapplication_interval_years=3.0,
+            ),
+            costs=CoatingCostConfig(
+                useful_life_years=5.0,
+                reapplication_interval_years=5.0,
+            ),
+        )
+
+
+def test_coating_cost_basis_uses_config_literal_aliases() -> None:
+    hints = get_type_hints(CoatingCostBasis)
+
+    assert hints["deployment_mode"] == CoatingDeploymentMode
+    assert hints["assumption_level"] == AssumptionLevel
+    assert hints["source_status"] == SourceStatus

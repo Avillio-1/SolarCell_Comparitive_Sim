@@ -237,6 +237,16 @@ class CoatingConfig(StrictModel):
     deployment: CoatingDeploymentConfig = Field(default_factory=CoatingDeploymentConfig)
     costs: CoatingCostConfig = Field(default_factory=CoatingCostConfig)
 
+    @model_validator(mode="after")
+    def validate_lifecycle_basis(self) -> CoatingConfig:
+        if (
+            self.deployment.useful_life_years != self.costs.useful_life_years
+            or self.deployment.reapplication_interval_years
+            != self.costs.reapplication_interval_years
+        ):
+            raise ValueError("coating lifecycle values must match between deployment and costs")
+        return self
+
 
 class OutputConfig(StrictModel):
     base_directory: Path = Path("outputs")

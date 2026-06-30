@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 
-from solarclean.config.models import CoatingCostConfig, CoatingDeploymentConfig, FarmConfig
+from solarclean.config.models import (
+    AssumptionLevel,
+    CoatingCostConfig,
+    CoatingDeploymentConfig,
+    CoatingDeploymentMode,
+    FarmConfig,
+    SourceStatus,
+)
 
 
 @dataclass(frozen=True)
@@ -22,10 +29,10 @@ class CoatingCostBasis:
     maintenance_cost_per_year: float
     useful_life_years: float
     reapplication_interval_years: float
-    deployment_mode: str
+    deployment_mode: CoatingDeploymentMode
     water_collection_infrastructure_cost: float
-    assumption_level: str
-    source_status: str
+    assumption_level: AssumptionLevel
+    source_status: SourceStatus
     thermal_treatment_temperature_c: float
     thermal_treatment_duration_minutes: float
     field_application_demonstrated: bool
