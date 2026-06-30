@@ -10,6 +10,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 WeatherProviderName = Literal["nasa_power", "csv", "fixture"]
 FarmRepresentationName = Literal["representative", "cohort"]
 MissingDataPolicy = Literal["error", "drop", "interpolate"]
+CoatingPresetName = Literal["weak", "central", "strong", "paper_calibration"]
+CoatingDeploymentMode = Literal["factory_preinstall", "retrofit"]
+AssumptionLevel = Literal["weak", "central", "strong"]
+SourceStatus = Literal["prompt_quoted", "provisional", "unsourced"]
 
 
 def _validate_timezone_name(value: str) -> str:
@@ -162,6 +166,88 @@ class BirdDroppingConfig(StrictModel):
         return self
 
 
+class CoatingPhysicsConfig(StrictModel):
+    optical_transmittance_multiplier: float = Field(default=0.913, gt=0, le=1)
+    emissivity_atmospheric_window: float = Field(default=0.90, ge=0, le=1)
+    contact_angle_degrees: float = Field(default=167.0, ge=0, le=180)
+    sliding_angle_degrees: float = Field(default=3.0, ge=0, le=90)
+    dust_accumulation_multiplier: float = Field(default=0.35, ge=0, le=1)
+    initial_effectiveness_fraction: float = Field(default=1.0, ge=0, le=1)
+    annual_degradation_fraction: float = Field(default=0.08, ge=0, le=1)
+    max_surface_cooling_c: float = Field(default=7.0, ge=0)
+    humidity_cooling_reference_pct: float = Field(default=80.0, ge=1, le=100)
+    wind_cooling_decay_per_m_s: float = Field(default=0.08, ge=0)
+    daytime_cooling_fraction: float = Field(default=0.35, ge=0, le=1)
+    passive_cleaning_base_efficiency: float = Field(default=0.55, ge=0, le=1)
+    passive_cleaning_tilt_reference_degrees: float = Field(default=25.0, ge=1, le=90)
+    bird_removal_efficiency: float = Field(default=0.08, ge=0, le=1)
+    max_bird_removal_fraction_per_day: float = Field(default=0.02, ge=0, le=1)
+
+
+class CoatingWaterConfig(StrictModel):
+    condensation_liters_per_m2_per_c_hour: float = Field(default=0.0142, ge=0)
+    minimum_relative_humidity_pct: float = Field(default=60.0, ge=0, le=100)
+    collectable_water_efficiency_fraction: float = Field(default=0.65, ge=0, le=1)
+    actual_collection_efficiency_fraction: float = Field(default=0.50, ge=0, le=1)
+
+
+class CoatingDeploymentConfig(StrictModel):
+    mode: CoatingDeploymentMode = "factory_preinstall"
+    area_per_panel_m2: float = Field(default=2.0, gt=0)
+    useful_life_years: float = Field(default=5.0, gt=0)
+    reapplication_interval_years: float = Field(default=5.0, gt=0)
+    thermal_treatment_temperature_c: float = Field(default=400.0, gt=0)
+    thermal_treatment_duration_minutes: float = Field(default=30.0, gt=0)
+    field_application_demonstrated: bool = False
+
+    @model_validator(mode="after")
+    def validate_reapplication_interval(self) -> CoatingDeploymentConfig:
+        if self.reapplication_interval_years > self.useful_life_years:
+            raise ValueError("reapplication interval cannot exceed useful life")
+        return self
+
+
+class CoatingCostConfig(StrictModel):
+    material_loading_g_per_m2: float = Field(default=12.5, gt=0)
+    material_cost_per_m2: float = Field(default=4.0, gt=0)
+    surface_preparation_cost_per_m2: float = Field(default=1.5, ge=0)
+    application_labor_hours_per_m2: float = Field(default=0.03, ge=0)
+    process_energy_kwh_per_m2: float = Field(default=0.2, ge=0)
+    fixed_equipment_setup_cost: float = Field(default=5000.0, ge=0)
+    inspection_hours_per_year: float = Field(default=40.0, ge=0)
+    maintenance_cost_per_year: float = Field(default=1200.0, ge=0)
+    useful_life_years: float = Field(default=5.0, gt=0)
+    reapplication_interval_years: float = Field(default=5.0, gt=0)
+    water_collection_infrastructure_cost: float = Field(default=0.0, ge=0)
+    assumption_level: AssumptionLevel = "central"
+    source_status: SourceStatus = "provisional"
+
+    @model_validator(mode="after")
+    def validate_cost_life(self) -> CoatingCostConfig:
+        if self.reapplication_interval_years > self.useful_life_years:
+            raise ValueError("reapplication interval cannot exceed useful life")
+        return self
+
+
+class CoatingConfig(StrictModel):
+    enabled: bool = True
+    preset: CoatingPresetName = "central"
+    physics: CoatingPhysicsConfig = Field(default_factory=CoatingPhysicsConfig)
+    water: CoatingWaterConfig = Field(default_factory=CoatingWaterConfig)
+    deployment: CoatingDeploymentConfig = Field(default_factory=CoatingDeploymentConfig)
+    costs: CoatingCostConfig = Field(default_factory=CoatingCostConfig)
+
+    @model_validator(mode="after")
+    def validate_lifecycle_basis(self) -> CoatingConfig:
+        if (
+            self.deployment.useful_life_years != self.costs.useful_life_years
+            or self.deployment.reapplication_interval_years
+            != self.costs.reapplication_interval_years
+        ):
+            raise ValueError("coating lifecycle values must match between deployment and costs")
+        return self
+
+
 class OutputConfig(StrictModel):
     base_directory: Path = Path("outputs")
     include_cohort_daily_details: bool = True
@@ -181,6 +267,7 @@ class SolarCleanConfig(StrictModel):
     soiling: SoilingConfig = Field(default_factory=SoilingConfig)
     rainfall_cleaning: RainfallCleaningConfig = Field(default_factory=RainfallCleaningConfig)
     bird_droppings: BirdDroppingConfig = Field(default_factory=BirdDroppingConfig)
+    coating: CoatingConfig = Field(default_factory=CoatingConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 

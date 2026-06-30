@@ -7,16 +7,21 @@ from pathlib import Path
 import pandas as pd
 
 from solarclean.config.models import SolarCleanConfig
+from solarclean.domain.coating.strategy import CoatingStrategy
 from solarclean.domain.contamination.soiling import KimberStyleSoilingModel
 from solarclean.domain.environment.weather import (
     CANONICAL_WEATHER_COLUMNS,
     WeatherProvider,
     WeatherRequest,
 )
+from solarclean.domain.events.tape import generate_event_tape
 from solarclean.domain.farm.representation import CohortFarm
+from solarclean.domain.scenario.contracts import AnnualScenarioResult, ScenarioContext
 from solarclean.domain.simulation.baseline import BaselineSimulationEngine, BaselineSimulationResult
+from solarclean.domain.simulation.scenario_engine import ScenarioSimulationEngine
 from solarclean.infrastructure.persistence.outputs import OutputWriter
 from solarclean.infrastructure.persistence.plots import write_baseline_diagnostic_plot
+from solarclean.infrastructure.persistence.reports import write_json_report
 from solarclean.infrastructure.pvlib_adapter.pvwatts import PVWattsPowerModel
 from solarclean.infrastructure.weather.csv_provider import CsvWeatherProvider
 from solarclean.infrastructure.weather.fixture import FixtureWeatherProvider
@@ -115,6 +120,79 @@ class RunBaselineSimulation:
         return UseCaseResult(output_directory=output_dir, summary=summary)
 
 
+class RunCoatingSimulation:
+    def __init__(self, config: SolarCleanConfig) -> None:
+        self.config = config
+
+    def run(self) -> UseCaseResult:
+        request = _weather_request(self.config)
+        weather = _weather_provider(self.config).load(request)
+        profile = PVWattsPowerModel().calculate_hourly(weather, self.config.pv_system)
+        dates = [pd.Timestamp(str(day)).date() for day in profile.daily.index]
+        event_tape = generate_event_tape(
+            dates=dates,
+            seed=self.config.soiling.random_seed,
+            soiling=self.config.soiling,
+            rainfall=self.config.rainfall_cleaning,
+            farm=self.config.farm,
+            birds=self.config.bird_droppings,
+        )
+        context = ScenarioContext.from_inputs(
+            weather=weather,
+            clean_energy=profile,
+            event_tape=event_tape,
+            farm_config=self.config.farm,
+            metadata={"event_tape_checksum": event_tape.checksum()},
+        )
+        strategy = CoatingStrategy(
+            coating=self.config.coating,
+            soiling=self.config.soiling,
+            rainfall=self.config.rainfall_cleaning,
+            birds=self.config.bird_droppings,
+            farm=self.config.farm,
+            pv_system=self.config.pv_system,
+        )
+        coating = ScenarioSimulationEngine(strategy).run(
+            context,
+            random_seed=self.config.soiling.random_seed,
+        )
+        baseline_farm = (
+            CohortFarm(self.config.farm, self.config.bird_droppings)
+            if self.config.farm.representation == "cohort"
+            else None
+        )
+        baseline = BaselineSimulationEngine(
+            KimberStyleSoilingModel(self.config.soiling, self.config.rainfall_cleaning),
+            farm=baseline_farm,
+            farm_config=self.config.farm,
+        ).run(
+            profile,
+            weather,
+            random_seed=self.config.soiling.random_seed,
+            event_tape=event_tape,
+        )
+        writer = OutputWriter(self.config)
+        output_dir = writer.create_run_directory("run-coating")
+        writer.write_config(output_dir)
+        writer.write_weather(output_dir, weather)
+        writer.write_clean_energy(output_dir, profile)
+        writer.write_scenario_result(output_dir, coating)
+        metadata = _base_metadata(self.config, "run-coating")
+        metadata["weather_metadata"] = weather.metadata
+        metadata["pv_metadata"] = profile.metadata
+        metadata["event_tape_checksum"] = event_tape.checksum()
+        writer.write_metadata(output_dir, metadata)
+        summary = _coating_summary(
+            coating,
+            baseline,
+            event_tape_checksum=event_tape.checksum(),
+        )
+        writer.write_summary(output_dir, summary)
+        writer.write_text_summary(output_dir, summary)
+        write_json_report(output_dir / "coating_comparison_summary.json", summary)
+        return UseCaseResult(output_directory=output_dir, summary=summary)
+
+
 def _weather_request(config: SolarCleanConfig) -> WeatherRequest:
     return WeatherRequest(
         latitude=config.site.latitude,
@@ -170,6 +248,53 @@ def _baseline_summary(
         "event_count": len(baseline.events),
         "cohort_daily_rows": 0 if baseline.cohort_daily is None else len(baseline.cohort_daily),
     }
+
+
+def _coating_summary(
+    coating: AnnualScenarioResult,
+    baseline: BaselineSimulationResult,
+    *,
+    event_tape_checksum: str,
+) -> dict[str, object]:
+    condensed = _sum_daily_extension(coating, "condensed_water_liters")
+    potential = _sum_daily_extension(coating, "potentially_collectable_water_liters")
+    actual_water = _sum_daily_extension(coating, "actually_collected_water_liters")
+    optical = _sum_daily_extension(coating, "optical_effect_kwh")
+    temperature = _sum_daily_extension(coating, "temperature_effect_kwh")
+    cleanliness = _sum_daily_extension(coating, "cleanliness_effect_kwh")
+    return {
+        "command": "run-coating",
+        "scenario_name": coating.scenario_name,
+        "event_tape_checksum": event_tape_checksum,
+        "annual_clean_energy_kwh": coating.annual_clean_energy_kwh,
+        "annual_baseline_actual_energy_kwh": baseline.annual_actual_energy_kwh,
+        "annual_coating_actual_energy_kwh": coating.annual_actual_energy_kwh,
+        "coating_minus_baseline_energy_kwh": (
+            coating.annual_actual_energy_kwh - baseline.annual_actual_energy_kwh
+        ),
+        "annual_energy_loss_kwh": coating.annual_energy_loss_kwh,
+        "annual_energy_loss_percent": coating.annual_energy_loss_percent,
+        "annual_optical_effect_kwh": optical,
+        "annual_temperature_effect_kwh": temperature,
+        "annual_cleanliness_effect_kwh": cleanliness,
+        "annual_condensed_water_liters": condensed,
+        "annual_potentially_collectable_water_liters": potential,
+        "annual_actually_collected_water_liters": actual_water,
+        "cost_basis_available": True,
+        "water_revenue_included": False,
+        "annualization_included": False,
+        "paper_source_status": "prompt_quoted_values_only",
+    }
+
+
+def _sum_daily_extension(result: AnnualScenarioResult, key: str) -> float:
+    total = 0.0
+    for daily in result.daily_results:
+        value = daily.extensions[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise TypeError(f"daily extension {key} must be numeric")
+        total += float(value)
+    return total
 
 
 def finite_numeric_frame(frame: pd.DataFrame) -> bool:
