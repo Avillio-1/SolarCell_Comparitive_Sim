@@ -168,6 +168,51 @@
   - `tests/regression/test_t1_baseline_compatibility.py` verifies the offline fixture baseline clean energy, actual energy, soiling loss, event count, and cohort rows against `data/fixtures/regression_expected_offline_summary.json`.
   - Existing Phase 1-3.5 regression tests still pass in the full suite.
 
+### Checkpoint 12: T5 Scientific And Economic Calibration
+
+- Status: completed.
+- Built:
+  - Authoritative shared parameter registry at `data/calibration/parameter_registry.yaml`.
+  - Calibration documentation under `docs/calibration/`:
+    - `parameter_registry.md`
+    - `source_bibliography.md`
+    - `evidence_notes.md`
+    - `open_issues.md`
+    - `interface_requests.md`
+  - Current-model low, central, and high calibration overlays:
+    - `configs/calibration/low.yaml`
+    - `configs/calibration/central.yaml`
+    - `configs/calibration/high.yaml`
+  - `ParameterRegistry` and `CalibrationParameter` loader/query types in `src/solarclean/domain/calibration/registry.py`.
+  - `scripts/calibration/run_preset_sensitivity.py`, which resolves calibration overlays through `SolarCleanConfig` and calls `Phase35Validator` for executable runs.
+- Registry coverage:
+  - Dry-weather soiling rate, minimum soiling floor, stochastic daily variation, March/April/May seasonal multipliers, dust-event probability and severity bounds.
+  - Partial and strong rainfall thresholds and cleaning efficiencies.
+  - Bird-dropping event frequency, coverage bounds, power-loss mapping, rainfall removal, and a blocked explicit persistence request.
+  - Future T2 CV confusion-matrix and severity-error inputs.
+  - Future T2 inspection, flight duration, battery, cleaning speed, water, and labor inputs.
+  - Future T3 coating cost, dust-reduction effectiveness, cooling, dew, degradation, optical penalty, and water-collection inputs.
+  - Future T3 economics inputs for tariff, labor, water, drone equipment, discount rate, and useful life.
+- Interface requests:
+  - T2 owns future `reactive_cv.*` detector, operations, and cleaning paths.
+  - T3 owns future `coating.*` and `economics.*` paths.
+  - T1/core must decide whether to add `bird_droppings.persistence_days_without_rain`.
+  - T5 did not add future-owner config sections to `SolarCleanConfig`, so current presets remain accepted by the strict production model.
+- Unresolved parameters and later review:
+  - Soiling, dust-event, rainfall-cleaning, and bird-dropping values remain provisional until measured Saudi/Riyadh site data are available.
+  - CV values require T2 model/test-set evidence.
+  - Drone and cleaning operations require T2 route, hardware, heat-derating, and crew assumptions.
+  - Coating and economics values require T3 technology selection, vendor quotes, tariff-class confirmation, water-delivery cost, finance assumptions, and useful-life review.
+- Verification:
+  - RED first: `python -m pytest tests/unit/test_t5_calibration_registry.py -q` failed on missing `ParameterRegistry`, then passed after implementation.
+  - `python -m pytest -p no:cacheprovider tests/unit/test_t5_calibration_registry.py -q` with local `PYTHONPATH=src`: `3 passed`.
+  - Full suite with elevated temp access because sandboxed pytest temp cleanup was blocked: `python -m pytest --basetemp "$env:TEMP\solarclean_pytest_tmp_251d" -q`: `47 passed, 1 skipped in 17.93s`.
+  - `python -m ruff format --check .`: `60 files already formatted`.
+  - `python -m ruff check .`: `All checks passed!`.
+  - `python -m mypy src`: `Success: no issues found in 44 source files`.
+  - Dry-run script: `python scripts/calibration/run_preset_sensitivity.py --base-config configs/offline_fixture.yaml --preset-dir configs/calibration --dry-run` succeeded and reported `Phase35Validator` as the production interface.
+  - Executable script: `python scripts/calibration/run_preset_sensitivity.py --base-config configs/offline_fixture.yaml --preset-dir configs/calibration` ran low, central, and high presets through `Phase35Validator`; offline fixture soiling loss increased from `0.4315884571418468%` to `0.8896787922616349%` to `2.3114260961408584%`.
+
 ## Phase 3.5 Annual NASA 2025 Results
 
 From `outputs\riyadh-2025-phase-3-5-20260629T233845Z-62f990a5` and the explicit profile run `outputs\riyadh-2025-phase-3-5-20260629T233928Z-c193806b`:

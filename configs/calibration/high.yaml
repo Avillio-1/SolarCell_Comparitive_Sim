@@ -1,0 +1,26 @@
+# T5 high-impact calibration overlay for the current strict config model.
+soiling:
+  base_daily_soiling_loss_fraction: 0.004
+  seasonal_multipliers:
+    3: 1.2
+    4: 1.25
+    5: 1.2
+  dust_event_probability: 0.06
+  dust_event_loss_min_fraction: 0.01
+  dust_event_loss_max_fraction: 0.05
+  minimum_soiling_ratio: 0.45
+  stochastic_std_fraction: 0.15
+  random_seed: 42
+rainfall_cleaning:
+  partial_rain_threshold_mm: 1.5
+  full_rain_cleaning_threshold_mm: 6.0
+  partial_rain_cleaning_efficiency: 0.35
+  full_rain_cleaning_efficiency: 0.9
+bird_droppings:
+  event_probability_per_cohort_day: 0.02
+  coverage_min_fraction: 0.002
+  coverage_max_fraction: 0.02
+  loss_per_coverage_fraction: 1.2
+  rain_removal_efficiency: 0.15
+farm:
+  cohort_soiling_variation_fraction: 0.05

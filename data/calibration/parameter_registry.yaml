@@ -1,0 +1,687 @@
+metadata:
+  registry_name: solarclean_dt_t5_parameter_registry
+  version: "2026-06-30-t5"
+  target_site: Riyadh, Saudi Arabia
+  retrieval_date: "2026-06-30"
+  climate_context: Hot arid Gulf interior site using Asia/Riyadh daily aggregation.
+  current_config_presets:
+    low: configs/calibration/low.yaml
+    central: configs/calibration/central.yaml
+    high: configs/calibration/high.yaml
+  scope_note: >
+    Current production presets only include sections accepted by SolarCleanConfig.
+    Future T2, T3, and T4 paths are registered here and documented as interface
+    requests until their modules publish strict config models.
+parameters:
+  - name: soiling.base_daily_loss_fraction
+    configuration_path: soiling.base_daily_soiling_loss_fraction
+    category: soiling
+    central_value: 0.0025
+    low_value: 0.0012
+    high_value: 0.004
+    unit: fraction/day
+    source: "SolarClean Phase 3.5 provisional presets; Kimber et al. 2006 PV soiling model; Ilse et al. 2019 Joule soiling-economics review, https://doi.org/10.1016/j.joule.2019.08.019"
+    evidence_type: inferred
+    source_geography_and_climate: "Southwestern United States and global arid PV evidence; Riyadh 2025 weather context."
+    applicability_to_saudi_conditions: "Comparable dry, dusty operating context but not a measured Riyadh site soiling station."
+    confidence: medium
+    status: provisional
+    rationale: "Keeps the current central model value and brackets lower and higher arid soiling conditions."
+    limitations: "Needs measured clean/reference cell or measured production calibration at the target farm."
+    responsible_module_or_owner: T1/core baseline
+  - name: soiling.minimum_soiling_ratio
+    configuration_path: soiling.minimum_soiling_ratio
+    category: soiling
+    central_value: 0.55
+    low_value: 0.45
+    high_value: 0.7
+    unit: fraction
+    source: "SolarClean Phase 3.5 stress-test bounds derived from baseline model sensitivity needs."
+    evidence_type: assumed
+    source_geography_and_climate: "Model guardrail rather than a directly measured climate result."
+    applicability_to_saudi_conditions: "Useful for preventing physically impossible accumulation while stress-testing Saudi dry seasons."
+    confidence: low
+    status: provisional
+    rationale: "Bounds the floor of the empirical soiling ratio under prolonged dry contamination."
+    limitations: "Should be replaced by measured saturation behavior for local dust mineralogy and cleaning cadence."
+    responsible_module_or_owner: T1/core baseline
+  - name: soiling.stochastic_std_fraction
+    configuration_path: soiling.stochastic_std_fraction
+    category: soiling
+    central_value: 0.1
+    low_value: 0.05
+    high_value: 0.15
+    unit: fraction
+    source: "SolarClean event-tape design and Phase 3.5 provisional Riyadh presets."
+    evidence_type: assumed
+    source_geography_and_climate: "No site measurement; uncertainty placeholder for arid daily dust variability."
+    applicability_to_saudi_conditions: "Needed for Saudi sensitivity runs, but not yet fitted to Riyadh observations."
+    confidence: low
+    status: provisional
+    rationale: "Controls daily random variation around the dry-weather soiling rate."
+    limitations: "Requires local soiling station data or production residual analysis."
+    responsible_module_or_owner: T1/core baseline
+  - name: seasonality.march_multiplier
+    configuration_path: soiling.seasonal_multipliers.3
+    category: seasonality
+    central_value: 1.1
+    low_value: 1.0
+    high_value: 1.2
+    unit: multiplier
+    source: "Saudi and Gulf dust climatology evidence summarized in source bibliography; SolarClean Phase 3.5 preset."
+    evidence_type: inferred
+    source_geography_and_climate: "Saudi/Gulf spring dust season, hot arid climate."
+    applicability_to_saudi_conditions: "Spring dust enhancement is plausible for Riyadh but site-year variability is high."
+    confidence: medium
+    status: provisional
+    rationale: "Raises March dry accumulation during the regional dust season."
+    limitations: "Does not distinguish synoptic dust storms, local construction dust, or farm microclimate."
+    responsible_module_or_owner: T1/core baseline
+  - name: seasonality.april_multiplier
+    configuration_path: soiling.seasonal_multipliers.4
+    category: seasonality
+    central_value: 1.15
+    low_value: 1.05
+    high_value: 1.25
+    unit: multiplier
+    source: "Saudi and Gulf dust climatology evidence summarized in source bibliography; SolarClean Phase 3.5 preset."
+    evidence_type: inferred
+    source_geography_and_climate: "Saudi/Gulf spring dust season, hot arid climate."
+    applicability_to_saudi_conditions: "April often falls within regional dust-season conditions relevant to Riyadh."
+    confidence: medium
+    status: provisional
+    rationale: "Uses the strongest seasonal central uplift in the current preset family."
+    limitations: "Needs local measured dust deposition or aerosol optical depth regression."
+    responsible_module_or_owner: T1/core baseline
+  - name: seasonality.may_multiplier
+    configuration_path: soiling.seasonal_multipliers.5
+    category: seasonality
+    central_value: 1.1
+    low_value: 1.0
+    high_value: 1.2
+    unit: multiplier
+    source: "Saudi and Gulf dust climatology evidence summarized in source bibliography; SolarClean Phase 3.5 preset."
+    evidence_type: inferred
+    source_geography_and_climate: "Saudi/Gulf spring to early-summer dust season, hot arid climate."
+    applicability_to_saudi_conditions: "Reasonable provisional uplift for Riyadh pending measured deposition."
+    confidence: medium
+    status: provisional
+    rationale: "Extends the spring dust-season uplift into May."
+    limitations: "Does not yet reflect year-specific dust-storm counts."
+    responsible_module_or_owner: T1/core baseline
+  - name: dust_events.daily_probability
+    configuration_path: soiling.dust_event_probability
+    category: dust_events
+    central_value: 0.03
+    low_value: 0.015
+    high_value: 0.06
+    unit: probability/day
+    source: "SolarClean Phase 3.5 provisional event-tape presets; Saudi/Gulf dust-storm climatology evidence."
+    evidence_type: inferred
+    source_geography_and_climate: "Saudi and Gulf arid dust-event context."
+    applicability_to_saudi_conditions: "Represents localized heavy soiling days, not official dust-storm warning frequency."
+    confidence: low
+    status: provisional
+    rationale: "Generates a plausible stress-test range for event-tape comparability."
+    limitations: "Must be calibrated against measured dust events or quality-controlled visibility/PM observations."
+    responsible_module_or_owner: T1/core event tape
+  - name: dust_events.loss_min_fraction
+    configuration_path: soiling.dust_event_loss_min_fraction
+    category: dust_events
+    central_value: 0.005
+    low_value: 0.003
+    high_value: 0.01
+    unit: fraction/event
+    source: "SolarClean Phase 3.5 provisional event-tape presets; PV soiling literature envelopes."
+    evidence_type: inferred
+    source_geography_and_climate: "Arid PV soiling evidence, not a measured Riyadh event distribution."
+    applicability_to_saudi_conditions: "A conservative lower event loss for Saudi sensitivity studies."
+    confidence: low
+    status: provisional
+    rationale: "Defines the lower bound of the stochastic heavy-dust event loss range."
+    limitations: "Needs event-specific before/after power or soiling-ratio measurements."
+    responsible_module_or_owner: T1/core event tape
+  - name: dust_events.loss_max_fraction
+    configuration_path: soiling.dust_event_loss_max_fraction
+    category: dust_events
+    central_value: 0.03
+    low_value: 0.015
+    high_value: 0.05
+    unit: fraction/event
+    source: "SolarClean Phase 3.5 provisional event-tape presets; PV soiling literature envelopes."
+    evidence_type: inferred
+    source_geography_and_climate: "Arid PV soiling evidence, not a measured Riyadh event distribution."
+    applicability_to_saudi_conditions: "Captures severe Saudi dust-event sensitivity without hard-coding an extreme."
+    confidence: low
+    status: provisional
+    rationale: "Defines the upper bound of the stochastic heavy-dust event loss range."
+    limitations: "Storm severity, dust chemistry, tilt, and cleaning history can make this nonstationary."
+    responsible_module_or_owner: T1/core event tape
+  - name: rainfall.partial_threshold_mm
+    configuration_path: rainfall_cleaning.partial_rain_threshold_mm
+    category: rainfall_cleaning
+    central_value: 1.0
+    low_value: 0.8
+    high_value: 1.5
+    unit: mm/day
+    source: "SolarClean Phase 3.5 provisional rainfall presets; Kimber-style rainfall reset concept."
+    evidence_type: inferred
+    source_geography_and_climate: "PV soiling models from arid and semi-arid climates."
+    applicability_to_saudi_conditions: "Riyadh rain is infrequent; partial cleaning threshold remains a sensitivity parameter."
+    confidence: low
+    status: provisional
+    rationale: "Triggers partial natural cleaning from light rainfall."
+    limitations: "Rain intensity, mud formation, and dust mineralogy may reverse or weaken cleaning."
+    responsible_module_or_owner: T1/core baseline
+  - name: rainfall.full_threshold_mm
+    configuration_path: rainfall_cleaning.full_rain_cleaning_threshold_mm
+    category: rainfall_cleaning
+    central_value: 5.0
+    low_value: 4.0
+    high_value: 6.0
+    unit: mm/day
+    source: "SolarClean Phase 3.5 provisional rainfall presets; Kimber-style rainfall reset concept."
+    evidence_type: inferred
+    source_geography_and_climate: "PV soiling models from arid and semi-arid climates."
+    applicability_to_saudi_conditions: "Useful first-order threshold for rare stronger Riyadh rainfall events."
+    confidence: low
+    status: provisional
+    rationale: "Triggers strong natural cleaning in the empirical model."
+    limitations: "Must be checked against measured soiling recovery after Riyadh rain events."
+    responsible_module_or_owner: T1/core baseline
+  - name: rainfall.partial_efficiency
+    configuration_path: rainfall_cleaning.partial_rain_cleaning_efficiency
+    category: rainfall_cleaning
+    central_value: 0.45
+    low_value: 0.35
+    high_value: 0.55
+    unit: fraction_of_soiling_gap
+    source: "SolarClean Phase 3.5 provisional rainfall presets."
+    evidence_type: assumed
+    source_geography_and_climate: "Arid PV natural-cleaning placeholder."
+    applicability_to_saudi_conditions: "Broad sensitivity bound for Saudi light-rain cleaning."
+    confidence: low
+    status: provisional
+    rationale: "Restores part of the gap from current soiled state to clean state."
+    limitations: "No local rain-wash validation; light rain can leave residue."
+    responsible_module_or_owner: T1/core baseline
+  - name: rainfall.full_efficiency
+    configuration_path: rainfall_cleaning.full_rain_cleaning_efficiency
+    category: rainfall_cleaning
+    central_value: 0.95
+    low_value: 0.9
+    high_value: 0.98
+    unit: fraction_of_soiling_gap
+    source: "SolarClean Phase 3.5 provisional rainfall presets."
+    evidence_type: assumed
+    source_geography_and_climate: "Arid PV natural-cleaning placeholder."
+    applicability_to_saudi_conditions: "Broad sensitivity bound for rare strong Saudi rain events."
+    confidence: low
+    status: provisional
+    rationale: "Allows strong rainfall to nearly reset dust soiling without exceeding the clean state."
+    limitations: "Rain chemistry and post-rain dust can reduce effectiveness."
+    responsible_module_or_owner: T1/core baseline
+  - name: bird.event_probability_per_cohort_day
+    configuration_path: bird_droppings.event_probability_per_cohort_day
+    category: bird_droppings
+    central_value: 0.01
+    low_value: 0.003
+    high_value: 0.02
+    unit: probability/cohort/day
+    source: "SolarClean Phase 3 provisional sparse bird-dropping model; PV soiling literature notes localized biological soiling."
+    evidence_type: assumed
+    source_geography_and_climate: "No Saudi bird-dropping rate source identified for utility PV cohorts."
+    applicability_to_saudi_conditions: "Placeholder only; actual rate depends on site ecology and deterrence."
+    confidence: low
+    status: provisional
+    rationale: "Maintains sparse localized biological soiling in cohort simulations."
+    limitations: "Requires site observation logs or image-based event counts."
+    responsible_module_or_owner: T1/core baseline
+  - name: bird.coverage_min_fraction
+    configuration_path: bird_droppings.coverage_min_fraction
+    category: bird_droppings
+    central_value: 0.001
+    low_value: 0.0005
+    high_value: 0.002
+    unit: fraction/cohort_event
+    source: "SolarClean Phase 3 provisional cohort bird-dropping model."
+    evidence_type: assumed
+    source_geography_and_climate: "No Saudi utility PV measurement found."
+    applicability_to_saudi_conditions: "Small localized coverage lower bound for cohort-level modeling."
+    confidence: low
+    status: provisional
+    rationale: "Sets the lower coverage sampled for one bird-dropping event."
+    limitations: "Current model is not a per-cell bypass-diode electrical model."
+    responsible_module_or_owner: T1/core baseline
+  - name: bird.coverage_max_fraction
+    configuration_path: bird_droppings.coverage_max_fraction
+    category: bird_droppings
+    central_value: 0.01
+    low_value: 0.004
+    high_value: 0.02
+    unit: fraction/cohort_event
+    source: "SolarClean Phase 3 provisional cohort bird-dropping model."
+    evidence_type: assumed
+    source_geography_and_climate: "No Saudi utility PV measurement found."
+    applicability_to_saudi_conditions: "Stress-tests localized biological soiling for Saudi sites."
+    confidence: low
+    status: provisional
+    rationale: "Sets the upper coverage sampled for one bird-dropping event."
+    limitations: "Should be replaced by image-derived coverage distributions."
+    responsible_module_or_owner: T1/core baseline
+  - name: bird.loss_per_coverage_fraction
+    configuration_path: bird_droppings.loss_per_coverage_fraction
+    category: bird_droppings
+    central_value: 0.8
+    low_value: 0.5
+    high_value: 1.2
+    unit: loss_fraction_per_coverage_fraction
+    source: "SolarClean Phase 3 provisional cohort bird-dropping model; PV partial-shading literature warns nonlinear local losses."
+    evidence_type: assumed
+    source_geography_and_climate: "Generic PV partial-obstruction context."
+    applicability_to_saudi_conditions: "Only a coarse aggregate mapping until T2/T3 owners add better electrical loss modeling."
+    confidence: low
+    status: provisional
+    rationale: "Maps cohort coverage additions to a cohort energy-loss fraction."
+    limitations: "Bypass diode layout and string topology can make real losses nonlinear."
+    responsible_module_or_owner: T1/core baseline
+  - name: bird.rain_removal_efficiency
+    configuration_path: bird_droppings.rain_removal_efficiency
+    category: bird_droppings
+    central_value: 0.3
+    low_value: 0.15
+    high_value: 0.5
+    unit: fraction
+    source: "SolarClean Phase 3 provisional cohort bird-dropping model."
+    evidence_type: assumed
+    source_geography_and_climate: "Generic PV cleaning placeholder."
+    applicability_to_saudi_conditions: "Rainfall is infrequent in Riyadh, so sensitivity is mostly event-specific."
+    confidence: low
+    status: provisional
+    rationale: "Allows rainfall to remove part of bird-dropping coverage."
+    limitations: "No local wash-off or persistence experiment identified."
+    responsible_module_or_owner: T1/core baseline
+  - name: bird.persistence_days_without_rain
+    configuration_path: bird_droppings.persistence_days_without_rain
+    category: bird_droppings
+    central_value: 14.0
+    low_value: 3.0
+    high_value: 45.0
+    unit: days
+    source: "Interface placeholder derived from the current absence of explicit bird persistence controls."
+    evidence_type: assumed
+    source_geography_and_climate: "No Saudi utility PV persistence source identified."
+    applicability_to_saudi_conditions: "Potentially important during long dry Riyadh periods."
+    confidence: low
+    status: blocked
+    rationale: "The current model has rain removal but no explicit dry persistence decay path."
+    limitations: "Requires T1/core agreement before adding to SolarCleanConfig."
+    responsible_module_or_owner: T1/core baseline
+  - name: cv.true_positive_rate
+    configuration_path: reactive_cv.detector.true_positive_rate
+    category: computer_vision
+    central_value: 0.9
+    low_value: 0.75
+    high_value: 0.98
+    unit: fraction
+    source: "DeepSolarEye and PV image-inspection literature; exact production CV model not yet selected."
+    evidence_type: inferred
+    source_geography_and_climate: "Mostly lab, rooftop, or public-image PV datasets outside Saudi Arabia."
+    applicability_to_saudi_conditions: "Saudi dust color, glare, and drone altitude may change detector recall."
+    confidence: low
+    status: blocked
+    rationale: "Provides a provisional recall input for T2 reactive CV sensitivity."
+    limitations: "Needs T2 model evaluation on Saudi or Saudi-like imagery."
+    responsible_module_or_owner: T2 reactive CV
+  - name: cv.false_positive_rate
+    configuration_path: reactive_cv.detector.false_positive_rate
+    category: computer_vision
+    central_value: 0.08
+    low_value: 0.02
+    high_value: 0.2
+    unit: fraction
+    source: "DeepSolarEye and PV image-inspection literature; exact production CV model not yet selected."
+    evidence_type: inferred
+    source_geography_and_climate: "Mostly non-Saudi PV image datasets."
+    applicability_to_saudi_conditions: "Dust haze, specular reflection, and sand color can increase false alarms."
+    confidence: low
+    status: blocked
+    rationale: "Supports reactive inspection economics and unnecessary-cleaning sensitivity."
+    limitations: "Cannot be validated until T2 publishes detector outputs and test data."
+    responsible_module_or_owner: T2 reactive CV
+  - name: cv.false_negative_rate
+    configuration_path: reactive_cv.detector.false_negative_rate
+    category: computer_vision
+    central_value: 0.1
+    low_value: 0.02
+    high_value: 0.25
+    unit: fraction
+    source: "Complement of provisional CV true-positive range."
+    evidence_type: calculated
+    source_geography_and_climate: "Derived from provisional CV sensitivity inputs."
+    applicability_to_saudi_conditions: "Represents missed soiling defects under Saudi image conditions."
+    confidence: low
+    status: blocked
+    rationale: "Allows downstream economics to price missed cleaning opportunities."
+    limitations: "Should be computed directly from the T2 confusion matrix when available."
+    responsible_module_or_owner: T2 reactive CV
+  - name: cv.severity_mae_fraction
+    configuration_path: reactive_cv.detector.severity_mae_fraction
+    category: computer_vision
+    central_value: 0.05
+    low_value: 0.02
+    high_value: 0.12
+    unit: absolute_fraction
+    source: "PV image-estimated soiling severity literature; no selected T2 model yet."
+    evidence_type: inferred
+    source_geography_and_climate: "Generic PV image datasets, mainly outside Saudi Arabia."
+    applicability_to_saudi_conditions: "Use only as a provisional severity-estimation error envelope."
+    confidence: low
+    status: blocked
+    rationale: "Bounds CV uncertainty when mapping detected coverage to cleaning decisions."
+    limitations: "Requires measured labels from T2 image annotation or soiling-ratio ground truth."
+    responsible_module_or_owner: T2 reactive CV
+  - name: inspection.panels_per_flight_hour
+    configuration_path: reactive_cv.operations.inspection_panels_per_flight_hour
+    category: drone_inspection_cleaning
+    central_value: 800.0
+    low_value: 300.0
+    high_value: 1500.0
+    unit: panels/hour
+    source: "Inferred operational placeholder using 10,000-panel scale and UAV flight-duration constraints."
+    evidence_type: inferred
+    source_geography_and_climate: "Operational estimate, not climate-specific."
+    applicability_to_saudi_conditions: "Heat, dust, and flight rules may reduce achievable inspection rate."
+    confidence: low
+    status: blocked
+    rationale: "Lets T2 estimate inspection workload without creating dispatch logic in T5."
+    limitations: "Requires T2 flight plan, image overlap, altitude, camera, and regulatory assumptions."
+    responsible_module_or_owner: T2 reactive CV
+  - name: inspection.drone_flight_duration_minutes
+    configuration_path: reactive_cv.operations.drone_flight_duration_minutes
+    category: drone_inspection_cleaning
+    central_value: 45.0
+    low_value: 30.0
+    high_value: 55.0
+    unit: minutes/flight
+    source: "DJI Matrice 350 RTK official maximum flight-time specification, https://enterprise.dji.com/matrice-350-rtk/specs"
+    evidence_type: quoted
+    source_geography_and_climate: "Manufacturer global specification; not hot-desert derated."
+    applicability_to_saudi_conditions: "Saudi heat, payload, wind, and battery aging can reduce practical duration."
+    confidence: medium
+    status: blocked
+    rationale: "Uses a conservative central duration below the quoted maximum."
+    limitations: "Future T2 hardware choice may differ from the Matrice 350 RTK."
+    responsible_module_or_owner: T2 reactive CV
+  - name: inspection.battery_sets_per_drone
+    configuration_path: reactive_cv.operations.battery_sets_per_drone
+    category: drone_inspection_cleaning
+    central_value: 3.0
+    low_value: 2.0
+    high_value: 5.0
+    unit: battery_sets
+    source: "Operational placeholder based on multi-flight daily UAV inspection workflows."
+    evidence_type: assumed
+    source_geography_and_climate: "Operational estimate, not climate-specific."
+    applicability_to_saudi_conditions: "High ambient temperature may require extra charged packs or rest periods."
+    confidence: low
+    status: blocked
+    rationale: "Supports future inspection throughput and equipment-cost sensitivity."
+    limitations: "Must be replaced by T2 flight-cycle and charger logistics."
+    responsible_module_or_owner: T2 reactive CV
+  - name: cleaning.panels_per_worker_hour
+    configuration_path: reactive_cv.cleaning.panels_per_worker_hour
+    category: drone_inspection_cleaning
+    central_value: 120.0
+    low_value: 60.0
+    high_value: 240.0
+    unit: panels/worker_hour
+    source: "PV cleaning literature and field-practice envelope; no selected Saudi contractor quote."
+    evidence_type: inferred
+    source_geography_and_climate: "Manual or semi-manual PV cleaning operations in dry climates."
+    applicability_to_saudi_conditions: "Saudi heat, access lanes, water logistics, and labor rules may lower throughput."
+    confidence: low
+    status: blocked
+    rationale: "Provides a broad labor-throughput sensitivity for future cleaning dispatch."
+    limitations: "Needs vendor or site-specific time-and-motion data."
+    responsible_module_or_owner: T2 reactive CV
+  - name: cleaning.water_liters_per_panel
+    configuration_path: reactive_cv.cleaning.water_liters_per_panel
+    category: drone_inspection_cleaning
+    central_value: 1.0
+    low_value: 0.2
+    high_value: 3.0
+    unit: liters/panel
+    source: "PV cleaning literature and arid-site water-use envelopes; water-free cleaning alternatives noted separately."
+    evidence_type: inferred
+    source_geography_and_climate: "Dry-climate PV cleaning evidence outside the exact Riyadh site."
+    applicability_to_saudi_conditions: "Water scarcity makes this a high-priority Saudi sensitivity input."
+    confidence: low
+    status: blocked
+    rationale: "Captures wet-cleaning water demand without implementing dispatch behavior."
+    limitations: "Depends on cleaning method, dust adhesion, panel size, and water recycling."
+    responsible_module_or_owner: T2 reactive CV
+  - name: cleaning.labour_hours_per_action
+    configuration_path: reactive_cv.cleaning.labour_hours_per_action
+    category: drone_inspection_cleaning
+    central_value: 1.0
+    low_value: 0.25
+    high_value: 3.0
+    unit: worker_hours/action
+    source: "Operational placeholder derived from the absence of a T2 dispatch model."
+    evidence_type: assumed
+    source_geography_and_climate: "Operational estimate, not climate-specific."
+    applicability_to_saudi_conditions: "Heat stress and site access can increase Saudi labor hours."
+    confidence: low
+    status: blocked
+    rationale: "Allows future economics to price one targeted cleaning action."
+    limitations: "Requires T2 definition of cleaning action size."
+    responsible_module_or_owner: T2 reactive CV
+  - name: coating.capex_sar_per_m2
+    configuration_path: coating.cost.capex_sar_per_m2
+    category: coating
+    central_value: 20.0
+    low_value: 5.0
+    high_value: 60.0
+    unit: SAR/m2
+    source: "Self-cleaning coating literature and commercial anti-soiling cost envelope; no selected vendor quote."
+    evidence_type: inferred
+    source_geography_and_climate: "Global coating literature, including arid PV motivation."
+    applicability_to_saudi_conditions: "Material and application cost may differ in Saudi procurement."
+    confidence: low
+    status: blocked
+    rationale: "Provides a broad coating capex sensitivity until T3 selects a coating product."
+    limitations: "Requires installed coating quote, module area, application process, warranty, and replacement schedule."
+    responsible_module_or_owner: T3 coating/economics
+  - name: coating.dust_adhesion_reduction_fraction
+    configuration_path: coating.performance.dust_adhesion_reduction_fraction
+    category: coating
+    central_value: 0.45
+    low_value: 0.15
+    high_value: 0.75
+    unit: fraction
+    source: "Hydrophobic/nanotextured self-cleaning coating studies and arid PV coating reviews."
+    evidence_type: inferred
+    source_geography_and_climate: "Lab and outdoor tests, not a Riyadh utility farm."
+    applicability_to_saudi_conditions: "Relevant to Saudi dust adhesion but needs local dust chemistry validation."
+    confidence: low
+    status: blocked
+    rationale: "Represents the fractional reduction in dust accumulation under a coating scenario."
+    limitations: "Performance depends on abrasion, UV exposure, cleaning method, and dust particle properties."
+    responsible_module_or_owner: T3 coating/economics
+  - name: coating.cell_temperature_reduction_c
+    configuration_path: coating.performance.cell_temperature_reduction_c
+    category: coating
+    central_value: 2.0
+    low_value: 0.0
+    high_value: 6.0
+    unit: deg_C
+    source: "Radiative-cooling and hydrogel PV-cooling literature; not yet tied to a selected coating."
+    evidence_type: inferred
+    source_geography_and_climate: "Hot-climate PV cooling studies, generally not Riyadh-specific."
+    applicability_to_saudi_conditions: "Saudi high irradiance and heat make cooling potentially relevant."
+    confidence: low
+    status: blocked
+    rationale: "Allows T3 to test whether the coating includes a cooling benefit."
+    limitations: "Must not be applied unless the selected coating has measured thermal behavior."
+    responsible_module_or_owner: T3 coating/economics
+  - name: coating.dew_soiling_multiplier
+    configuration_path: coating.performance.dew_soiling_multiplier
+    category: coating
+    central_value: 1.0
+    low_value: 0.7
+    high_value: 1.4
+    unit: multiplier
+    source: "PV soiling literature reports dew can either mobilize or cement dust depending on surface and climate."
+    evidence_type: inferred
+    source_geography_and_climate: "Arid and semi-arid PV soiling studies, not Riyadh-measured."
+    applicability_to_saudi_conditions: "Night humidity and dust cementation can matter in Saudi sites."
+    confidence: low
+    status: blocked
+    rationale: "Keeps dew behavior explicit instead of hiding it inside coating effectiveness."
+    limitations: "Requires local humidity/dew observations and coating surface-energy data."
+    responsible_module_or_owner: T3 coating/economics
+  - name: coating.annual_degradation_fraction
+    configuration_path: coating.performance.annual_degradation_fraction
+    category: coating
+    central_value: 0.05
+    low_value: 0.01
+    high_value: 0.15
+    unit: fraction/year
+    source: "Coating durability literature and warranty-risk sensitivity placeholder."
+    evidence_type: assumed
+    source_geography_and_climate: "Global outdoor coating durability context."
+    applicability_to_saudi_conditions: "Saudi UV, abrasion, and sand exposure may accelerate degradation."
+    confidence: low
+    status: blocked
+    rationale: "Ensures coating benefit can decay over its useful life in T3 scenarios."
+    limitations: "No selected product or Saudi abrasion test."
+    responsible_module_or_owner: T3 coating/economics
+  - name: coating.optical_penalty_fraction
+    configuration_path: coating.performance.optical_penalty_fraction
+    category: coating
+    central_value: 0.01
+    low_value: 0.0
+    high_value: 0.03
+    unit: fraction
+    source: "Transparent coating literature; optical losses vary by material and application thickness."
+    evidence_type: inferred
+    source_geography_and_climate: "Global coating optical tests."
+    applicability_to_saudi_conditions: "Optical penalty applies regardless of climate; dust abrasion may increase it."
+    confidence: low
+    status: blocked
+    rationale: "Prevents coating scenarios from receiving a free anti-soiling benefit without transmission cost."
+    limitations: "Must use product-specific transmittance once T3 selects a coating."
+    responsible_module_or_owner: T3 coating/economics
+  - name: coating.water_collection_l_per_m2_day
+    configuration_path: coating.performance.water_collection_l_per_m2_day
+    category: coating
+    central_value: 0.02
+    low_value: 0.0
+    high_value: 0.1
+    unit: liters/m2/day
+    source: "Hydrogel and atmospheric-water-harvesting PV concepts; not part of the current baseline physics."
+    evidence_type: inferred
+    source_geography_and_climate: "Hot-climate water-harvesting studies, not selected for Riyadh deployment."
+    applicability_to_saudi_conditions: "Could matter in Saudi water-scarcity analysis but is technology-specific."
+    confidence: low
+    status: blocked
+    rationale: "Keeps water collection separate from dust reduction and cooling."
+    limitations: "Should remain zero unless T3 implements a coating with measured water capture."
+    responsible_module_or_owner: T3 coating/economics
+  - name: economics.electricity_tariff_sar_per_kwh
+    configuration_path: economics.tariff.sar_per_kwh
+    category: economics
+    central_value: 0.2
+    low_value: 0.12
+    high_value: 0.32
+    unit: SAR/kWh
+    source: "Saudi electricity tariff references from SEC/WERA public tariff material; current tariff must be refreshed before decision use."
+    evidence_type: quoted
+    source_geography_and_climate: "Saudi Arabia national tariff context."
+    applicability_to_saudi_conditions: "Directly relevant to Saudi economic valuation but customer category may differ."
+    confidence: medium
+    status: blocked
+    rationale: "Central value reflects commonly cited commercial/government tariff scale for Saudi analysis."
+    limitations: "Tariffs can change and may depend on customer class, contract, and netting rules."
+    responsible_module_or_owner: T3 coating/economics
+  - name: economics.labour_cost_sar_per_hour
+    configuration_path: economics.costs.labour_sar_per_hour
+    category: economics
+    central_value: 35.0
+    low_value: 20.0
+    high_value: 80.0
+    unit: SAR/worker_hour
+    source: "Saudi labor-market wage references and cleaning-contractor uncertainty envelope."
+    evidence_type: inferred
+    source_geography_and_climate: "Saudi labor market, not a quoted solar-O&M contract."
+    applicability_to_saudi_conditions: "Relevant but highly dependent on contractor, Saudization, and safety requirements."
+    confidence: low
+    status: blocked
+    rationale: "Supports O&M labor sensitivity until a contractor quote is available."
+    limitations: "Should be replaced by project-specific labor and supervision rates."
+    responsible_module_or_owner: T3 coating/economics
+  - name: economics.water_cost_sar_per_m3
+    configuration_path: economics.costs.water_sar_per_m3
+    category: economics
+    central_value: 6.0
+    low_value: 2.0
+    high_value: 12.0
+    unit: SAR/m3
+    source: "Saudi National Water Company tariff references and arid-site delivered-water uncertainty."
+    evidence_type: inferred
+    source_geography_and_climate: "Saudi water tariff context plus site delivery uncertainty."
+    applicability_to_saudi_conditions: "Water scarcity and delivery distance are directly relevant to Saudi cleaning decisions."
+    confidence: low
+    status: blocked
+    rationale: "Prices wet-cleaning water use in future economics."
+    limitations: "NWC tariff may not equal delivered water cost for a remote utility farm."
+    responsible_module_or_owner: T3 coating/economics
+  - name: economics.drone_equipment_cost_sar
+    configuration_path: economics.capex.drone_equipment_sar
+    category: economics
+    central_value: 100000.0
+    low_value: 50000.0
+    high_value: 250000.0
+    unit: SAR
+    source: "Manufacturer-class UAV specification context and market-price sensitivity envelope; no binding quote."
+    evidence_type: inferred
+    source_geography_and_climate: "Global equipment market, Saudi procurement not quoted."
+    applicability_to_saudi_conditions: "Saudi import, warranty, payload, and spares can shift total installed cost."
+    confidence: low
+    status: blocked
+    rationale: "Gives T3/T4 an equipment capex placeholder for reactive inspection sensitivity."
+    limitations: "Requires selected drone, camera payload, batteries, chargers, insurance, and spares."
+    responsible_module_or_owner: T3 coating/economics
+  - name: economics.discount_rate_fraction
+    configuration_path: economics.finance.discount_rate_fraction
+    category: economics
+    central_value: 0.08
+    low_value: 0.04
+    high_value: 0.14
+    unit: fraction/year
+    source: "Saudi Central Bank rate context and project-finance sensitivity practice."
+    evidence_type: inferred
+    source_geography_and_climate: "Saudi macro-finance context, not a project WACC quote."
+    applicability_to_saudi_conditions: "Relevant to Saudi project economics but must be replaced by sponsor WACC."
+    confidence: low
+    status: blocked
+    rationale: "Supports NPV sensitivity without overclaiming a financing model."
+    limitations: "Does not include capital structure, inflation, tax, or policy incentives."
+    responsible_module_or_owner: T3 coating/economics
+  - name: economics.useful_life_years
+    configuration_path: economics.finance.useful_life_years
+    category: economics
+    central_value: 15.0
+    low_value: 5.0
+    high_value: 25.0
+    unit: years
+    source: "PV asset-life convention and mitigation-equipment sensitivity envelope."
+    evidence_type: assumed
+    source_geography_and_climate: "Generic project finance assumption, not climate-specific."
+    applicability_to_saudi_conditions: "High heat and abrasion may shorten mitigation equipment life."
+    confidence: low
+    status: blocked
+    rationale: "Provides a common horizon for coating, equipment, and O&M sensitivity."
+    limitations: "T3 should split PV plant life, drone life, battery life, and coating life when implemented."
+    responsible_module_or_owner: T3 coating/economics
