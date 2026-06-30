@@ -11,6 +11,7 @@ import yaml
 from solarclean.config.models import SolarCleanConfig
 from solarclean.domain.environment.weather import WeatherDataset
 from solarclean.domain.pv.model import CleanEnergyProfile
+from solarclean.domain.scenario.contracts import AnnualScenarioResult, ScenarioOutputBundle
 from solarclean.domain.simulation.baseline import BaselineSimulationResult
 
 
@@ -94,6 +95,40 @@ class OutputWriter:
                 "bird_drop_loss_fraction,actual_energy_kwh\n",
                 encoding="utf-8",
             )
+
+    def write_scenario_result(
+        self,
+        output_dir: Path,
+        result: AnnualScenarioResult | ScenarioOutputBundle,
+    ) -> None:
+        if isinstance(result, AnnualScenarioResult):
+            summary = result.summary()
+            daily_frame = result.to_daily_frame()
+            events = result.events
+        else:
+            summary = dict(result.summary)
+            daily_frame = result.daily_frame.copy(deep=True)
+            events = result.events
+        daily_frame.to_csv(
+            output_dir / "scenario_daily_results.csv",
+            index=False,
+            float_format=self.config.output.csv_float_format,
+        )
+        event_records = [event.to_record() for event in events]
+        if event_records:
+            pd.DataFrame.from_records(event_records).to_csv(
+                output_dir / "scenario_events.csv",
+                index=False,
+            )
+        else:
+            (output_dir / "scenario_events.csv").write_text(
+                "date,scenario_name,event_type,magnitude,description,cohort_id,metadata\n",
+                encoding="utf-8",
+            )
+        (output_dir / "scenario_summary.json").write_text(
+            json.dumps(summary, indent=2, sort_keys=True, default=str),
+            encoding="utf-8",
+        )
 
     def write_summary(self, output_dir: Path, summary: dict[str, object]) -> None:
         (output_dir / "summary.json").write_text(

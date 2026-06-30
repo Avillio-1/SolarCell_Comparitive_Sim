@@ -21,8 +21,24 @@ pytest_tmp/
 pytest-cache-files-*/
 outputs/
 data/cache/
+*.log
+*.tmp
+*.bak
 
 # Local editor and OS files
 .DS_Store
 Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
 
+# Secrets and local environment files
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*token*
+*secret*
+id_rsa*

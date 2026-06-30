@@ -3,6 +3,7 @@
 ## Current Source
 
 - Active prompt from 2026-06-29 is the source of truth.
+- Active T1 continuation prompt from 2026-06-30 adds contract-freeze scope on top of completed Phase 1-3.5 work.
 - Repository brief files searched: `SolarClean-DT_Internship_Brief.pdf`, `PROJECT_BRIEF.md`, `README.md`, `PLAN.md`, and `AGENTS.md`.
 - No existing brief was found before implementation.
 
@@ -135,6 +136,37 @@
   - Clean install: `.venv_clean\Scripts\python.exe -m pip install -e ".[dev]"` succeeded.
   - Clean install tests: `.venv_clean\Scripts\python.exe -m pytest -q`: `39 passed, 1 skipped in 16.97s`.
   - Clean install CLI: `.venv_clean\Scripts\solarclean.exe validate-phase-3-5 --config configs/offline_fixture.yaml` succeeded and wrote `outputs\offline-fixture-phase-3-5-20260629T234740Z-c8c03875`.
+
+### Checkpoint 11: T1 Shared Contract Freeze
+
+- Status: completed.
+- Audit findings:
+  - Already existed: provider-independent weather input, clean PV profile, farm states, exogenous event tape, baseline simulation result, validation reports, output writer, and Phase 3.5 reports.
+  - Missing before T1: generic scenario context, mitigation strategy protocol, common daily/annual scenario result models, operational quantities, domain-event contract, extension-preserving result handling, comparison input, and generic scenario persistence contract.
+- Built so far:
+  - T1 design spec at `docs/superpowers/specs/2026-06-30-solarclean-dt-t1-contract-freeze-design.md`.
+  - T1 implementation plan at `docs/superpowers/plans/2026-06-30-solarclean-dt-t1-contract-freeze.md`.
+  - Shared contracts in `src/solarclean/domain/scenario/contracts.py`.
+  - Shared `ScenarioSimulationEngine`.
+  - `BaselineStrategy` adapter and compatibility-preserving `BaselineSimulationEngine` delegation.
+  - Generic `OutputWriter.write_scenario_result()`.
+  - Contract documentation, T1 architecture diagram, T2/T3/T4 integration checklist, ownership guidance, and ADR-009.
+- Verification so far:
+  - RED: `python -m pytest tests/unit/test_scenario_contracts.py tests/regression/test_t1_baseline_compatibility.py -q` failed with `ModuleNotFoundError: No module named 'solarclean.domain.scenario'`.
+  - GREEN after implementation: `python -m pytest tests/unit/test_scenario_contracts.py tests/regression/test_t1_baseline_compatibility.py -q`: `5 passed in 3.66s`.
+  - Targeted regression slice: `python -m pytest tests/unit/test_scenario_contracts.py tests/regression/test_t1_baseline_compatibility.py tests/unit/test_soiling.py tests/unit/test_event_tape.py tests/regression/test_end_to_end.py -q`: `16 passed in 5.38s`.
+  - Full suite: `python -m pytest -q`: `44 passed, 1 skipped in 7.88s`.
+  - Format check: `python -m ruff format --check .`: `58 files already formatted`.
+  - Lint: `python -m ruff check .`: `All checks passed!`.
+  - Type check: `python -m mypy src`: `Success: no issues found in 44 source files`.
+- Frozen contracts:
+  - `ScenarioContext`, `DailyScenarioInput`, `MitigationStrategy`, `StrategyStep`, `DailyScenarioResult`, `AnnualScenarioResult`, `OperationalQuantities`, `DomainEvent`, `ScenarioComparisonInput`, and `ScenarioOutputBundle`.
+  - `ScenarioSimulationEngine` owns the annual daily loop and delegates only day-level behavior to strategies.
+  - `BaselineSimulationEngine` remains backward-compatible and delegates through `BaselineStrategy`.
+  - Generic persistence output contract writes `scenario_daily_results.csv`, `scenario_events.csv`, and `scenario_summary.json`.
+- Baseline unchanged evidence:
+  - `tests/regression/test_t1_baseline_compatibility.py` verifies the offline fixture baseline clean energy, actual energy, soiling loss, event count, and cohort rows against `data/fixtures/regression_expected_offline_summary.json`.
+  - Existing Phase 1-3.5 regression tests still pass in the full suite.
 
 ## Phase 3.5 Annual NASA 2025 Results
 

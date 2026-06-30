@@ -1,4 +1,4 @@
-# SolarClean-DT Phase 1-3 And Phase 3.5 Plan
+# SolarClean-DT Phase 1-3, Phase 3.5, And T1 Plan
 
 ## Source Of Truth
 
@@ -18,7 +18,7 @@ No existing project brief was found in the repository. The active prompt dated 2
 
 ## Milestones
 
-Phase 1-3 is complete. Phase 3.5 adds validation, reproducibility, calibration presets, and performance reporting without starting Phase 4.
+Phase 1-3 is complete. Phase 3.5 adds validation, reproducibility, calibration presets, and performance reporting without starting Phase 4. T1 freezes shared scenario contracts for parallel development of future reactive, coating, economics, analytics, and dashboard modules.
 
 ### Checkpoint 1: Repository And Architecture Foundation
 
@@ -85,6 +85,14 @@ Phase 1-3 is complete. Phase 3.5 adds validation, reproducibility, calibration p
 - Profile full-year runtime, memory, and output size.
 - Update documentation, ADRs, `PLAN.md`, and `PROGRESS.md`.
 
+### Checkpoint 11: T1 Shared Contract Freeze
+
+- Audit existing Phase 1-3.5 contracts and preserve baseline behavior.
+- Add frozen scenario context, mitigation strategy protocol, daily and annual scenario results, shared operational quantities, domain-event contract, scenario-specific extensions, comparison input, and generic persistence output contract.
+- Ensure `BaselineStrategy`, future `ReactiveCVStrategy`, and future `CoatingStrategy` can use `ScenarioSimulationEngine` without duplicated annual loops or scenario-name conditionals.
+- Add mock future strategy tests, immutability tests, extension-preservation tests, and baseline compatibility regression tests.
+- Document field names, types, units, ownership, architecture boundaries, T2/T3/T4 checklist, team ownership, and ADR-009.
+
 ## Expected Files
 
 - `src/solarclean/domain/environment/*`: provider-independent weather contracts and daily environment.
@@ -92,6 +100,7 @@ Phase 1-3 is complete. Phase 3.5 adds validation, reproducibility, calibration p
 - `src/solarclean/domain/contamination/*`: soiling state, updates, events, and empirical model.
 - `src/solarclean/domain/farm/*`: representative and cohort farm abstractions.
 - `src/solarclean/domain/simulation/*`: baseline daily loop and result aggregation.
+- `src/solarclean/domain/scenario/*`: T1 scenario context, strategy protocol, common daily/annual result models, domain events, operational quantities, and comparison/output contracts.
 - `src/solarclean/application/*`: use cases and provider/model factories.
 - `src/solarclean/infrastructure/weather/*`: NASA POWER, CSV, fixture, and cache adapters.
 - `src/solarclean/infrastructure/pvlib_adapter/*`: pvlib PVWatts implementation.
@@ -111,6 +120,9 @@ Phase 1-3 is complete. Phase 3.5 adds validation, reproducibility, calibration p
 - Mark NASA POWER network tests as `integration` and skip them unless `SOLARCLEAN_RUN_NETWORK_TESTS=1`.
 - Include a short deterministic regression scenario with expected annual clean and baseline values from the fixture configuration.
 - Verify actual energy never exceeds clean energy and repeated seed/config/weather inputs reproduce identical outputs.
+- Verify future strategies can be substituted through `ScenarioSimulationEngine`.
+- Verify frozen scenario inputs and extension mappings cannot be mutated by strategy or consumer code.
+- Verify unknown scenario-specific extension fields survive common result handling.
 
 ## Verification Commands
 
@@ -126,6 +138,7 @@ python -m mypy src
 solarclean fetch-weather --config configs/offline_fixture.yaml
 solarclean run-clean --config configs/offline_fixture.yaml
 solarclean run-baseline --config configs/offline_fixture.yaml
+python -m pytest tests/unit/test_scenario_contracts.py tests/regression/test_t1_baseline_compatibility.py -q
 ```
 
 ## Risks And Assumptions
@@ -136,3 +149,4 @@ solarclean run-baseline --config configs/offline_fixture.yaml
 - pvlib is required for the production PVWatts model. The code fails clearly when the dependency is missing instead of silently substituting a scientific model.
 - CSV output is used instead of Parquet to avoid an unnecessary dependency in Phases 1-3.
 - The current workspace has an empty or partial `.git` directory and is not recognized by `git`; no commits can be created until the repository is initialized or repaired.
+- T1 freezes shared contracts but does not implement the future scenario behavior that will consume them.

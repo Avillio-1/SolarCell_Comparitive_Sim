@@ -9,6 +9,7 @@ The current implementation is limited to:
 - Phase 2: no-intervention baseline soiling with rainfall cleaning.
 - Phase 3: cohort-based representation of exactly 10,000 panels.
 - Phase 3.5: validation, reproducibility, event-tape, calibration-preset, golden-regression, and profiling infrastructure.
+- T1: frozen shared scenario contracts for future parallel reactive, coating, economics, analytics, and dashboard development.
 
 Not implemented yet: drone inspection, computer vision, human crew dispatch, self-cleaning coating behavior, economics, optimization, sensitivity analysis, databases, dashboards, authentication, Docker, and cloud deployment.
 
@@ -24,6 +25,8 @@ CLI
 ```
 
 Domain code defines provider-independent weather, PV, contamination, farm, and simulation contracts. NASA POWER, CSV weather, fixture weather, pvlib PVWatts, output writing, and plotting live in infrastructure adapters.
+
+T1 adds a frozen `MitigationStrategy` contract and `ScenarioSimulationEngine` so future baseline, reactive CV, and coating strategies can share one annual daily loop. Shared outputs use `DailyScenarioResult`, `AnnualScenarioResult`, `DomainEvent`, and `OperationalQuantities`. Scenario-specific fields must be stored under result `extensions`.
 
 ## Windows PowerShell Installation
 
@@ -148,6 +151,9 @@ Each command creates `outputs/<run_id>/` containing some or all of:
 - `phase35_event_tape.json`
 - `phase35_performance_report.json`
 - `phase35_summary.json`
+- `scenario_daily_results.csv`
+- `scenario_events.csv`
+- `scenario_summary.json`
 
 Column names include units where practical. CSV is used instead of Parquet to keep Phase 1-3 dependencies lean.
 
@@ -180,3 +186,14 @@ python -m pytest tests/integration/test_nasa_power_live.py -q
 ## Phase 3.5 Event Tape
 
 Phase 3.5 uses an immutable exogenous event tape for dust variation, heavy dust events, bird events, and cohort variation. The tape is generated from deterministic RNG streams and serialized as JSON so future scenarios can share the same environmental/contamination events.
+
+## T1 Shared Scenario Contracts
+
+The frozen T1 contracts are documented in:
+
+- `docs/data_contracts/scenario_contracts.md`
+- `docs/architecture/t1_shared_interfaces.md`
+- `docs/integration/t1_parallel_development.md`
+- `docs/adr/ADR-009-t1-shared-contract-freeze.md`
+
+Future scenario modules must implement `MitigationStrategy` and run through `ScenarioSimulationEngine`; they must not duplicate the annual loop or add scenario-name conditionals to the shared engine.
