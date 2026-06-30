@@ -1,8 +1,134 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from pathlib import Path
+from types import MappingProxyType
+from typing import Any, Self
+
+import yaml
 
 from solarclean.config.models import RainfallCleaningConfig, SoilingConfig
+
+
+@dataclass(frozen=True)
+class CalibrationParameter:
+    name: str
+    configuration_path: str
+    category: str
+    central_value: float
+    low_value: float
+    high_value: float
+    unit: str
+    source: str
+    evidence_type: str
+    source_geography_and_climate: str
+    applicability_to_saudi_conditions: str
+    confidence: str
+    status: str
+    rationale: str
+    limitations: str
+    responsible_module_or_owner: str
+
+    @classmethod
+    def from_record(cls, record: dict[str, Any]) -> Self:
+        required = {
+            "name",
+            "configuration_path",
+            "category",
+            "central_value",
+            "low_value",
+            "high_value",
+            "unit",
+            "source",
+            "evidence_type",
+            "source_geography_and_climate",
+            "applicability_to_saudi_conditions",
+            "confidence",
+            "status",
+            "rationale",
+            "limitations",
+            "responsible_module_or_owner",
+        }
+        missing = required.difference(record)
+        if missing:
+            raise ValueError(f"calibration parameter is missing fields: {sorted(missing)}")
+        parameter = cls(
+            name=str(record["name"]),
+            configuration_path=str(record["configuration_path"]),
+            category=str(record["category"]),
+            central_value=float(record["central_value"]),
+            low_value=float(record["low_value"]),
+            high_value=float(record["high_value"]),
+            unit=str(record["unit"]),
+            source=str(record["source"]),
+            evidence_type=str(record["evidence_type"]),
+            source_geography_and_climate=str(record["source_geography_and_climate"]),
+            applicability_to_saudi_conditions=str(record["applicability_to_saudi_conditions"]),
+            confidence=str(record["confidence"]),
+            status=str(record["status"]),
+            rationale=str(record["rationale"]),
+            limitations=str(record["limitations"]),
+            responsible_module_or_owner=str(record["responsible_module_or_owner"]),
+        )
+        parameter.validate()
+        return parameter
+
+    def validate(self) -> None:
+        if self.evidence_type not in {"measured", "calculated", "inferred", "quoted", "assumed"}:
+            raise ValueError(f"invalid evidence_type for {self.name}: {self.evidence_type}")
+        if self.confidence not in {"high", "medium", "low"}:
+            raise ValueError(f"invalid confidence for {self.name}: {self.confidence}")
+        if self.status not in {"validated", "provisional", "blocked", "unsourced"}:
+            raise ValueError(f"invalid status for {self.name}: {self.status}")
+        if self.low_value > self.central_value or self.central_value > self.high_value:
+            raise ValueError(f"low/central/high values are not ordered for {self.name}")
+        if not self.name or not self.configuration_path:
+            raise ValueError("parameter name and configuration_path are required")
+
+    def to_record(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class ParameterRegistry:
+    metadata: MappingProxyType[str, object]
+    parameters: tuple[CalibrationParameter, ...]
+
+    @classmethod
+    def from_yaml(cls, path: Path) -> Self:
+        with path.open("r", encoding="utf-8") as handle:
+            raw = yaml.safe_load(handle) or {}
+        if not isinstance(raw, dict):
+            raise ValueError(f"parameter registry must contain a mapping: {path}")
+        raw_parameters = raw.get("parameters", [])
+        if not isinstance(raw_parameters, list):
+            raise ValueError("parameter registry 'parameters' must be a list")
+        metadata = raw.get("metadata", {})
+        if not isinstance(metadata, dict):
+            raise ValueError("parameter registry 'metadata' must be a mapping")
+        parameters = tuple(
+            CalibrationParameter.from_record(record)
+            for record in raw_parameters
+            if isinstance(record, dict)
+        )
+        if len(parameters) != len(raw_parameters):
+            raise ValueError("each parameter record must be a mapping")
+        names = [parameter.name for parameter in parameters]
+        if len(names) != len(set(names)):
+            raise ValueError("parameter names must be unique")
+        return cls(metadata=MappingProxyType(dict(metadata)), parameters=parameters)
+
+    def get(self, name: str) -> CalibrationParameter:
+        for parameter in self.parameters:
+            if parameter.name == name:
+                return parameter
+        raise KeyError(f"unknown calibration parameter: {name}")
+
+    def by_category(self, category: str) -> tuple[CalibrationParameter, ...]:
+        return tuple(parameter for parameter in self.parameters if parameter.category == category)
+
+    def to_records(self) -> list[dict[str, object]]:
+        return [parameter.to_record() for parameter in self.parameters]
 
 
 @dataclass(frozen=True)
