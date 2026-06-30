@@ -18,6 +18,7 @@ env/
 
 # Generated test and run artifacts
 pytest_tmp/
+.pytest_tmp*/
 pytest-cache-files-*/
 outputs/
 data/cache/

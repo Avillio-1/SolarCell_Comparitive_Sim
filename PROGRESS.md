@@ -265,7 +265,32 @@ The deterministic offline fixture covers 2025-01-01 through 2025-01-02 inclusive
 - Next clean extension point for Phase 4: add scenario controllers that consume the immutable event tape and reserve scenario-specific uncertainty to `RngStream.FUTURE_SCENARIO`, without changing clean PV, weather providers, or baseline domain contracts.
 - Reactive drone inspection and computer vision.
 - Human cleaning dispatch and crew operations.
-- Proactive self-cleaning coating behavior.
+- Coating cost calibration, annualization, and water valuation through T5/T4.
 - Techno-economic model.
 - Sensitivity analysis and Monte Carlo sweeps.
 - Web dashboard, database, authentication, cloud, and Docker deployment.
+
+### Checkpoint 12: T3 KAUST-Inspired Coating Scenario
+
+- Status: completed.
+- Built:
+  - `CoatingStrategy` implemented through the shared `ScenarioSimulationEngine`.
+  - Coating physics for dew point, coated-surface cooling, condensation, passive dust cleaning, limited bird-dropping removal, optical effect, thermal effect, and cleanliness effect.
+  - `CoatingCostBasis` with coated area, material loading, material cost, surface preparation, application labor, process energy, setup cost, inspection/maintenance quantities, useful life, reapplication interval, and deployment mode.
+  - `run-coating` CLI and generic scenario output artifacts.
+  - Weak, central, strong, and paper-calibration coating configs.
+- Source limitation:
+  - The named paper PDF was not present in the workspace. The implementation uses prompt-provided paper facts as calibration anchors and marks cost/process values provisional unless directly prompt-quoted.
+- Deployment limitation:
+  - The prompt reports a 400 C, 30 minute treatment. Direct field application to installed PV modules is not demonstrated.
+- T4/T5 interface requests:
+  - T4 should annualize coating cost and value optional water collection outside coating physics.
+  - T5 should replace provisional material loading, industrial process, application labor, maintenance, and useful-life assumptions with sourced registry values.
+- Verification:
+  - Focused T3 suite: `17 passed, 1 warning`.
+  - Full suite: `61 passed, 1 skipped`.
+  - Coverage: `61 passed, 1 skipped`, total coverage `91%`.
+  - Ruff format check: `67 files already formatted`.
+  - Ruff lint: `All checks passed!`.
+  - Mypy: `Success: no issues found in 49 source files`.
+  - CLI smoke: `python -m solarclean.cli.main run-coating --config configs/offline_fixture.yaml` wrote `outputs\offline-fixture-run-coating-20260630T211646Z-1afa868a` with scenario daily results, scenario events, scenario summary, and coating comparison summary.

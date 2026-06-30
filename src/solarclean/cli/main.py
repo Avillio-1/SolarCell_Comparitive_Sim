@@ -10,6 +10,7 @@ from solarclean.application.use_cases import (
     FetchWeather,
     RunBaselineSimulation,
     RunCleanPVSimulation,
+    RunCoatingSimulation,
     _weather_provider,
     _weather_request,
 )
@@ -37,6 +38,12 @@ def run_clean(config: ConfigPath) -> None:
 def run_baseline(config: ConfigPath) -> None:
     result = RunBaselineSimulation(load_config(config)).run()
     typer.echo(f"Baseline run written to {result.output_directory}")
+
+
+@app.command("run-coating")
+def run_coating(config: ConfigPath) -> None:
+    result = RunCoatingSimulation(load_config(config)).run()
+    typer.echo(f"Coating scenario run written to {result.output_directory}")
 
 
 @app.command("validate-weather")
