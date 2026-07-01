@@ -216,6 +216,7 @@ class DailyScenarioResult:
     scenario_name: str
     clean_energy_kwh: float
     actual_energy_kwh: float
+    allow_above_clean_reference: bool = False
     operational: OperationalQuantities = field(default_factory=OperationalQuantities)
     events: tuple[DomainEvent, ...] = ()
     extensions: Mapping[str, object] = field(default_factory=dict)
@@ -227,8 +228,14 @@ class DailyScenarioResult:
             raise ValueError("clean energy must be non-negative")
         if self.actual_energy_kwh < 0:
             raise ValueError("actual energy must be non-negative")
-        if self.actual_energy_kwh > self.clean_energy_kwh + 1e-9:
-            raise ValueError("actual energy cannot exceed clean energy")
+        if (
+            not self.allow_above_clean_reference
+            and self.actual_energy_kwh > self.clean_energy_kwh + 1e-9
+        ):
+            raise ValueError(
+                "actual energy cannot exceed clean energy unless the scenario "
+                "explicitly allows an above-reference physical gain"
+            )
         loss = self.clean_energy_kwh - self.actual_energy_kwh
         ratio = self.actual_energy_kwh / self.clean_energy_kwh if self.clean_energy_kwh > 0 else 1.0
         object.__setattr__(self, "events", tuple(self.events))
@@ -246,6 +253,7 @@ class DailyScenarioResult:
             "scenario_name": self.scenario_name,
             "clean_energy_kwh": self.clean_energy_kwh,
             "actual_energy_kwh": self.actual_energy_kwh,
+            "allow_above_clean_reference": self.allow_above_clean_reference,
             "energy_loss_kwh": self.energy_loss_kwh,
             "soiling_ratio": self.soiling_ratio,
         }

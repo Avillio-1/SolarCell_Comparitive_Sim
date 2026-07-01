@@ -59,12 +59,19 @@ def test_coating_strategy_runs_through_shared_engine_and_preserves_tape_checksum
     frame = result.to_daily_frame()
     assert result.scenario_name == "coating"
     assert len(result.daily_results) == len(context.clean_energy.daily)
-    assert (frame["actual_energy_kwh"] <= frame["clean_energy_kwh"] + 1e-9).all()
+    assert frame["allow_above_clean_reference"].all()
     assert "extension_event_tape_checksum" in frame.columns
     assert frame["extension_event_tape_checksum"].iloc[0] == context.event_tape.checksum()
     assert "optical_effect_kwh" in result.extension_keys()
     assert "temperature_effect_kwh" in result.extension_keys()
     assert "cleanliness_effect_kwh" in result.extension_keys()
+    reconciled = (
+        frame["clean_energy_kwh"]
+        + frame["extension_optical_effect_kwh"]
+        + frame["extension_cleanliness_effect_kwh"]
+        + frame["extension_temperature_effect_kwh"]
+    )
+    assert (reconciled - frame["actual_energy_kwh"]).abs().max() <= 1e-9
 
 
 def test_coating_strategy_is_reproducible() -> None:

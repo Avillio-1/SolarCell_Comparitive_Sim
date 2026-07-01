@@ -138,6 +138,26 @@ def test_shared_context_and_extensions_are_immutable_or_copy_protected() -> None
         event.metadata["b"] = 2  # type: ignore[index]
 
 
+def test_above_clean_reference_requires_explicit_opt_in() -> None:
+    with pytest.raises(ValueError, match="above-reference"):
+        DailyScenarioResult(
+            date=date(2025, 1, 1),
+            scenario_name="cleaning_only",
+            clean_energy_kwh=10.0,
+            actual_energy_kwh=10.1,
+        )
+
+    daily = DailyScenarioResult(
+        date=date(2025, 1, 1),
+        scenario_name="coating",
+        clean_energy_kwh=10.0,
+        actual_energy_kwh=10.1,
+        allow_above_clean_reference=True,
+    )
+
+    assert daily.energy_loss_kwh == pytest.approx(-0.1)
+
+
 def test_scenario_specific_fields_survive_common_result_handling() -> None:
     result = ScenarioSimulationEngine(MockFutureStrategy()).run(_scenario_context(), random_seed=1)
 

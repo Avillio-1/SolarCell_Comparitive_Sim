@@ -99,8 +99,9 @@ class CoatingStrategy:
             if self.cost_basis.total_coated_area_m2 > 0.0
             else 0.0
         )
+        previous_average_dust = _average_dust(state.cohorts)
         base_update = self.soiling_model.update(
-            ContaminationState(dust_soiling_ratio=_average_dust(state.cohorts)),
+            ContaminationState(dust_soiling_ratio=previous_average_dust),
             day_input.environment,
             rng,
             event_inputs=day_input.event_inputs,
@@ -112,16 +113,21 @@ class CoatingStrategy:
         next_cohorts: list[CoatingCohortState] = []
         for cohort in state.cohorts:
             effectiveness = _effectiveness_after_degradation(cohort, self.coating)
-            dust_ratio = base_update.state.dust_soiling_ratio
+            uncoated_delta = base_update.state.dust_soiling_ratio - previous_average_dust
             if day_input.event_inputs is not None:
-                dust_ratio *= day_input.event_inputs.cohort_variation_multipliers.get(
+                variation = day_input.event_inputs.cohort_variation_multipliers.get(
                     cohort.cohort_id,
                     1.0,
                 )
-            dust_ratio = max(0.0, min(1.0, dust_ratio))
-            dust_ratio = 1.0 - (
-                (1.0 - dust_ratio) * self.coating.physics.dust_accumulation_multiplier
-            )
+            else:
+                variation = 1.0
+            if uncoated_delta < 0.0:
+                coated_delta = (
+                    uncoated_delta * variation * self.coating.physics.dust_accumulation_multiplier
+                )
+            else:
+                coated_delta = uncoated_delta
+            dust_ratio = max(0.0, min(1.0, cohort.dust_soiling_ratio + coated_delta))
             restored = calculate_passive_dust_cleaning(
                 current_dust_soiling_ratio=dust_ratio,
                 condensed_liters_per_m2=condensed_per_m2,
@@ -239,6 +245,7 @@ class CoatingStrategy:
             scenario_name=self.name,
             clean_energy_kwh=day_input.clean_energy_kwh,
             actual_energy_kwh=energy.final_energy_kwh,
+            allow_above_clean_reference=True,
             operational=OperationalQuantities(
                 coated_panel_count=self.farm.total_panels,
                 water_liters=day_water.actually_collected_liters,

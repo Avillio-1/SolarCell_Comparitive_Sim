@@ -53,7 +53,7 @@ coating:
   enabled: true
   preset: strong
   physics:
-    optical_transmittance_multiplier: 0.930
+    optical_transmittance_multiplier: 1.014
     emissivity_atmospheric_window: 0.93
     contact_angle_degrees: 170
     sliding_angle_degrees: 2
@@ -77,7 +77,8 @@ coating:
     mode: factory_preinstall
     area_per_panel_m2: 2.0
     useful_life_years: 7
-    reapplication_interval_years: 7
+    reapplication_supported: false
+    reapplication_interval_years: null
     thermal_treatment_temperature_c: 400
     thermal_treatment_duration_minutes: 30
     field_application_demonstrated: false
@@ -91,7 +92,7 @@ coating:
     inspection_hours_per_year: 25
     maintenance_cost_per_year: 800
     useful_life_years: 7
-    reapplication_interval_years: 7
+    reapplication_interval_years: null
     water_collection_infrastructure_cost: 0
     assumption_level: strong
     source_status: provisional

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 
 import pandas as pd
 
@@ -185,6 +186,7 @@ class RunCoatingSimulation:
         summary = _coating_summary(
             coating,
             baseline,
+            config=self.config,
             event_tape_checksum=event_tape.checksum(),
         )
         writer.write_summary(output_dir, summary)
@@ -254,6 +256,7 @@ def _coating_summary(
     coating: AnnualScenarioResult,
     baseline: BaselineSimulationResult,
     *,
+    config: SolarCleanConfig,
     event_tape_checksum: str,
 ) -> dict[str, object]:
     condensed = _sum_daily_extension(coating, "condensed_water_liters")
@@ -262,10 +265,26 @@ def _coating_summary(
     optical = _sum_daily_extension(coating, "optical_effect_kwh")
     temperature = _sum_daily_extension(coating, "temperature_effect_kwh")
     cleanliness = _sum_daily_extension(coating, "cleanliness_effect_kwh")
-    return {
+    coated_area_m2 = _first_daily_extension_float(coating, "coated_area_m2")
+    cleanliness_improvement = _sum_cleanliness_improvement_vs_baseline(coating, baseline)
+    period = _period_metadata(coating)
+    payload = {
         "command": "run-coating",
         "scenario_name": coating.scenario_name,
         "event_tape_checksum": event_tape_checksum,
+        **period,
+        "coating_preset": config.coating.preset,
+        "calibration_fixture": config.coating.preset
+        in {"paper_calibration", "paper_endpoint_calibration"},
+        "annual_field_basis": "simulated_period_total",
+        "clean_energy_reference": (
+            "clean uncoated PVWatts AC energy at the modeled operating temperature"
+        ),
+        "above_clean_reference_allowed": True,
+        "optical_multiplier_basis": "relative coated-versus-uncoated PV performance",
+        "source_optical_transmittance_absolute_fraction": (
+            config.coating.physics.source_optical_transmittance_absolute_fraction
+        ),
         "annual_clean_energy_kwh": coating.annual_clean_energy_kwh,
         "annual_baseline_actual_energy_kwh": baseline.annual_actual_energy_kwh,
         "annual_coating_actual_energy_kwh": coating.annual_actual_energy_kwh,
@@ -277,14 +296,46 @@ def _coating_summary(
         "annual_optical_effect_kwh": optical,
         "annual_temperature_effect_kwh": temperature,
         "annual_cleanliness_effect_kwh": cleanliness,
+        "annual_cleanliness_improvement_vs_baseline_kwh": cleanliness_improvement,
         "annual_condensed_water_liters": condensed,
         "annual_potentially_collectable_water_liters": potential,
         "annual_actually_collected_water_liters": actual_water,
+        "coated_area_m2": coated_area_m2,
+        "water_scope": "whole simulated coated farm over the simulated period",
+        "annual_condensed_water_liters_per_m2": _safe_divide(condensed, coated_area_m2),
+        "annual_potentially_collectable_water_liters_per_m2": _safe_divide(
+            potential, coated_area_m2
+        ),
+        "annual_actually_collected_water_liters_per_m2": _safe_divide(actual_water, coated_area_m2),
         "cost_basis_available": True,
         "water_revenue_included": False,
         "annualization_included": False,
         "paper_source_status": "prompt_quoted_values_only",
     }
+    payload.update(
+        {
+            "period_clean_energy_kwh": payload["annual_clean_energy_kwh"],
+            "period_baseline_actual_energy_kwh": payload["annual_baseline_actual_energy_kwh"],
+            "period_coating_actual_energy_kwh": payload["annual_coating_actual_energy_kwh"],
+            "period_energy_loss_kwh": payload["annual_energy_loss_kwh"],
+            "period_energy_loss_percent": payload["annual_energy_loss_percent"],
+            "period_optical_effect_kwh": optical,
+            "period_temperature_effect_kwh": temperature,
+            "period_cleanliness_effect_kwh": cleanliness,
+            "period_cleanliness_improvement_vs_baseline_kwh": cleanliness_improvement,
+            "period_condensed_water_liters": condensed,
+            "period_potentially_collectable_water_liters": potential,
+            "period_actually_collected_water_liters": actual_water,
+            "period_condensed_water_liters_per_m2": payload["annual_condensed_water_liters_per_m2"],
+            "period_potentially_collectable_water_liters_per_m2": payload[
+                "annual_potentially_collectable_water_liters_per_m2"
+            ],
+            "period_actually_collected_water_liters_per_m2": payload[
+                "annual_actually_collected_water_liters_per_m2"
+            ],
+        }
+    )
+    return payload
 
 
 def _sum_daily_extension(result: AnnualScenarioResult, key: str) -> float:
@@ -295,6 +346,62 @@ def _sum_daily_extension(result: AnnualScenarioResult, key: str) -> float:
             raise TypeError(f"daily extension {key} must be numeric")
         total += float(value)
     return total
+
+
+def _first_daily_extension_float(result: AnnualScenarioResult, key: str) -> float:
+    if not result.daily_results:
+        return 0.0
+    value = result.daily_results[0].extensions[key]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise TypeError(f"daily extension {key} must be numeric")
+    return float(value)
+
+
+def _safe_divide(numerator: float, denominator: float) -> float:
+    return numerator / denominator if denominator > 0.0 else 0.0
+
+
+def _sum_cleanliness_improvement_vs_baseline(
+    coating: AnnualScenarioResult,
+    baseline: BaselineSimulationResult,
+) -> float:
+    total = 0.0
+    for daily in coating.daily_results:
+        value = daily.extensions["cleanliness_ratio"]
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise TypeError("daily extension cleanliness_ratio must be numeric")
+        baseline_actual = float(
+            cast(float, baseline.daily.at[daily.date.isoformat(), "actual_energy_kwh"])
+        )
+        total += daily.clean_energy_kwh * float(value) - baseline_actual
+    return total
+
+
+def _period_metadata(result: AnnualScenarioResult) -> dict[str, object]:
+    if not result.daily_results:
+        return {
+            "period_start_date": None,
+            "period_end_date": None,
+            "period_day_count": 0,
+            "period_is_full_year": False,
+        }
+    dates = [daily.date for daily in result.daily_results]
+    start = min(dates)
+    end = max(dates)
+    is_full_year = (
+        start.month == 1
+        and start.day == 1
+        and end.month == 12
+        and end.day == 31
+        and start.year == end.year
+        and len(set(dates)) in {365, 366}
+    )
+    return {
+        "period_start_date": start.isoformat(),
+        "period_end_date": end.isoformat(),
+        "period_day_count": len(set(dates)),
+        "period_is_full_year": is_full_year,
+    }
 
 
 def finite_numeric_frame(frame: pd.DataFrame) -> bool:

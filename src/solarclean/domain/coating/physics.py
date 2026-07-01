@@ -49,10 +49,13 @@ def calculate_surface_temperature_c(
     irradiance_w_m2: float,
     physics: CoatingPhysicsConfig,
 ) -> float:
-    humidity_factor = min(
-        1.2,
-        max(0.0, relative_humidity_pct / physics.humidity_cooling_reference_pct),
-    )
+    if relative_humidity_pct <= physics.humidity_cooling_reference_pct:
+        humidity_factor = 1.0
+    else:
+        humidity_factor = max(
+            0.0,
+            (100.0 - relative_humidity_pct) / (100.0 - physics.humidity_cooling_reference_pct),
+        )
     wind_factor = math.exp(-physics.wind_cooling_decay_per_m_s * max(0.0, wind_speed_m_s))
     night_factor = 1.0 if irradiance_w_m2 <= 5.0 else physics.daytime_cooling_fraction
     cooling = (
@@ -77,7 +80,7 @@ def calculate_condensation(
     dew_point = calculate_dew_point_c(air_temperature_c, relative_humidity_pct)
     if (
         relative_humidity_pct < water.minimum_relative_humidity_pct
-        or surface_temperature_c >= dew_point
+        or surface_temperature_c > dew_point
         or exposure_hours <= 0.0
         or area_m2 <= 0.0
     ):
@@ -154,14 +157,15 @@ def calculate_energy_mechanisms(
     gamma_pdc_per_c: float,
 ) -> EnergyMechanismResult:
     clean = max(0.0, clean_energy_kwh)
-    optical_multiplier = min(1.0, max(0.0, optical_transmittance_multiplier))
+    optical_multiplier = min(1.2, max(0.0, optical_transmittance_multiplier))
     clean_ratio = min(1.0, max(0.0, cleanliness_ratio))
     temperature_multiplier = max(0.0, 1.0 + abs(gamma_pdc_per_c) * max(0.0, cooling_delta_c))
-    optical_effect = clean * (optical_multiplier - 1.0)
-    temperature_effect = clean * optical_multiplier * clean_ratio * (temperature_multiplier - 1.0)
-    cleanliness_effect = clean * (clean_ratio - 1.0)
-    final = clean + optical_effect + temperature_effect + cleanliness_effect
-    final = min(clean, max(0.0, final))
+    after_optical = clean * optical_multiplier
+    after_cleanliness = after_optical * clean_ratio
+    final = max(0.0, after_cleanliness * temperature_multiplier)
+    optical_effect = after_optical - clean
+    cleanliness_effect = after_cleanliness - after_optical
+    temperature_effect = final - after_cleanliness
     return EnergyMechanismResult(
         clean_reference_energy_kwh=clean,
         optical_effect_kwh=optical_effect,

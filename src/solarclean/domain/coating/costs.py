@@ -28,7 +28,7 @@ class CoatingCostBasis:
     inspection_hours_per_year: float
     maintenance_cost_per_year: float
     useful_life_years: float
-    reapplication_interval_years: float
+    reapplication_interval_years: float | None
     deployment_mode: CoatingDeploymentMode
     water_collection_infrastructure_cost: float
     assumption_level: AssumptionLevel

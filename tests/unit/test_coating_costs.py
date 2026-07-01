@@ -22,7 +22,8 @@ def test_coating_config_loads_default_offline_fixture() -> None:
     config = load_config(Path("configs/offline_fixture.yaml"))
 
     assert config.coating.preset == "central"
-    assert config.coating.physics.optical_transmittance_multiplier == pytest.approx(0.913)
+    assert config.coating.physics.optical_transmittance_multiplier == pytest.approx(1.0)
+    assert config.coating.physics.source_optical_transmittance_absolute_fraction is None
     assert config.coating.water.collectable_water_efficiency_fraction < 1.0
     assert config.coating.costs.material_cost_per_m2 > 0.0
 
@@ -40,7 +41,7 @@ def test_coating_cost_basis_scales_to_10000_panels() -> None:
         inspection_hours_per_year=40.0,
         maintenance_cost_per_year=1200.0,
         useful_life_years=5.0,
-        reapplication_interval_years=5.0,
+        reapplication_interval_years=None,
         water_collection_infrastructure_cost=0.0,
         assumption_level="central",
         source_status="provisional",
@@ -67,7 +68,22 @@ def test_coating_cost_rejects_free_or_negative_material_cost() -> None:
 
 def test_coating_deployment_rejects_reapplication_after_useful_life() -> None:
     with pytest.raises(ValueError, match="reapplication interval"):
-        CoatingDeploymentConfig(useful_life_years=3.0, reapplication_interval_years=4.0)
+        CoatingDeploymentConfig(
+            useful_life_years=3.0,
+            reapplication_supported=True,
+            field_application_demonstrated=True,
+            reapplication_interval_years=4.0,
+        )
+
+
+def test_coating_deployment_rejects_unsupported_reapplication_interval() -> None:
+    with pytest.raises(ValueError, match="reapplication interval requires"):
+        CoatingDeploymentConfig(reapplication_supported=False, reapplication_interval_years=5.0)
+
+
+def test_coating_deployment_rejects_undemonstrated_retrofit() -> None:
+    with pytest.raises(ValueError, match="retrofit deployment"):
+        CoatingDeploymentConfig(mode="retrofit", field_application_demonstrated=False)
 
 
 def test_coating_cost_rejects_reapplication_after_useful_life() -> None:
@@ -80,6 +96,8 @@ def test_coating_config_rejects_mismatched_lifecycle_basis() -> None:
         CoatingConfig(
             deployment=CoatingDeploymentConfig(
                 useful_life_years=3.0,
+                reapplication_supported=True,
+                field_application_demonstrated=True,
                 reapplication_interval_years=3.0,
             ),
             costs=CoatingCostConfig(

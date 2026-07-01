@@ -500,14 +500,14 @@ parameters:
     low_value: 0.15
     high_value: 0.75
     unit: fraction
-    source: "Hydrophobic/nanotextured self-cleaning coating studies and arid PV coating reviews."
+    source: "Hydrophobic/nanotextured self-cleaning coating studies and arid PV coating reviews; not the paper endpoint ratio by itself."
     evidence_type: inferred
     source_geography_and_climate: "Lab and outdoor tests, not a Riyadh utility farm."
     applicability_to_saudi_conditions: "Relevant to Saudi dust adhesion but needs local dust chemistry validation."
     confidence: low
     status: blocked
-    rationale: "Represents the fractional reduction in dust accumulation under a coating scenario."
-    limitations: "Performance depends on abrasion, UV exposure, cleaning method, and dust particle properties."
+    rationale: "Represents a mechanistic fractional reduction in new dust accumulation under a coating scenario."
+    limitations: "Performance depends on abrasion, UV exposure, cleaning method, and dust particle properties. Endpoint-derived coated/uncoated power-loss ratios must not be combined with passive cleaning as if they were independent adhesion measurements."
     responsible_module_or_owner: T3 coating/economics
   - name: coating.cell_temperature_reduction_c
     configuration_path: coating.performance.cell_temperature_reduction_c
@@ -558,20 +558,20 @@ parameters:
     limitations: "No selected product or Saudi abrasion test."
     responsible_module_or_owner: T3 coating/economics
   - name: coating.optical_penalty_fraction
-    configuration_path: coating.performance.optical_penalty_fraction
+    configuration_path: coating.physics.optical_transmittance_multiplier
     category: coating
     central_value: 0.01
     low_value: 0.0
     high_value: 0.03
     unit: fraction
-    source: "Transparent coating literature; optical losses vary by material and application thickness."
+    source: "Transparent coating literature and low-side sensitivity assumption; optical losses vary by material and application thickness. Absolute glass transmittance must not be used directly as a relative PV multiplier."
     evidence_type: inferred
     source_geography_and_climate: "Global coating optical tests."
     applicability_to_saudi_conditions: "Optical penalty applies regardless of climate; dust abrasion may increase it."
     confidence: low
     status: blocked
     rationale: "Prevents coating scenarios from receiving a free anti-soiling benefit without transmission cost."
-    limitations: "Must use product-specific transmittance once T3 selects a coating."
+    limitations: "Weak-preset optical penalty is not a measured result from the named coating paper. Must use product- or module-specific relative coated-versus-uncoated PV performance once T3 selects a coating."
     responsible_module_or_owner: T3 coating/economics
   - name: coating.water_collection_l_per_m2_day
     configuration_path: coating.performance.water_collection_l_per_m2_day
@@ -587,7 +587,7 @@ parameters:
     confidence: low
     status: blocked
     rationale: "Keeps water collection separate from dust reduction and cooling."
-    limitations: "Should remain zero unless T3 implements a coating with measured water capture."
+    limitations: "Should remain zero unless T3 implements a coating with measured water capture and a collection system. The 0.128 L/m2/night paper value is favorable-condition collected water, not guaranteed nightly gross condensation."
     responsible_module_or_owner: T3 coating/economics
   - name: economics.electricity_tariff_sar_per_kwh
     configuration_path: economics.tariff.sar_per_kwh

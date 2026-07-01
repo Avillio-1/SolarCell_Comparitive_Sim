@@ -34,6 +34,17 @@ Retrieval date for web sources: 2026-06-30.
 - MIT News article on electrostatic water-free PV dust removal: https://news.mit.edu/2022/solar-panels-dust-magnets-0311. Used as context that dry cleaning and dust adhesion are active research areas, not as the selected SolarClean coating.
 - Science Advances electrostatic PV dust-removal article: https://www.science.org/doi/10.1126/sciadv.abm0078. Used for dust-removal context and the importance of humidity/moisture.
 - Hydrophobic/nanotextured self-cleaning coating and radiative/hydrogel cooling literature were used as broad evidence. T3 must replace registry values with the selected KAUST-inspired coating evidence, product data, or test data before decision use.
+- The prompt-quoted 91.3% coated-glass solar transmittance is retained as
+  source metadata only. It is not evidence for an 8.7% coating-versus-uncoated
+  PV energy penalty. The active optical multiplier must be a relative
+  coated-versus-uncoated PV performance value.
+- The prompt-quoted six-month 28% uncoated and 1.5% coated power-loss endpoints
+  are represented only in the endpoint-equivalent fixture. The endpoint-derived
+  ratio is not treated as a standalone dust-adhesion measurement and must not be
+  combined with passive-cleaning efficiency in the same calibration fixture.
+- The prompt-quoted 128 g/m2/night water yield is a favorable-condition collected
+  water result. The production model reports gross condensation, physically
+  collectable water, and actually harvested water separately.
 
 ## Economics
 

@@ -10,7 +10,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 WeatherProviderName = Literal["nasa_power", "csv", "fixture"]
 FarmRepresentationName = Literal["representative", "cohort"]
 MissingDataPolicy = Literal["error", "drop", "interpolate"]
-CoatingPresetName = Literal["weak", "central", "strong", "paper_calibration"]
+CoatingPresetName = Literal[
+    "weak", "central", "strong", "paper_calibration", "paper_endpoint_calibration"
+]
 CoatingDeploymentMode = Literal["factory_preinstall", "retrofit"]
 AssumptionLevel = Literal["weak", "central", "strong"]
 SourceStatus = Literal["prompt_quoted", "provisional", "unsourced"]
@@ -167,7 +169,8 @@ class BirdDroppingConfig(StrictModel):
 
 
 class CoatingPhysicsConfig(StrictModel):
-    optical_transmittance_multiplier: float = Field(default=0.913, gt=0, le=1)
+    optical_transmittance_multiplier: float = Field(default=1.0, gt=0, le=1.2)
+    source_optical_transmittance_absolute_fraction: float | None = Field(default=None, gt=0, le=1)
     emissivity_atmospheric_window: float = Field(default=0.90, ge=0, le=1)
     contact_angle_degrees: float = Field(default=167.0, ge=0, le=180)
     sliding_angle_degrees: float = Field(default=3.0, ge=0, le=90)
@@ -177,7 +180,7 @@ class CoatingPhysicsConfig(StrictModel):
     max_surface_cooling_c: float = Field(default=7.0, ge=0)
     humidity_cooling_reference_pct: float = Field(default=80.0, ge=1, le=100)
     wind_cooling_decay_per_m_s: float = Field(default=0.08, ge=0)
-    daytime_cooling_fraction: float = Field(default=0.35, ge=0, le=1)
+    daytime_cooling_fraction: float = Field(default=0.0, ge=0, le=1)
     passive_cleaning_base_efficiency: float = Field(default=0.55, ge=0, le=1)
     passive_cleaning_tilt_reference_degrees: float = Field(default=25.0, ge=1, le=90)
     bird_removal_efficiency: float = Field(default=0.08, ge=0, le=1)
@@ -195,15 +198,31 @@ class CoatingDeploymentConfig(StrictModel):
     mode: CoatingDeploymentMode = "factory_preinstall"
     area_per_panel_m2: float = Field(default=2.0, gt=0)
     useful_life_years: float = Field(default=5.0, gt=0)
-    reapplication_interval_years: float = Field(default=5.0, gt=0)
+    reapplication_supported: bool = False
+    reapplication_interval_years: float | None = Field(default=None, gt=0)
     thermal_treatment_temperature_c: float = Field(default=400.0, gt=0)
     thermal_treatment_duration_minutes: float = Field(default=30.0, gt=0)
     field_application_demonstrated: bool = False
 
     @model_validator(mode="after")
     def validate_reapplication_interval(self) -> CoatingDeploymentConfig:
-        if self.reapplication_interval_years > self.useful_life_years:
+        if (
+            self.reapplication_interval_years is not None
+            and self.reapplication_interval_years > self.useful_life_years
+        ):
             raise ValueError("reapplication interval cannot exceed useful life")
+        if not self.reapplication_supported and self.reapplication_interval_years is not None:
+            raise ValueError(
+                "reapplication interval requires a supported replacement or refurbishment pathway"
+            )
+        if (
+            self.reapplication_supported
+            and self.mode == "retrofit"
+            and not self.field_application_demonstrated
+        ):
+            raise ValueError("retrofit reapplication requires demonstrated field application")
+        if self.mode == "retrofit" and not self.field_application_demonstrated:
+            raise ValueError("retrofit deployment requires demonstrated field application")
         return self
 
 
@@ -217,14 +236,17 @@ class CoatingCostConfig(StrictModel):
     inspection_hours_per_year: float = Field(default=40.0, ge=0)
     maintenance_cost_per_year: float = Field(default=1200.0, ge=0)
     useful_life_years: float = Field(default=5.0, gt=0)
-    reapplication_interval_years: float = Field(default=5.0, gt=0)
+    reapplication_interval_years: float | None = Field(default=None, gt=0)
     water_collection_infrastructure_cost: float = Field(default=0.0, ge=0)
     assumption_level: AssumptionLevel = "central"
     source_status: SourceStatus = "provisional"
 
     @model_validator(mode="after")
     def validate_cost_life(self) -> CoatingCostConfig:
-        if self.reapplication_interval_years > self.useful_life_years:
+        if (
+            self.reapplication_interval_years is not None
+            and self.reapplication_interval_years > self.useful_life_years
+        ):
             raise ValueError("reapplication interval cannot exceed useful life")
         return self
 
@@ -245,6 +267,11 @@ class CoatingConfig(StrictModel):
             != self.costs.reapplication_interval_years
         ):
             raise ValueError("coating lifecycle values must match between deployment and costs")
+        if (
+            not self.deployment.reapplication_supported
+            and self.costs.reapplication_interval_years is not None
+        ):
+            raise ValueError("coating cost reapplication interval requires deployment support")
         return self
 
 
@@ -277,4 +304,9 @@ class SolarCleanConfig(StrictModel):
             raise ValueError("pv_system.panel_count must equal farm.total_panels")
         if self.pv_system.panel_capacity_w != self.farm.panel_capacity_w:
             raise ValueError("pv_system.panel_capacity_w must equal farm.panel_capacity_w")
+        if self.coating.preset == "paper_endpoint_calibration":
+            day_count = (self.simulation.end.date() - self.simulation.start.date()).days + 1
+            endpoint_ratio = 1.0 - self.soiling.base_daily_soiling_loss_fraction * day_count
+            if self.soiling.minimum_soiling_ratio > endpoint_ratio:
+                raise ValueError("soiling floor clips the paper endpoint calibration")
         return self

@@ -52,13 +52,18 @@ The strategy owns only day-level intervention behavior and opaque state. The sha
 | `scenario_name` | `str` | none | Strategy |
 | `clean_energy_kwh` | `float` | kWh/day | Shared engine/strategy echo |
 | `actual_energy_kwh` | `float` | kWh/day | Strategy |
+| `allow_above_clean_reference` | `bool` | none | Strategy |
 | `energy_loss_kwh` | derived `float` | kWh/day | Contract |
 | `soiling_ratio` | derived `float` | fraction | Contract |
 | `operational` | `OperationalQuantities` | mixed | Strategy |
 | `events` | tuple of `DomainEvent` | event-specific | Strategy |
 | `extensions` | immutable mapping | scenario-specific | Strategy |
 
-`actual_energy_kwh` must not exceed `clean_energy_kwh`.
+By default, `actual_energy_kwh` must not exceed `clean_energy_kwh`. A strategy
+may set `allow_above_clean_reference=True` only when the clean reference is not
+the scenario's physical upper bound, such as a coating scenario with
+coating-specific optical or thermal gains. Cleaning-only recovery remains
+bounded by the appropriate clean reference.
 
 ## OperationalQuantities
 
@@ -109,4 +114,3 @@ Common consumers should use `summary()` and `to_daily_frame()` and ignore unknow
 - Common result handling preserves unknown extension keys with an `extension_` column prefix.
 - Extensions may contain JSON-safe scalars or structured values.
 - Extensions must not be required for common annual energy comparison.
-

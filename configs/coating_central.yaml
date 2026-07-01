@@ -53,7 +53,8 @@ coating:
   enabled: true
   preset: central
   physics:
-    optical_transmittance_multiplier: 0.913
+    optical_transmittance_multiplier: 1.000
+    source_optical_transmittance_absolute_fraction: 0.913
     emissivity_atmospheric_window: 0.90
     contact_angle_degrees: 167
     sliding_angle_degrees: 3
@@ -63,7 +64,7 @@ coating:
     max_surface_cooling_c: 7.0
     humidity_cooling_reference_pct: 80
     wind_cooling_decay_per_m_s: 0.08
-    daytime_cooling_fraction: 0.35
+    daytime_cooling_fraction: 0.0
     passive_cleaning_base_efficiency: 0.55
     passive_cleaning_tilt_reference_degrees: 25
     bird_removal_efficiency: 0.08
@@ -72,12 +73,13 @@ coating:
     condensation_liters_per_m2_per_c_hour: 0.0142
     minimum_relative_humidity_pct: 60
     collectable_water_efficiency_fraction: 0.65
-    actual_collection_efficiency_fraction: 0.50
+    actual_collection_efficiency_fraction: 0.0
   deployment:
     mode: factory_preinstall
     area_per_panel_m2: 2.0
     useful_life_years: 5
-    reapplication_interval_years: 5
+    reapplication_supported: false
+    reapplication_interval_years: null
     thermal_treatment_temperature_c: 400
     thermal_treatment_duration_minutes: 30
     field_application_demonstrated: false
@@ -91,7 +93,7 @@ coating:
     inspection_hours_per_year: 40
     maintenance_cost_per_year: 1200
     useful_life_years: 5
-    reapplication_interval_years: 5
+    reapplication_interval_years: null
     water_collection_infrastructure_cost: 0
     assumption_level: central
     source_status: provisional
