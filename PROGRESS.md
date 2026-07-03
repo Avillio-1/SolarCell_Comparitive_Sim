@@ -308,12 +308,11 @@ The deterministic offline fixture covers 2025-01-01 through 2025-01-02 inclusive
 ## Known Remaining Work For Later Phases
 
 - Next clean extension point for Phase 4: add scenario controllers that consume the immutable event tape and reserve scenario-specific uncertainty to `RngStream.FUTURE_SCENARIO`, without changing clean PV, weather providers, or baseline domain contracts.
-- Reactive drone inspection and computer vision.
-- Human cleaning dispatch and crew operations.
 - Coating cost calibration, annualization, and water valuation through T5/T4.
 - Techno-economic model.
 - Sensitivity analysis and Monte Carlo sweeps.
 - Web dashboard, database, authentication, cloud, and Docker deployment.
+- CV observer, drone, and crew parameter calibration through T5 (see `docs/assumptions/reactive_cv_scenario.md`).
 
 ### Checkpoint 12: T3 KAUST-Inspired Coating Scenario
 
@@ -339,3 +338,33 @@ The deterministic offline fixture covers 2025-01-01 through 2025-01-02 inclusive
   - Ruff lint: `All checks passed!`.
   - Mypy: `Success: no issues found in 49 source files`.
   - CLI smoke: `python -m solarclean.cli.main run-coating --config configs/offline_fixture.yaml` wrote `outputs\offline-fixture-run-coating-20260630T211646Z-1afa868a` with scenario daily results, scenario events, scenario summary, and coating comparison summary.
+
+### Checkpoint 13: T2 Reactive CV Drone And Crew-Cleaning Scenario
+
+- Status: completed.
+- Built:
+  - `ReactiveCVStrategy` implemented through the shared `ScenarioSimulationEngine`, reusing `CohortState`/`CohortFarm`/`KimberStyleSoilingModel` for true state so comparisons with baseline and coating stay fair.
+  - `InspectionScheduler` (rotating cohort coverage), `DroneFleet` (flight capacity, weather cancellation, drone/compute energy), `StatisticalCVObserver` (recall, false-positive rate, missed images, severity/confidence noise) and `PerfectInformationObserver` (zero-error benchmark, same pipeline otherwise).
+  - `ThresholdDispatchPolicy` operating only on `DispatchSignal` (no ground-truth field, by type -- not just convention) with a persistent, aging cleaning queue and crew-capacity limiting.
+  - `CleaningCrew` targeted per-cohort cleaning with configurable dust/bird removal efficiency, crew hours, and water use.
+  - `metrics.summarize_detection_performance()` aggregating realized precision/recall/F1 from per-day confusion-matrix counters recorded for evaluation only.
+  - `run-reactive` CLI command and `RunReactiveSimulation`/`_reactive_summary`, which also runs the perfect-information benchmark (when `reactive_cv.perfect_information_benchmark` is enabled) and reports `cv_error_energy_cost_kwh`.
+  - `configs/reactive_central.yaml`, ADR-011, `docs/data_contracts/reactive_cv_scenario.md`, `docs/assumptions/reactive_cv_scenario.md`.
+- Isolation guarantee:
+  - All CV/drone/dispatch randomness draws from `cv_rng`, spawned once from the shared per-strategy `rng` via `numpy.random.Generator.spawn()` inside `initial_state()`. `spawn()` does not consume from the parent generator's draw sequence, so no reactive-only config can perturb the true dust/bird simulation. Verified directly (`test_cv_rng_spawn_does_not_perturb_the_shared_rng_draw_sequence`) and at the scenario level for day 1 true-state events across differing CV configs and against baseline (`test_changing_cv_randomness_does_not_change_true_dust_or_bird_events`).
+- Source limitation:
+  - No CV model, drone hardware, or crew operations data was available in the workspace. Every `ReactiveCVConfig` default is a provisional, round-number placeholder; see `docs/assumptions/reactive_cv_scenario.md` for the full list and T5 hand-off.
+- Issue found in existing T1/core code (not fixed here; flagged in ADR-011):
+  - `BaselineStrategy`'s carried-over `FarmState.date` never advances past day 1 internally, so bird-dropping `DomainEvent`s attached to `daily_results[1:]` in the baseline scenario carry day 1's date in `scenario_events.csv`. `DailyScenarioResult.date` itself is unaffected. `ReactiveCVStrategy` does not have this problem (it passes `day_input.date` explicitly).
+- T4/T5 interface requests:
+  - T4 should own all cost valuation; `OperationalQuantities.opex_cost`/`capex_cost` are left at `0.0` throughout T2.
+  - T5 should replace the CV observer, drone, and crew defaults with sourced values, and should derive the "dirty" detection threshold economically once T4 exists.
+- Verification:
+  - Focused T2 suite: `37 passed`.
+  - Full suite: `113 passed, 1 skipped`.
+  - Coverage: `113 passed, 1 skipped`, total coverage `90%`.
+  - Ruff format check: clean.
+  - Ruff lint: `All checks passed!`.
+  - Mypy: `Success: no issues found in 58 source files` (checked with `--python-version 3.12` locally; the repo's configured `python_version = "3.11"` currently fails to import numpy's stubs under this sandbox's Python 3.12-only toolchain, a pre-existing environment mismatch unrelated to T2).
+  - CLI smoke: `solarclean run-reactive --config configs/reactive_central.yaml` wrote a run directory with scenario daily results, scenario events, scenario summary, and `reactive_comparison_summary.json` including the perfect-information benchmark comparison.
+
