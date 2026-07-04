@@ -168,6 +168,66 @@ class BirdDroppingConfig(StrictModel):
         return self
 
 
+class ReactiveInspectionConfig(StrictModel):
+    interval_days: int = Field(default=7, gt=0)
+    first_inspection_day_index: int = Field(default=0, ge=0)
+    dirty_soiling_ratio_threshold: float = Field(default=0.92, ge=0, le=1)
+
+    @model_validator(mode="after")
+    def validate_offset(self) -> ReactiveInspectionConfig:
+        if self.first_inspection_day_index >= self.interval_days:
+            raise ValueError("first_inspection_day_index must be less than interval_days")
+        return self
+
+
+class ReactiveDroneConfig(StrictModel):
+    cohorts_per_flight: int = Field(default=10, gt=0)
+    flights_per_day: int = Field(default=4, gt=0)
+    flight_duration_minutes: float = Field(default=18.0, gt=0)
+    max_wind_speed_m_s: float = Field(default=12.0, gt=0)
+    max_precipitation_mm: float = Field(default=0.2, ge=0)
+    energy_kwh_per_flight: float = Field(default=0.35, ge=0)
+    compute_energy_kwh_per_image: float = Field(default=0.01, ge=0)
+
+    @property
+    def max_cohorts_per_day(self) -> int:
+        return self.cohorts_per_flight * self.flights_per_day
+
+
+class ReactiveCVObserverConfig(StrictModel):
+    recall_fraction: float = Field(default=0.85, ge=0, le=1)
+    false_positive_rate: float = Field(default=0.05, ge=0, le=1)
+    missed_image_fraction: float = Field(default=0.03, ge=0, le=1)
+    base_confidence: float = Field(default=0.8, ge=0, le=1)
+    confidence_std_fraction: float = Field(default=0.1, ge=0)
+    severity_error_std_fraction: float = Field(default=0.15, ge=0)
+
+
+class ReactiveDispatchConfig(StrictModel):
+    estimated_loss_threshold_fraction: float = Field(default=0.05, ge=0, le=1)
+    confidence_threshold: float = Field(default=0.5, ge=0, le=1)
+    max_queue_age_days: int = Field(default=14, gt=0)
+
+
+class ReactiveCrewConfig(StrictModel):
+    daily_capacity_cohorts: int = Field(default=6, gt=0)
+    setup_minutes_per_cohort: float = Field(default=8.0, ge=0)
+    cleaning_minutes_per_cohort: float = Field(default=25.0, ge=0)
+    water_liters_per_cohort: float = Field(default=180.0, ge=0)
+    dust_removal_efficiency: float = Field(default=0.92, ge=0, le=1)
+    bird_removal_efficiency: float = Field(default=0.95, ge=0, le=1)
+
+
+class ReactiveCVConfig(StrictModel):
+    enabled: bool = True
+    perfect_information_benchmark: bool = True
+    inspection: ReactiveInspectionConfig = Field(default_factory=ReactiveInspectionConfig)
+    drone: ReactiveDroneConfig = Field(default_factory=ReactiveDroneConfig)
+    observer: ReactiveCVObserverConfig = Field(default_factory=ReactiveCVObserverConfig)
+    dispatch: ReactiveDispatchConfig = Field(default_factory=ReactiveDispatchConfig)
+    crew: ReactiveCrewConfig = Field(default_factory=ReactiveCrewConfig)
+
+
 class CoatingPhysicsConfig(StrictModel):
     optical_transmittance_multiplier: float = Field(default=1.0, gt=0, le=1.2)
     source_optical_transmittance_absolute_fraction: float | None = Field(default=None, gt=0, le=1)
@@ -295,6 +355,7 @@ class SolarCleanConfig(StrictModel):
     rainfall_cleaning: RainfallCleaningConfig = Field(default_factory=RainfallCleaningConfig)
     bird_droppings: BirdDroppingConfig = Field(default_factory=BirdDroppingConfig)
     coating: CoatingConfig = Field(default_factory=CoatingConfig)
+    reactive_cv: ReactiveCVConfig = Field(default_factory=ReactiveCVConfig)
     output: OutputConfig = Field(default_factory=OutputConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 

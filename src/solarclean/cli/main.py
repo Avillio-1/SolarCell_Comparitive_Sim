@@ -11,6 +11,7 @@ from solarclean.application.use_cases import (
     RunBaselineSimulation,
     RunCleanPVSimulation,
     RunCoatingSimulation,
+    RunReactiveSimulation,
     _weather_provider,
     _weather_request,
 )
@@ -44,6 +45,12 @@ def run_baseline(config: ConfigPath) -> None:
 def run_coating(config: ConfigPath) -> None:
     result = RunCoatingSimulation(load_config(config)).run()
     typer.echo(f"Coating scenario run written to {result.output_directory}")
+
+
+@app.command("run-reactive")
+def run_reactive(config: ConfigPath) -> None:
+    result = RunReactiveSimulation(load_config(config)).run()
+    typer.echo(f"Reactive CV scenario run written to {result.output_directory}")
 
 
 @app.command("validate-weather")
