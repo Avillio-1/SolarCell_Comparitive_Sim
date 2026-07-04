@@ -37,6 +37,11 @@ specific vendor's datasheet. `max_wind_speed_m_s=12` and
 `max_precipitation_mm=0.2` are conservative generic small-UAV operating
 limits, not the specific fleet's certified limits.
 
+Due inspections that are skipped because of weather cancellation or daily
+drone capacity are carried in an overdue backlog and prioritized before new
+scheduled cohorts on later days. This is a simple service-backlog model, not
+a route optimizer or multi-day fleet dispatch planner.
+
 ## Cleaning crew
 
 `daily_capacity_cohorts=6`, `setup_minutes_per_cohort=8`,
@@ -55,6 +60,12 @@ round-number thresholds, not derived from an economic break-even analysis
 (which requires T4). `max_queue_age_days=14` is an arbitrary cap intended to
 prevent an unbounded queue during a long weather-cancellation streak, not a
 modeled service-level agreement.
+
+Dispatch receives only bounded `DispatchSignal` values: estimated loss and
+confidence are clipped to `[0, 1]` before thresholding. Ground-truth
+contamination is used only by the observer to generate imperfect observations
+and by reporting code to compute offline metrics such as false-positive
+cleaning and missed contamination.
 
 ## What is *not* assumed
 

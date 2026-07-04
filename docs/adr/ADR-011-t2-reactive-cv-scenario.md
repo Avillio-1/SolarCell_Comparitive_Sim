@@ -19,10 +19,13 @@ exogenous dust/bird simulation.
 Implement the reactive scenario as `ReactiveCVStrategy`, a T1
 `MitigationStrategy`. True per-cohort state reuses
 `solarclean.domain.farm.representation.CohortState`/`CohortFarm` and
-`KimberStyleSoilingModel` exactly as `BaselineStrategy` does, consuming the
-same immutable event tape and the same per-day `rng` argument in the same
-call order, so day-1 true dust/bird outcomes are unaffected by any
-reactive-only configuration.
+`KimberStyleSoilingModel`. The strategy draws and records the shared daily
+dust/rain drivers once per day, then applies those drivers to each cohort's
+own prior dust state so targeted crew cleaning remains local to the cleaned
+cohort on later days. The strategy consumes the same immutable event tape and
+the same per-day `rng` argument in the same call order for shared daily
+drivers, so day-1 true dust/bird outcomes are unaffected by any reactive-only
+configuration.
 
 All CV/drone/dispatch stochasticity draws from a second, independent
 generator (`cv_rng`), spawned once from `rng` inside `initial_state()` via
@@ -38,7 +41,12 @@ only `DispatchSignal` values -- a dataclass with `cohort_id`,
 for offline precision/recall/F1 evaluation) is converted to `DispatchSignal`
 via `to_dispatch_signal()` before dispatch ever sees it. This makes the
 "dispatch cannot see true state" requirement a type-level guarantee rather
-than a convention.
+than a convention. Estimated loss and confidence are bounded to `[0, 1]`
+before dispatch thresholds are evaluated.
+
+Inspections skipped because of weather cancellation or drone daily capacity
+are kept in an overdue inspection backlog. Backlogged cohorts are prepended
+to the next day's scheduled inspection list before capacity is applied.
 
 `PerfectInformationObserver` implements the same `CVObserver` protocol as
 `StatisticalCVObserver` with zero detection error, so the benchmark run
@@ -74,6 +82,6 @@ carried-over `FarmState.date` never advances past the first simulated day:
 directly from `day_input.date`), but bird-dropping `DomainEvent`s attached to
 `daily_results[1:]` in the baseline scenario carry day 1's date. This is
 core-owned code (`src/solarclean/domain/simulation/baseline_strategy.py`),
-so we are flagging it here rather than fixing it as part of T2; `_apply_dust_to_farm`
-in `ReactiveCVStrategy` explicitly passes `day_input.date` and does not have
-this problem.
+so we are flagging it here rather than fixing it as part of T2; the reactive
+strategy constructs its daily `FarmState` with `day_input.date` and does not
+have this problem.

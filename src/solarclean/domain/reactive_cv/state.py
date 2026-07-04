@@ -25,6 +25,7 @@ class ReactiveScenarioState:
     days_since_inspection: MappingProxyType[int, int] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    inspection_backlog: tuple[int, ...] = ()
     cleaning_queue: tuple[int, ...] = ()
     queue_age_days: tuple[int, ...] = ()
 

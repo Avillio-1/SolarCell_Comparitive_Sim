@@ -60,6 +60,21 @@ def test_to_dispatch_signal_drops_ground_truth_and_undetected_observations() -> 
     assert to_dispatch_signal(not_detected) is None
 
 
+def test_to_dispatch_signal_bounds_loss_and_confidence() -> None:
+    observation = CVObservation(
+        cohort_id=4,
+        image_captured=True,
+        detected_dirty=True,
+        estimated_loss_fraction=1.5,
+        confidence=-0.2,
+        _ground_truth_dirty=True,
+    )
+
+    signal = to_dispatch_signal(observation)
+
+    assert signal == DispatchSignal(cohort_id=4, estimated_loss_fraction=1.0, confidence=0.0)
+
+
 def test_selects_cohorts_above_threshold_respecting_crew_capacity() -> None:
     policy = ThresholdDispatchPolicy(_config(estimated_loss_threshold_fraction=0.05))
     signals = (
