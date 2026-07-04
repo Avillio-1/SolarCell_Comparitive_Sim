@@ -355,9 +355,23 @@ def _coating_summary(
     optical = _sum_daily_extension(coating, "optical_effect_kwh")
     temperature = _sum_daily_extension(coating, "temperature_effect_kwh")
     cleanliness = _sum_daily_extension(coating, "cleanliness_effect_kwh")
+    remaining_soiling_loss = max(0.0, -cleanliness)
+    remaining_soiling_loss_percent = (
+        _safe_divide(
+            remaining_soiling_loss,
+            coating.annual_clean_energy_kwh,
+        )
+        * 100.0
+    )
     coated_area_m2 = _first_daily_extension_float(coating, "coated_area_m2")
     cleanliness_improvement = _sum_cleanliness_improvement_vs_baseline(coating, baseline)
     period = _period_metadata(coating)
+    warnings = _coating_warnings(
+        config=config,
+        optical_effect_kwh=optical,
+        temperature_effect_kwh=temperature,
+        period=period,
+    )
     payload = {
         "command": "run-coating",
         "scenario_name": coating.scenario_name,
@@ -386,12 +400,19 @@ def _coating_summary(
         "annual_optical_effect_kwh": optical,
         "annual_temperature_effect_kwh": temperature,
         "annual_cleanliness_effect_kwh": cleanliness,
+        "annual_remaining_soiling_loss_kwh": remaining_soiling_loss,
+        "annual_remaining_soiling_loss_percent": remaining_soiling_loss_percent,
         "annual_cleanliness_improvement_vs_baseline_kwh": cleanliness_improvement,
         "annual_condensed_water_liters": condensed,
         "annual_potentially_collectable_water_liters": potential,
         "annual_actually_collected_water_liters": actual_water,
         "coated_area_m2": coated_area_m2,
         "water_scope": "whole simulated coated farm over the simulated period",
+        "water_accounting_basis": (
+            "condensed, potentially collectable, and actually collected water are reported "
+            "separately; condensed water is not treated as usable or valuable water without "
+            "collection assumptions"
+        ),
         "annual_condensed_water_liters_per_m2": _safe_divide(condensed, coated_area_m2),
         "annual_potentially_collectable_water_liters_per_m2": _safe_divide(
             potential, coated_area_m2
@@ -401,6 +422,8 @@ def _coating_summary(
         "water_revenue_included": False,
         "annualization_included": False,
         "paper_source_status": "prompt_quoted_values_only",
+        "coating_warnings": warnings,
+        "coating_readiness_notes": warnings,
     }
     payload.update(
         {
@@ -412,6 +435,8 @@ def _coating_summary(
             "period_optical_effect_kwh": optical,
             "period_temperature_effect_kwh": temperature,
             "period_cleanliness_effect_kwh": cleanliness,
+            "period_remaining_soiling_loss_kwh": remaining_soiling_loss,
+            "period_remaining_soiling_loss_percent": remaining_soiling_loss_percent,
             "period_cleanliness_improvement_vs_baseline_kwh": cleanliness_improvement,
             "period_condensed_water_liters": condensed,
             "period_potentially_collectable_water_liters": potential,
@@ -426,6 +451,63 @@ def _coating_summary(
         }
     )
     return payload
+
+
+def _coating_warnings(
+    *,
+    config: SolarCleanConfig,
+    optical_effect_kwh: float,
+    temperature_effect_kwh: float,
+    period: Mapping[str, object],
+) -> list[dict[str, str]]:
+    warnings: list[dict[str, str]] = []
+    if (not config.coating.enabled) or abs(optical_effect_kwh) <= 1e-9:
+        warnings.append(
+            {
+                "code": "optical_effect_zero_or_disabled",
+                "message": "Optical coating effect is zero or disabled for this result.",
+            }
+        )
+    if (not config.coating.enabled) or abs(temperature_effect_kwh) <= 1e-9:
+        warnings.append(
+            {
+                "code": "temperature_effect_zero_or_disabled",
+                "message": "Temperature coating effect is zero or disabled for this result.",
+            }
+        )
+    if (
+        config.weather.provider != "nasa_power"
+        or config.coating.costs.source_status == "provisional"
+        or period.get("period_is_full_year") is not True
+    ):
+        warnings.append(
+            {
+                "code": "weather_limited_or_provisional",
+                "message": (
+                    "Coating result is limited by the configured weather period/provider "
+                    "or provisional coating assumptions."
+                ),
+            }
+        )
+    warnings.extend(
+        [
+            {
+                "code": "not_guaranteed_kaust_paper_field_performance",
+                "message": (
+                    "Do not present this scenario as guaranteed KAUST-paper field performance."
+                ),
+            },
+            {
+                "code": "annualized_capex_not_included",
+                "message": "Annualized CAPEX is not included in this coating summary.",
+            },
+            {
+                "code": "water_revenue_not_included",
+                "message": "Water revenue is not included in this coating summary.",
+            },
+        ]
+    )
+    return warnings
 
 
 def _reactive_summary(

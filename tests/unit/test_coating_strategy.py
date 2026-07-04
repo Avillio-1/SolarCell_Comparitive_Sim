@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date
 from pathlib import Path
 
@@ -7,18 +8,30 @@ import pandas as pd
 import pytest
 from tests.unit.test_weather import _request
 
+from solarclean.application.use_cases import _weather_request
 from solarclean.config.loader import load_config
+from solarclean.config.models import SolarCleanConfig
 from solarclean.domain.coating.strategy import CoatingStrategy
 from solarclean.domain.events.tape import generate_event_tape
 from solarclean.domain.scenario.contracts import ScenarioContext
 from solarclean.domain.simulation.scenario_engine import ScenarioSimulationEngine
 from solarclean.infrastructure.pvlib_adapter.pvwatts import PVWattsPowerModel
+from solarclean.infrastructure.weather.csv_provider import CsvWeatherProvider
 from solarclean.infrastructure.weather.fixture import FixtureWeatherProvider
 
 
-def _context() -> ScenarioContext:
-    config = load_config(Path("configs/offline_fixture.yaml"))
-    weather = FixtureWeatherProvider().load(_request())
+def _context(config: SolarCleanConfig | None = None) -> ScenarioContext:
+    config = config or load_config(Path("configs/offline_fixture.yaml"))
+    if config.weather.provider == "csv":
+        assert config.weather.local_csv_path is not None
+        weather = CsvWeatherProvider(
+            csv_path=config.weather.local_csv_path,
+            timestamp_column=config.weather.timestamp_column,
+            column_mapping=config.weather.column_mapping,
+            unit_mapping=config.weather.unit_mapping,
+        ).load(_weather_request(config))
+    else:
+        weather = FixtureWeatherProvider().load(_request())
     clean = PVWattsPowerModel().calculate_hourly(weather, config.pv_system)
     dates = [date.fromisoformat(str(day)) for day in clean.daily.index.astype(str)]
     tape = generate_event_tape(
@@ -38,8 +51,8 @@ def _context() -> ScenarioContext:
     )
 
 
-def _strategy() -> CoatingStrategy:
-    config = load_config(Path("configs/offline_fixture.yaml"))
+def _strategy(config: SolarCleanConfig | None = None) -> CoatingStrategy:
+    config = config or load_config(Path("configs/offline_fixture.yaml"))
     return CoatingStrategy(
         coating=config.coating,
         soiling=config.soiling,
@@ -102,3 +115,87 @@ def test_coating_outputs_water_and_cost_quantities_separately() -> None:
     assert first.operational.coated_panel_count == 10000
     assert first.extensions["coating_cost_basis"]["total_coated_area_m2"] == pytest.approx(20000.0)
     assert first.extensions["coating_cost_basis"]["material_cost_total"] > 0.0
+
+
+def test_coating_passive_cleaning_events_include_dew_and_dust_metadata() -> None:
+    config = load_config(
+        Path("configs/coating_paper_calibration.yaml"),
+        overrides={
+            "bird_droppings": {
+                "event_probability_per_cohort_day": 0.0,
+                "coverage_min_fraction": 0.0,
+                "coverage_max_fraction": 0.0,
+            },
+            "coating": {
+                "physics": {
+                    "passive_cleaning_base_efficiency": 0.55,
+                }
+            },
+        },
+    )
+
+    result = ScenarioSimulationEngine(_strategy(config)).run(_context(config), random_seed=42)
+    event = next(
+        event for event in result.events if event.event_type == "coating_passive_dust_cleaning"
+    )
+    metadata = dict(event.metadata)
+
+    assert metadata["condensation_dew_eligible"] is True
+    assert metadata["ambient_temperature_c"] == pytest.approx(20.0)
+    assert metadata["coated_surface_temperature_c"] < metadata["dew_point_c"]
+    assert metadata["relative_humidity_pct"] == pytest.approx(82.0)
+    assert metadata["condensed_liters_per_m2"] > 0.0
+    assert metadata["coating_age_days"] == 0
+    assert 0.0 < metadata["coating_effectiveness_fraction"] <= 1.0
+    assert metadata["coating_degradation_multiplier"] == pytest.approx(
+        metadata["coating_effectiveness_fraction"]
+    )
+    assert 0.0 <= metadata["dust_removed"] <= metadata["dust_before"]
+    assert metadata["dust_after"] == pytest.approx(
+        metadata["dust_before"] - metadata["dust_removed"]
+    )
+    assert 0.0 <= metadata["dust_removal_efficiency_used"] <= 1.0
+    assert json.loads(event.to_record()["metadata"])["dust_removed"] == pytest.approx(
+        metadata["dust_removed"]
+    )
+
+
+def test_coating_bird_removal_events_include_bounded_metadata() -> None:
+    config = load_config(
+        Path("configs/coating_paper_calibration.yaml"),
+        overrides={
+            "bird_droppings": {
+                "event_probability_per_cohort_day": 1.0,
+                "coverage_min_fraction": 0.01,
+                "coverage_max_fraction": 0.01,
+            },
+            "coating": {
+                "physics": {
+                    "passive_cleaning_base_efficiency": 0.0,
+                    "bird_removal_efficiency": 1.0,
+                    "max_bird_removal_fraction_per_day": 0.005,
+                }
+            },
+        },
+    )
+
+    result = ScenarioSimulationEngine(_strategy(config)).run(_context(config), random_seed=42)
+    dust_events = [
+        event for event in result.events if event.event_type == "coating_passive_dust_cleaning"
+    ]
+    bird_event = next(
+        event for event in result.events if event.event_type == "coating_bird_dropping_removal"
+    )
+    metadata = dict(bird_event.metadata)
+
+    assert dust_events == []
+    assert metadata["condensed_liters_per_m2"] > 0.0
+    assert metadata["bird_contamination_before"] == pytest.approx(0.01)
+    assert 0.0 < metadata["bird_removed"] <= 0.005
+    assert metadata["bird_contamination_after"] == pytest.approx(
+        metadata["bird_contamination_before"] - metadata["bird_removed"]
+    )
+    assert 0.0 <= metadata["bird_removal_efficiency_used"] <= 1.0
+    assert json.loads(bird_event.to_record()["metadata"])["bird_removed"] == pytest.approx(
+        metadata["bird_removed"]
+    )
