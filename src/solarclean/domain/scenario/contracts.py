@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import datetime as dt
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date
 from types import MappingProxyType
 from typing import Protocol, cast
@@ -41,6 +42,50 @@ def _json_safe(value: object) -> object:
     except TypeError:
         return str(value)
     return value
+
+
+_EVENT_PHASE_ORDER: dict[str, int] = {
+    "exogenous_morning": 0,
+    "pre_generation_state": 1,
+    "pv_generation": 2,
+    "inspection": 3,
+    "dispatch": 4,
+    "cleaning": 5,
+    "nighttime_condensation": 6,
+    "post_day_state_update": 7,
+}
+
+_EVENT_TYPE_PHASES: dict[str, str] = {
+    "dust_accumulation": "pre_generation_state",
+    "heavy_dust_event": "pre_generation_state",
+    "partial_rain_cleaning": "pre_generation_state",
+    "full_rain_cleaning": "pre_generation_state",
+    "bird_dropping_event": "pre_generation_state",
+    "reactive_inspection": "inspection",
+    "reactive_cleaning_dispatch": "dispatch",
+    "reactive_cleaning_action": "cleaning",
+    "coating_condensation": "nighttime_condensation",
+    "coating_passive_dust_cleaning": "nighttime_condensation",
+    "coating_bird_dropping_removal": "nighttime_condensation",
+}
+
+_EVENT_TYPE_ORDER: dict[str, int] = {
+    "dust_accumulation": 10,
+    "heavy_dust_event": 20,
+    "partial_rain_cleaning": 30,
+    "full_rain_cleaning": 30,
+    "bird_dropping_event": 40,
+    "reactive_inspection": 10,
+    "reactive_cleaning_dispatch": 10,
+    "reactive_cleaning_action": 10,
+    "coating_condensation": 10,
+    "coating_passive_dust_cleaning": 20,
+    "coating_bird_dropping_removal": 30,
+}
+
+
+def _default_event_phase(event_type: str) -> str:
+    return _EVENT_TYPE_PHASES.get(event_type, "post_day_state_update")
 
 
 @dataclass(frozen=True)
@@ -167,9 +212,19 @@ class DomainEvent:
     scenario_name: str
     cohort_id: int | None = None
     metadata: Mapping[str, object] = field(default_factory=dict)
+    event_sequence: int = 0
+    event_phase: str = ""
+    effective_for_energy_date: dt.date | None = None
 
     def __post_init__(self) -> None:
+        cohort_id = None if self.cohort_id is None else int(self.cohort_id)
+        phase = self.event_phase or _default_event_phase(self.event_type)
+        effective_date = self.effective_for_energy_date or self.date
+        object.__setattr__(self, "cohort_id", cohort_id)
         object.__setattr__(self, "metadata", _freeze_mapping(self.metadata))
+        object.__setattr__(self, "event_sequence", int(self.event_sequence))
+        object.__setattr__(self, "event_phase", phase)
+        object.__setattr__(self, "effective_for_energy_date", effective_date)
 
     @classmethod
     def from_simulation_event(
@@ -178,6 +233,8 @@ class DomainEvent:
         *,
         scenario_name: str,
         metadata: Mapping[str, object] | None = None,
+        event_phase: str | None = None,
+        effective_for_energy_date: dt.date | None = None,
     ) -> DomainEvent:
         return cls(
             date=event.date,
@@ -187,17 +244,24 @@ class DomainEvent:
             scenario_name=scenario_name,
             cohort_id=event.cohort_id,
             metadata=metadata or {},
+            event_phase=event_phase or "",
+            effective_for_energy_date=effective_for_energy_date,
         )
 
     def to_record(self) -> dict[str, object]:
+        metadata = _json_safe(self.metadata)
+        effective_date = self.effective_for_energy_date or self.date
         return {
             "date": self.date.isoformat(),
             "scenario_name": self.scenario_name,
+            "event_sequence": self.event_sequence,
+            "event_phase": self.event_phase,
+            "effective_for_energy_date": effective_date.isoformat(),
             "event_type": self.event_type,
             "magnitude": self.magnitude,
             "description": self.description,
             "cohort_id": self.cohort_id,
-            "metadata": _json_safe(self.metadata),
+            "metadata": json.dumps(metadata, sort_keys=True),
         }
 
     def to_simulation_event(self) -> SimulationEvent:
@@ -208,6 +272,41 @@ class DomainEvent:
             description=self.description,
             cohort_id=self.cohort_id,
         )
+
+
+def ordered_domain_events(events: Sequence[DomainEvent]) -> tuple[DomainEvent, ...]:
+    """Return events sorted by modeled phase and assigned per-day sequence numbers."""
+    return _normalize_events(tuple(events))
+
+
+def _normalize_events(events: tuple[DomainEvent, ...]) -> tuple[DomainEvent, ...]:
+    ordered = [event for _, event in sorted(enumerate(events), key=_event_sort_key)]
+    sequenced: list[DomainEvent] = []
+    current_date: date | None = None
+    sequence = 0
+    for event in ordered:
+        if event.date != current_date:
+            current_date = event.date
+            sequence = 1
+        else:
+            sequence += 1
+        sequenced.append(replace(event, event_sequence=sequence))
+    return tuple(sequenced)
+
+
+def _event_sort_key(indexed_event: tuple[int, DomainEvent]) -> tuple[object, ...]:
+    original_index, event = indexed_event
+    cohort_sort = -1 if event.cohort_id is None else event.cohort_id
+    return (
+        event.date,
+        _EVENT_PHASE_ORDER.get(event.event_phase, 10_000),
+        _EVENT_TYPE_ORDER.get(event.event_type, 1_000),
+        cohort_sort,
+        event.event_type,
+        event.description,
+        event.magnitude,
+        original_index,
+    )
 
 
 @dataclass(frozen=True)
@@ -238,7 +337,7 @@ class DailyScenarioResult:
             )
         loss = self.clean_energy_kwh - self.actual_energy_kwh
         ratio = self.actual_energy_kwh / self.clean_energy_kwh if self.clean_energy_kwh > 0 else 1.0
-        object.__setattr__(self, "events", tuple(self.events))
+        object.__setattr__(self, "events", _normalize_events(tuple(self.events)))
         object.__setattr__(
             self,
             "extensions",
@@ -290,7 +389,7 @@ class AnnualScenarioResult:
         annual_loss = annual_clean - annual_actual
         loss_percent = annual_loss / annual_clean * 100.0 if annual_clean > 0 else 0.0
         object.__setattr__(self, "daily_results", daily)
-        object.__setattr__(self, "events", events)
+        object.__setattr__(self, "events", _normalize_events(events))
         object.__setattr__(
             self,
             "extensions",
@@ -372,5 +471,5 @@ class ScenarioOutputBundle:
     def __post_init__(self) -> None:
         object.__setattr__(self, "summary", _freeze_mapping(self.summary))
         object.__setattr__(self, "daily_frame", self.daily_frame.copy(deep=True))
-        object.__setattr__(self, "events", tuple(self.events))
+        object.__setattr__(self, "events", _normalize_events(tuple(self.events)))
         object.__setattr__(self, "extensions", _freeze_mapping(self.extensions))
