@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -21,6 +22,7 @@ def test_run_coating_writes_scenario_outputs() -> None:
     result = RunCoatingSimulation(config).run()
 
     daily = pd.read_csv(result.output_directory / "scenario_daily_results.csv")
+    events = pd.read_csv(result.output_directory / "scenario_events.csv")
     assert result.summary["command"] == "run-coating"
     assert result.summary["scenario_name"] == "coating"
     assert result.summary["event_tape_checksum"]
@@ -42,9 +44,32 @@ def test_run_coating_writes_scenario_outputs() -> None:
         result.summary["annual_potentially_collectable_water_liters"]
         >= result.summary["annual_actually_collected_water_liters"]
     )
+    assert result.summary["annual_remaining_soiling_loss_kwh"] == pytest.approx(
+        -result.summary["annual_cleanliness_effect_kwh"]
+    )
+    assert result.summary["period_remaining_soiling_loss_kwh"] == pytest.approx(
+        result.summary["annual_remaining_soiling_loss_kwh"]
+    )
+    assert result.summary["period_remaining_soiling_loss_percent"] == pytest.approx(
+        result.summary["annual_remaining_soiling_loss_percent"]
+    )
+    warning_codes = {warning["code"] for warning in result.summary["coating_warnings"]}
+    assert {
+        "optical_effect_zero_or_disabled",
+        "temperature_effect_zero_or_disabled",
+        "weather_limited_or_provisional",
+        "not_guaranteed_kaust_paper_field_performance",
+        "annualized_capex_not_included",
+        "water_revenue_not_included",
+    } <= warning_codes
+    assert result.summary["coating_readiness_notes"] == result.summary["coating_warnings"]
+    assert "condensed, potentially collectable, and actually collected water" in str(
+        result.summary["water_accounting_basis"]
+    )
     assert "extension_optical_effect_kwh" in daily.columns
     assert "extension_temperature_effect_kwh" in daily.columns
     assert "extension_cleanliness_effect_kwh" in daily.columns
+    assert all(isinstance(json.loads(value), dict) for value in events["metadata"])
     assert daily["allow_above_clean_reference"].all()
     reconciled = (
         daily["clean_energy_kwh"]
@@ -119,6 +144,10 @@ def test_paper_calibration_reproduces_water_target() -> None:
         * config.coating.water.actual_collection_efficiency_fraction
     )
     assert result.summary["period_actually_collected_water_liters"] == pytest.approx(0.0)
+    assert result.summary["annual_condensed_water_liters"] > 0.0
+    assert result.summary["annual_potentially_collectable_water_liters"] > 0.0
+    assert result.summary["annual_actually_collected_water_liters"] == pytest.approx(0.0)
+    assert result.summary["water_revenue_included"] is False
     assert result.summary["paper_source_status"] == "prompt_quoted_values_only"
 
 

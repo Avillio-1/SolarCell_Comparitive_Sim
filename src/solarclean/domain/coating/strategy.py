@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import date
 from typing import cast
 
@@ -135,6 +135,7 @@ class CoatingStrategy:
                 coating_effectiveness=effectiveness,
                 physics=self.coating.physics,
             )
+            dust_ratio_before_cleaning = dust_ratio
             dust_ratio = min(1.0, dust_ratio + restored)
             coverage_addition = (
                 day_input.event_inputs.bird_coverage_additions.get(cohort.cohort_id, 0.0)
@@ -181,7 +182,15 @@ class CoatingStrategy:
                         description="Condensation-assisted coating dust removal.",
                         scenario_name=self.name,
                         cohort_id=cohort.cohort_id,
-                        metadata={"condensed_liters_per_m2": condensed_per_m2},
+                        metadata=_passive_dust_cleaning_metadata(
+                            water=day_water,
+                            condensed_liters_per_m2=condensed_per_m2,
+                            cohort=cohort,
+                            effectiveness=effectiveness,
+                            dust_ratio_before=dust_ratio_before_cleaning,
+                            dust_ratio_after=dust_ratio,
+                            restored=restored,
+                        ),
                     )
                 )
             if bird.removed_coverage_fraction > 0.0:
@@ -193,7 +202,13 @@ class CoatingStrategy:
                         description="Limited coating-assisted bird-dropping removal.",
                         scenario_name=self.name,
                         cohort_id=cohort.cohort_id,
-                        metadata={"condensed_liters_per_m2": condensed_per_m2},
+                        metadata=_bird_dropping_removal_metadata(
+                            water=day_water,
+                            condensed_liters_per_m2=condensed_per_m2,
+                            coverage_before=coverage,
+                            removed=bird.removed_coverage_fraction,
+                            coverage_after=bird.remaining_coverage_fraction,
+                        ),
                     )
                 )
         if day_water.condensed_liters > 0.0:
@@ -205,7 +220,15 @@ class CoatingStrategy:
                     description="Radiative-cooling coating condensed water.",
                     scenario_name=self.name,
                     metadata={
-                        "potentially_collectable_liters": day_water.potentially_collectable_liters
+                        "condensed_liters": day_water.condensed_liters,
+                        "potentially_collectable_liters": day_water.potentially_collectable_liters,
+                        "actually_collected_liters": day_water.actually_collected_liters,
+                        "condensed_liters_per_m2": condensed_per_m2,
+                        "condensation_dew_eligible": day_water.condensation_dew_eligible,
+                        "ambient_temperature_c": day_water.ambient_temperature_c,
+                        "coated_surface_temperature_c": day_water.coated_surface_temperature_c,
+                        "dew_point_c": day_water.dew_point_c,
+                        "relative_humidity_pct": day_water.relative_humidity_pct,
                     },
                 )
             )
@@ -263,6 +286,19 @@ class CoatingStrategy:
         )
 
 
+@dataclass(frozen=True)
+class DailyWaterDiagnostics:
+    dew_point_c: float
+    surface_temperature_c: float
+    condensed_liters: float
+    potentially_collectable_liters: float
+    actually_collected_liters: float
+    condensation_dew_eligible: bool
+    ambient_temperature_c: float
+    coated_surface_temperature_c: float
+    relative_humidity_pct: float
+
+
 def _hourly_for_day(hourly: pd.DataFrame, day: date) -> pd.DataFrame:
     frame = cast(pd.DataFrame, hourly.loc[pd.DatetimeIndex(hourly.index).date == day])
     if frame.empty:
@@ -272,35 +308,58 @@ def _hourly_for_day(hourly: pd.DataFrame, day: date) -> pd.DataFrame:
 
 def _daily_water(
     hourly: pd.DataFrame, coating: CoatingConfig, area_m2: float
-) -> CondensationResult:
+) -> DailyWaterDiagnostics:
     total_condensed = 0.0
     total_potential = 0.0
     total_actual = 0.0
+    representative: CondensationResult | None = None
+    representative_air_temperature = 0.0
+    representative_relative_humidity = 0.0
+    max_hourly_condensed = -1.0
     for _, row in hourly.iterrows():
+        air_temperature = float(row["temp_air_c"])
+        relative_humidity = float(row["relative_humidity_pct"])
         surface = calculate_surface_temperature_c(
-            air_temperature_c=float(row["temp_air_c"]),
-            relative_humidity_pct=float(row["relative_humidity_pct"]),
+            air_temperature_c=air_temperature,
+            relative_humidity_pct=relative_humidity,
             wind_speed_m_s=float(row["wind_speed_m_s"]),
             irradiance_w_m2=float(row["ghi_w_m2"]),
             physics=coating.physics,
         )
         water = calculate_condensation(
-            air_temperature_c=float(row["temp_air_c"]),
-            relative_humidity_pct=float(row["relative_humidity_pct"]),
+            air_temperature_c=air_temperature,
+            relative_humidity_pct=relative_humidity,
             surface_temperature_c=surface,
             exposure_hours=1.0,
             area_m2=area_m2,
             water=coating.water,
         )
+        if water.condensed_liters > max_hourly_condensed:
+            representative = water
+            representative_air_temperature = air_temperature
+            representative_relative_humidity = relative_humidity
+            max_hourly_condensed = water.condensed_liters
         total_condensed += water.condensed_liters
         total_potential += water.potentially_collectable_liters
         total_actual += water.actually_collected_liters
-    return CondensationResult(
-        dew_point_c=0.0,
-        surface_temperature_c=0.0,
+    if representative is None:
+        representative = CondensationResult(
+            dew_point_c=0.0,
+            surface_temperature_c=0.0,
+            condensed_liters=0.0,
+            potentially_collectable_liters=0.0,
+            actually_collected_liters=0.0,
+        )
+    return DailyWaterDiagnostics(
+        dew_point_c=representative.dew_point_c,
+        surface_temperature_c=representative.surface_temperature_c,
         condensed_liters=total_condensed,
         potentially_collectable_liters=total_potential,
         actually_collected_liters=total_actual,
+        condensation_dew_eligible=total_condensed > 0.0,
+        ambient_temperature_c=representative_air_temperature,
+        coated_surface_temperature_c=representative.surface_temperature_c,
+        relative_humidity_pct=representative_relative_humidity,
     )
 
 
@@ -351,3 +410,79 @@ def _average_cleanliness(cohorts: tuple[CoatingCohortState, ...]) -> float:
             cohort.panel_count * cohort.dust_soiling_ratio * (1.0 - cohort.bird_drop_loss_fraction)
         )
     return weighted / total
+
+
+def _base_condensation_metadata(
+    *,
+    water: DailyWaterDiagnostics,
+    condensed_liters_per_m2: float,
+) -> dict[str, object]:
+    return {
+        "condensation_dew_eligible": water.condensation_dew_eligible,
+        "ambient_temperature_c": water.ambient_temperature_c,
+        "coated_surface_temperature_c": water.coated_surface_temperature_c,
+        "dew_point_c": water.dew_point_c,
+        "relative_humidity_pct": water.relative_humidity_pct,
+        "condensed_liters_per_m2": condensed_liters_per_m2,
+    }
+
+
+def _passive_dust_cleaning_metadata(
+    *,
+    water: DailyWaterDiagnostics,
+    condensed_liters_per_m2: float,
+    cohort: CoatingCohortState,
+    effectiveness: float,
+    dust_ratio_before: float,
+    dust_ratio_after: float,
+    restored: float,
+) -> dict[str, object]:
+    dust_before = max(0.0, 1.0 - dust_ratio_before)
+    dust_removed = min(dust_before, max(0.0, restored))
+    dust_after = max(0.0, 1.0 - dust_ratio_after)
+    metadata = _base_condensation_metadata(
+        water=water,
+        condensed_liters_per_m2=condensed_liters_per_m2,
+    )
+    metadata.update(
+        {
+            "coating_age_days": cohort.age_days,
+            "coating_effectiveness_fraction": effectiveness,
+            "coating_degradation_multiplier": effectiveness,
+            "coating_degradation_fraction": max(0.0, 1.0 - effectiveness),
+            "dust_before": dust_before,
+            "dust_removed": dust_removed,
+            "dust_after": dust_after,
+            "dust_soiling_ratio_before": dust_ratio_before,
+            "dust_soiling_ratio_after": dust_ratio_after,
+            "dust_removal_efficiency_used": (
+                dust_removed / dust_before if dust_before > 0.0 else 0.0
+            ),
+        }
+    )
+    return metadata
+
+
+def _bird_dropping_removal_metadata(
+    *,
+    water: DailyWaterDiagnostics,
+    condensed_liters_per_m2: float,
+    coverage_before: float,
+    removed: float,
+    coverage_after: float,
+) -> dict[str, object]:
+    metadata = _base_condensation_metadata(
+        water=water,
+        condensed_liters_per_m2=condensed_liters_per_m2,
+    )
+    metadata.update(
+        {
+            "bird_contamination_before": coverage_before,
+            "bird_removed": min(coverage_before, max(0.0, removed)),
+            "bird_contamination_after": coverage_after,
+            "bird_removal_efficiency_used": (
+                removed / coverage_before if coverage_before > 0.0 else 0.0
+            ),
+        }
+    )
+    return metadata
