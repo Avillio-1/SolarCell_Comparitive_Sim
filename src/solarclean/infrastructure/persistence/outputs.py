@@ -11,8 +11,38 @@ import yaml
 from solarclean.config.models import SolarCleanConfig
 from solarclean.domain.environment.weather import WeatherDataset
 from solarclean.domain.pv.model import CleanEnergyProfile
-from solarclean.domain.scenario.contracts import AnnualScenarioResult, ScenarioOutputBundle
+from solarclean.domain.scenario.contracts import (
+    AnnualScenarioResult,
+    DomainEvent,
+    ScenarioOutputBundle,
+    ordered_domain_events,
+)
 from solarclean.domain.simulation.baseline import BaselineSimulationResult
+
+_SCENARIO_EVENT_COLUMNS = [
+    "date",
+    "scenario_name",
+    "event_sequence",
+    "event_phase",
+    "effective_for_energy_date",
+    "event_type",
+    "magnitude",
+    "description",
+    "cohort_id",
+    "metadata",
+]
+
+_BASELINE_EVENT_COLUMNS = [
+    "date",
+    "event_sequence",
+    "event_phase",
+    "effective_for_energy_date",
+    "event_type",
+    "magnitude",
+    "description",
+    "cohort_id",
+    "metadata",
+]
 
 
 class OutputWriter:
@@ -75,14 +105,17 @@ class OutputWriter:
             index_label="date",
             float_format=config.output.csv_float_format,
         )
-        events = [event.to_record() for event in baseline.events]
+        events = [
+            DomainEvent.from_simulation_event(event, scenario_name="baseline")
+            for event in baseline.events
+        ]
         event_path = output_dir / "events.csv"
-        if events:
-            pd.DataFrame.from_records(events).to_csv(event_path, index=False)
-        else:
-            event_path.write_text(
-                "date,event_type,magnitude,description,cohort_id\n", encoding="utf-8"
-            )
+        _write_event_csv(
+            event_path,
+            events,
+            columns=_BASELINE_EVENT_COLUMNS,
+            include_scenario_name=False,
+        )
         if config.farm.store_cohort_daily_details and baseline.cohort_daily is not None:
             baseline.cohort_daily.to_csv(
                 output_dir / "cohort_daily_results.csv",
@@ -114,17 +147,12 @@ class OutputWriter:
             index=False,
             float_format=self.config.output.csv_float_format,
         )
-        event_records = [event.to_record() for event in events]
-        if event_records:
-            pd.DataFrame.from_records(event_records).to_csv(
-                output_dir / "scenario_events.csv",
-                index=False,
-            )
-        else:
-            (output_dir / "scenario_events.csv").write_text(
-                "date,scenario_name,event_type,magnitude,description,cohort_id,metadata\n",
-                encoding="utf-8",
-            )
+        _write_event_csv(
+            output_dir / "scenario_events.csv",
+            events,
+            columns=_SCENARIO_EVENT_COLUMNS,
+            include_scenario_name=True,
+        )
         (output_dir / "scenario_summary.json").write_text(
             json.dumps(summary, indent=2, sort_keys=True, default=str),
             encoding="utf-8",
@@ -139,3 +167,25 @@ class OutputWriter:
     def write_text_summary(self, output_dir: Path, summary: dict[str, object]) -> None:
         lines = [f"{key}: {value}" for key, value in summary.items()]
         (output_dir / "summary.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _write_event_csv(
+    path: Path,
+    events: tuple[DomainEvent, ...] | list[DomainEvent],
+    *,
+    columns: list[str],
+    include_scenario_name: bool,
+) -> None:
+    records = [
+        _event_csv_record(event, include_scenario_name=include_scenario_name)
+        for event in ordered_domain_events(tuple(events))
+    ]
+    pd.DataFrame.from_records(records, columns=columns).to_csv(path, index=False)
+
+
+def _event_csv_record(event: DomainEvent, *, include_scenario_name: bool) -> dict[str, object]:
+    record = event.to_record()
+    record["cohort_id"] = "" if event.cohort_id is None else str(event.cohort_id)
+    if not include_scenario_name:
+        record.pop("scenario_name", None)
+    return record

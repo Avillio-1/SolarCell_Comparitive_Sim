@@ -10,6 +10,18 @@ from solarclean.domain.farm.representation import CohortState
 
 
 @dataclass(frozen=True)
+class CleaningQueueCause:
+    cohort_id: int
+    inspection_id: str
+    inspection_date: date
+    estimated_loss_fraction: float
+    estimated_loss_kwh: float
+    confidence: float
+    dispatch_threshold_fraction: float
+    dispatch_threshold_kwh: float
+
+
+@dataclass(frozen=True)
 class ReactiveScenarioState:
     """True (ground-truth) farm state plus reactive-scenario bookkeeping.
 
@@ -28,6 +40,9 @@ class ReactiveScenarioState:
     inspection_backlog: tuple[int, ...] = ()
     cleaning_queue: tuple[int, ...] = ()
     queue_age_days: tuple[int, ...] = ()
+    cleaning_queue_causes: MappingProxyType[int, CleaningQueueCause] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
     def cohort_by_id(self, cohort_id: int) -> CohortState:
         for cohort in self.cohorts:

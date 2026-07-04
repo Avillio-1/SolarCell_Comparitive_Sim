@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 from typing import cast
 
@@ -21,8 +21,13 @@ from solarclean.domain.contamination.soiling import (
 )
 from solarclean.domain.farm.representation import CohortFarm, CohortState, FarmState
 from solarclean.domain.reactive_cv.crew import CleaningCrew
-from solarclean.domain.reactive_cv.dispatch import ThresholdDispatchPolicy, to_dispatch_signal
+from solarclean.domain.reactive_cv.dispatch import (
+    DispatchSignal,
+    ThresholdDispatchPolicy,
+    to_dispatch_signal,
+)
 from solarclean.domain.reactive_cv.drone import DroneFleet
+from solarclean.domain.reactive_cv.metrics import SEVERITY_BUCKETS, contamination_severity_bucket
 from solarclean.domain.reactive_cv.observer import (
     CVObservation,
     CVObserver,
@@ -30,7 +35,7 @@ from solarclean.domain.reactive_cv.observer import (
     StatisticalCVObserver,
 )
 from solarclean.domain.reactive_cv.scheduler import InspectionScheduler
-from solarclean.domain.reactive_cv.state import ReactiveScenarioState
+from solarclean.domain.reactive_cv.state import CleaningQueueCause, ReactiveScenarioState
 from solarclean.domain.scenario.contracts import (
     DailyScenarioInput,
     DailyScenarioResult,
@@ -39,6 +44,30 @@ from solarclean.domain.scenario.contracts import (
     ScenarioContext,
     StrategyStep,
 )
+
+
+@dataclass(frozen=True)
+class ObservationDiagnostics:
+    true_actionable_dirty_ids: frozenset[int]
+    true_loss_by_cohort: dict[int, float]
+    true_loss_energy_by_cohort: dict[int, float]
+    detected_actionable_dirty_ids: frozenset[int]
+    signals: tuple[DispatchSignal, ...]
+    signals_by_cohort: dict[int, DispatchSignal]
+    missed_counts_by_severity: dict[str, int]
+    missed_energy_by_severity: dict[str, float]
+    detected_energy_by_severity: dict[str, float]
+
+
+@dataclass(frozen=True)
+class CleaningPassResult:
+    events: list[DomainEvent]
+    true_cohorts: dict[int, CohortState]
+    crew_hours: float
+    water_liters: float
+    recovered_loss_estimated_kwh: float
+    dirty_cleaning_count: int
+    false_positive_cleaning_count: int
 
 
 class ReactiveCVStrategy:
@@ -173,63 +202,81 @@ class ReactiveCVStrategy:
             self.observer.observe(true_cohorts[cohort_id], typed_state.cv_rng)
             for cohort_id in flight_plan.inspected_cohort_ids
         ]
-        true_dirty_ids = frozenset(
-            cohort_id
-            for cohort_id, cohort in true_cohorts.items()
-            if _is_dirty_for_reporting(
-                cohort,
-                self.reactive.inspection.dirty_soiling_ratio_threshold,
+        observations_by_cohort = {
+            observation.cohort_id: observation for observation in observations
+        }
+        observation_diagnostics = _diagnose_observations(
+            observations=observations,
+            true_cohorts=true_cohorts,
+            clean_energy_per_panel_kwh=day_input.clean_energy_per_panel_kwh,
+            actionable_loss_threshold_fraction=(
+                self.reactive.dispatch.estimated_loss_threshold_fraction
+            ),
+        )
+        eligible_cleaning_causes = {
+            signal.cohort_id: _cleaning_queue_cause(
+                day=day_input.date,
+                cohort=true_cohorts[signal.cohort_id],
+                clean_energy_per_panel_kwh=day_input.clean_energy_per_panel_kwh,
+                estimated_loss_fraction=signal.estimated_loss_fraction,
+                confidence=signal.confidence,
+                dispatch_threshold_fraction=(
+                    self.reactive.dispatch.estimated_loss_threshold_fraction
+                ),
             )
-        )
-        detected_dirty_ids = frozenset(
-            obs.cohort_id
-            for obs in observations
-            if obs.image_captured and obs._ground_truth_dirty and obs.detected_dirty
-        )
-        signals = tuple(
-            signal for obs in observations if (signal := to_dispatch_signal(obs)) is not None
-        )
-
+            for signal in observation_diagnostics.signals
+            if _passes_dispatch_threshold(
+                estimated_loss_fraction=signal.estimated_loss_fraction,
+                confidence=signal.confidence,
+                dispatch_threshold_fraction=self.reactive.dispatch.estimated_loss_threshold_fraction,
+                confidence_threshold=self.reactive.dispatch.confidence_threshold,
+            )
+        }
         # 4. Dispatch decides who gets cleaned, blind to true state.
         decision = self.dispatch_policy.select_for_cleaning(
-            signals,
+            observation_diagnostics.signals,
             current_queue=typed_state.cleaning_queue,
             current_queue_age_days=typed_state.queue_age_days,
             crew_daily_capacity=self.reactive.crew.daily_capacity_cohorts,
         )
+        current_queue_causes = dict(typed_state.cleaning_queue_causes)
+        candidate_cleaning_causes = current_queue_causes | eligible_cleaning_causes
+        current_queue_age_by_cohort = dict(
+            zip(typed_state.cleaning_queue, typed_state.queue_age_days, strict=True)
+        )
+
+        events.extend(
+            _inspection_events(
+                day=day_input.date,
+                inspected_cohort_ids=flight_plan.inspected_cohort_ids,
+                observations_by_cohort=observations_by_cohort,
+                observation_diagnostics=observation_diagnostics,
+                eligible_cleaning_causes=eligible_cleaning_causes,
+                true_cohorts=true_cohorts,
+                clean_energy_per_panel_kwh=day_input.clean_energy_per_panel_kwh,
+                dispatch_threshold_fraction=(
+                    self.reactive.dispatch.estimated_loss_threshold_fraction
+                ),
+                confidence_threshold=self.reactive.dispatch.confidence_threshold,
+                scenario_name=self.name,
+            )
+        )
 
         # 5. Crew cleans selected cohorts, mutating true state.
-        crew_hours = 0.0
-        water_liters = 0.0
-        cleaned_ids = frozenset(decision.to_clean_ids)
-        false_positive_cleaning_count = len(cleaned_ids - true_dirty_ids)
-        dirty_cleaning_count = len(cleaned_ids & true_dirty_ids)
-        for cohort_id in decision.to_clean_ids:
-            outcome = self.crew.clean(true_cohorts[cohort_id])
-            true_cohorts[cohort_id] = outcome.cohort
-            crew_hours += outcome.crew_hours
-            water_liters += outcome.water_liters
-            events.append(
-                DomainEvent(
-                    date=day_input.date,
-                    event_type="reactive_cleaning_action",
-                    magnitude=1.0,
-                    description="Targeted cohort cleaning dispatched from CV inspection.",
-                    scenario_name=self.name,
-                    cohort_id=cohort_id,
-                )
-            )
-        for cohort_id in flight_plan.inspected_cohort_ids:
-            events.append(
-                DomainEvent(
-                    date=day_input.date,
-                    event_type="reactive_inspection",
-                    magnitude=1.0,
-                    description="Drone CV inspection of cohort.",
-                    scenario_name=self.name,
-                    cohort_id=cohort_id,
-                )
-            )
+        cleaning_pass = _apply_cleaning_pass(
+            day=day_input.date,
+            to_clean_ids=decision.to_clean_ids,
+            true_cohorts=true_cohorts,
+            true_actionable_dirty_ids=observation_diagnostics.true_actionable_dirty_ids,
+            candidate_cleaning_causes=candidate_cleaning_causes,
+            current_queue_age_by_cohort=current_queue_age_by_cohort,
+            clean_energy_per_panel_kwh=day_input.clean_energy_per_panel_kwh,
+            dispatch_threshold_fraction=self.reactive.dispatch.estimated_loss_threshold_fraction,
+            scenario_name=self.name,
+            crew=self.crew,
+        )
+        true_cohorts = cleaning_pass.true_cohorts
+        events.extend(cleaning_pass.events)
 
         next_cohorts = tuple(true_cohorts[cohort.cohort_id] for cohort in advanced.state.cohorts)
 
@@ -243,6 +290,12 @@ class ReactiveCVStrategy:
         # 7. Confusion-matrix counters for offline detection-performance evaluation
         # (never fed back into dispatch -- see metrics.py).
         tp, fp, fn, tn, missed = _count_observations(observations)
+        actionable_tp, actionable_fp, actionable_fn, actionable_tn, actionable_missed = (
+            _count_actionable_observations(
+                observations,
+                true_actionable_dirty_ids=observation_diagnostics.true_actionable_dirty_ids,
+            )
+        )
 
         next_days_since_inspection = dict(typed_state.days_since_inspection)
         for cohort_id in next_days_since_inspection:
@@ -254,7 +307,10 @@ class ReactiveCVStrategy:
             cohort_id for cohort_id in due if cohort_id not in inspected_ids
         )
         skipped_inspection_count = len(next_inspection_backlog)
-        system_missed_dirty_count = len(true_dirty_ids - detected_dirty_ids)
+        system_missed_dirty_count = len(
+            observation_diagnostics.true_actionable_dirty_ids
+            - observation_diagnostics.detected_actionable_dirty_ids
+        )
 
         result = DailyScenarioResult(
             date=day_input.date,
@@ -264,9 +320,9 @@ class ReactiveCVStrategy:
             operational=OperationalQuantities(
                 inspections_count=len(flight_plan.inspected_cohort_ids),
                 cleaning_actions_count=len(decision.to_clean_ids),
-                crew_hours=crew_hours,
+                crew_hours=cleaning_pass.crew_hours,
                 drone_flight_hours=flight_plan.flight_hours,
-                water_liters=water_liters,
+                water_liters=cleaning_pass.water_liters,
                 energy_used_kwh=flight_plan.drone_energy_kwh + flight_plan.compute_energy_kwh,
             ),
             events=tuple(events),
@@ -284,12 +340,40 @@ class ReactiveCVStrategy:
                 "inspection_false_negative_count": fn,
                 "inspection_true_negative_count": tn,
                 "inspection_missed_image_count": missed,
-                "system_dirty_cohort_count": len(true_dirty_ids),
-                "system_detected_dirty_count": len(detected_dirty_ids),
+                "actionable_true_positive_count": actionable_tp,
+                "actionable_false_positive_count": actionable_fp,
+                "actionable_false_negative_count": actionable_fn,
+                "actionable_true_negative_count": actionable_tn,
+                "actionable_missed_image_count": actionable_missed,
+                "system_dirty_cohort_count": len(observation_diagnostics.true_actionable_dirty_ids),
+                "system_detected_dirty_count": len(
+                    observation_diagnostics.detected_actionable_dirty_ids
+                ),
                 "system_missed_dirty_count": system_missed_dirty_count,
                 "missed_contamination_count": system_missed_dirty_count,
-                "dirty_cleaning_count": dirty_cleaning_count,
-                "false_positive_cleaning_count": false_positive_cleaning_count,
+                "missed_contamination_count_by_severity_bucket": (
+                    observation_diagnostics.missed_counts_by_severity
+                ),
+                "missed_contamination_estimated_energy_impact_kwh": sum(
+                    observation_diagnostics.missed_energy_by_severity.values()
+                ),
+                "missed_contamination_estimated_energy_impact_by_severity_bucket": (
+                    observation_diagnostics.missed_energy_by_severity
+                ),
+                "detected_contamination_estimated_energy_impact_kwh": sum(
+                    observation_diagnostics.detected_energy_by_severity.values()
+                ),
+                "detected_contamination_estimated_energy_impact_by_severity_bucket": (
+                    observation_diagnostics.detected_energy_by_severity
+                ),
+                "recovered_loss_estimated_kwh": cleaning_pass.recovered_loss_estimated_kwh,
+                "avoided_loss_estimated_kwh": cleaning_pass.recovered_loss_estimated_kwh,
+                "diagnostic_energy_impact_basis": (
+                    "cohort clean energy times contamination loss fraction; missed impact uses "
+                    "audit true-state loss, detected impact uses controller-visible CV estimate"
+                ),
+                "dirty_cleaning_count": cleaning_pass.dirty_cleaning_count,
+                "false_positive_cleaning_count": cleaning_pass.false_positive_cleaning_count,
                 "event_tape_checksum": (
                     context.event_tape.checksum() if context.event_tape is not None else ""
                 ),
@@ -303,6 +387,13 @@ class ReactiveCVStrategy:
             inspection_backlog=next_inspection_backlog,
             cleaning_queue=decision.updated_queue,
             queue_age_days=decision.updated_queue_age_days,
+            cleaning_queue_causes=MappingProxyType(
+                {
+                    cohort_id: candidate_cleaning_causes[cohort_id]
+                    for cohort_id in decision.updated_queue
+                    if cohort_id in candidate_cleaning_causes
+                }
+            ),
         )
         return StrategyStep(state=next_state, result=result)
 
@@ -311,6 +402,484 @@ def _coerce_state(state: object) -> ReactiveScenarioState:
     if not isinstance(state, ReactiveScenarioState):
         raise TypeError("reactive CV strategy state has the wrong type")
     return state
+
+
+def _diagnose_observations(
+    *,
+    observations: list[CVObservation],
+    true_cohorts: dict[int, CohortState],
+    clean_energy_per_panel_kwh: float,
+    actionable_loss_threshold_fraction: float,
+) -> ObservationDiagnostics:
+    true_loss_by_cohort = {
+        cohort_id: _contamination_loss_fraction(cohort)
+        for cohort_id, cohort in true_cohorts.items()
+    }
+    true_actionable_dirty_ids = frozenset(
+        cohort_id
+        for cohort_id, loss_fraction in true_loss_by_cohort.items()
+        if loss_fraction >= actionable_loss_threshold_fraction
+    )
+    true_loss_energy_by_cohort = {
+        cohort_id: _contamination_loss_kwh(
+            cohort,
+            clean_energy_per_panel_kwh=clean_energy_per_panel_kwh,
+            loss_fraction=true_loss_by_cohort[cohort_id],
+        )
+        for cohort_id, cohort in true_cohorts.items()
+    }
+    detected_dirty_ids = frozenset(
+        obs.cohort_id
+        for obs in observations
+        if (
+            obs.image_captured and obs.detected_dirty and obs.cohort_id in true_actionable_dirty_ids
+        )
+    )
+    signals = tuple(
+        signal for obs in observations if (signal := to_dispatch_signal(obs)) is not None
+    )
+    missed_counts_by_severity = _empty_bucket_ints()
+    missed_energy_by_severity = _empty_bucket_floats()
+    for cohort_id in true_actionable_dirty_ids - detected_dirty_ids:
+        bucket = contamination_severity_bucket(true_loss_by_cohort[cohort_id])
+        missed_counts_by_severity[bucket] += 1
+        missed_energy_by_severity[bucket] += true_loss_energy_by_cohort[cohort_id]
+    detected_energy_by_severity = _empty_bucket_floats()
+    for observation in observations:
+        if observation.image_captured and observation.detected_dirty:
+            detected_energy_by_severity[
+                contamination_severity_bucket(observation.estimated_loss_fraction)
+            ] += _estimated_observation_loss_kwh(
+                observation,
+                true_cohorts[observation.cohort_id],
+                clean_energy_per_panel_kwh=clean_energy_per_panel_kwh,
+            )
+    return ObservationDiagnostics(
+        true_actionable_dirty_ids=true_actionable_dirty_ids,
+        true_loss_by_cohort=true_loss_by_cohort,
+        true_loss_energy_by_cohort=true_loss_energy_by_cohort,
+        detected_actionable_dirty_ids=detected_dirty_ids,
+        signals=signals,
+        signals_by_cohort={signal.cohort_id: signal for signal in signals},
+        missed_counts_by_severity=missed_counts_by_severity,
+        missed_energy_by_severity=missed_energy_by_severity,
+        detected_energy_by_severity=detected_energy_by_severity,
+    )
+
+
+def _inspection_events(
+    *,
+    day: object,
+    inspected_cohort_ids: tuple[int, ...],
+    observations_by_cohort: dict[int, CVObservation],
+    observation_diagnostics: ObservationDiagnostics,
+    eligible_cleaning_causes: dict[int, CleaningQueueCause],
+    true_cohorts: dict[int, CohortState],
+    clean_energy_per_panel_kwh: float,
+    dispatch_threshold_fraction: float,
+    confidence_threshold: float,
+    scenario_name: str,
+) -> list[DomainEvent]:
+    events: list[DomainEvent] = []
+    for cohort_id in inspected_cohort_ids:
+        observation = observations_by_cohort[cohort_id]
+        signal = observation_diagnostics.signals_by_cohort.get(cohort_id)
+        events.append(
+            DomainEvent(
+                date=pd.Timestamp(str(day)).date(),
+                event_type="reactive_inspection",
+                magnitude=1.0,
+                description="Drone CV inspection of cohort.",
+                scenario_name=scenario_name,
+                cohort_id=cohort_id,
+                metadata=_inspection_event_metadata(
+                    day=day,
+                    observation=observation,
+                    cohort=true_cohorts[cohort_id],
+                    clean_energy_per_panel_kwh=clean_energy_per_panel_kwh,
+                    signal_created=signal is not None,
+                    dispatch_threshold_passed=cohort_id in eligible_cleaning_causes,
+                    dispatch_threshold_fraction=dispatch_threshold_fraction,
+                    confidence_threshold=confidence_threshold,
+                ),
+            )
+        )
+    return events
+
+
+def _apply_cleaning_pass(
+    *,
+    day: object,
+    to_clean_ids: tuple[int, ...],
+    true_cohorts: dict[int, CohortState],
+    true_actionable_dirty_ids: frozenset[int],
+    candidate_cleaning_causes: dict[int, CleaningQueueCause],
+    current_queue_age_by_cohort: dict[int, int],
+    clean_energy_per_panel_kwh: float,
+    dispatch_threshold_fraction: float,
+    scenario_name: str,
+    crew: CleaningCrew,
+) -> CleaningPassResult:
+    cleaned_true_cohorts = dict(true_cohorts)
+    events: list[DomainEvent] = []
+    crew_hours = 0.0
+    water_liters = 0.0
+    recovered_loss_estimated_kwh = 0.0
+    cleaned_ids = frozenset(to_clean_ids)
+    for cohort_id in to_clean_ids:
+        cause = candidate_cleaning_causes.get(
+            cohort_id,
+            _fallback_cleaning_cause(
+                day=day,
+                cohort=cleaned_true_cohorts[cohort_id],
+                clean_energy_per_panel_kwh=clean_energy_per_panel_kwh,
+                dispatch_threshold_fraction=dispatch_threshold_fraction,
+            ),
+        )
+        pre_clean = cleaned_true_cohorts[cohort_id]
+        outcome = crew.clean(pre_clean)
+        cleaned_true_cohorts[cohort_id] = outcome.cohort
+        crew_hours += outcome.crew_hours
+        water_liters += outcome.water_liters
+        cleaned_loss_kwh = _cleaned_loss_kwh(
+            pre_clean,
+            outcome.cohort,
+            clean_energy_per_panel_kwh=clean_energy_per_panel_kwh,
+        )
+        recovered_loss_estimated_kwh += cleaned_loss_kwh
+        dispatch_id = _dispatch_id(day, cohort_id)
+        events.extend(
+            _cleaning_events(
+                day=day,
+                cohort_id=cohort_id,
+                cause=cause,
+                dispatch_id=dispatch_id,
+                pre_clean=pre_clean,
+                post_clean=outcome.cohort,
+                cleaned_loss_kwh=cleaned_loss_kwh,
+                crew_hours=outcome.crew_hours,
+                water_liters=outcome.water_liters,
+                queue_age_days=current_queue_age_by_cohort.get(cohort_id, 0),
+                false_positive_cleaning=cohort_id not in true_actionable_dirty_ids,
+                scenario_name=scenario_name,
+            )
+        )
+    return CleaningPassResult(
+        events=events,
+        true_cohorts=cleaned_true_cohorts,
+        crew_hours=crew_hours,
+        water_liters=water_liters,
+        recovered_loss_estimated_kwh=recovered_loss_estimated_kwh,
+        dirty_cleaning_count=len(cleaned_ids & true_actionable_dirty_ids),
+        false_positive_cleaning_count=len(cleaned_ids - true_actionable_dirty_ids),
+    )
+
+
+def _cleaned_loss_kwh(
+    pre_clean: CohortState,
+    post_clean: CohortState,
+    *,
+    clean_energy_per_panel_kwh: float,
+) -> float:
+    return max(
+        0.0,
+        _contamination_loss_kwh(
+            pre_clean,
+            clean_energy_per_panel_kwh=clean_energy_per_panel_kwh,
+        )
+        - _contamination_loss_kwh(
+            post_clean,
+            clean_energy_per_panel_kwh=clean_energy_per_panel_kwh,
+        ),
+    )
+
+
+def _cleaning_events(
+    *,
+    day: object,
+    cohort_id: int,
+    cause: CleaningQueueCause,
+    dispatch_id: str,
+    pre_clean: CohortState,
+    post_clean: CohortState,
+    cleaned_loss_kwh: float,
+    crew_hours: float,
+    water_liters: float,
+    queue_age_days: int,
+    false_positive_cleaning: bool,
+    scenario_name: str,
+) -> list[DomainEvent]:
+    event_day = pd.Timestamp(str(day)).date()
+    return [
+        DomainEvent(
+            date=event_day,
+            event_type="reactive_cleaning_dispatch",
+            magnitude=1.0,
+            description="Reactive cleaning dispatch decision for cohort.",
+            scenario_name=scenario_name,
+            cohort_id=cohort_id,
+            metadata=_dispatch_event_metadata(
+                dispatch_id=dispatch_id,
+                cause=cause,
+                queue_age_days=queue_age_days,
+            ),
+        ),
+        DomainEvent(
+            date=event_day,
+            event_type="reactive_cleaning_action",
+            magnitude=1.0,
+            description="Targeted cohort cleaning dispatched from CV inspection.",
+            scenario_name=scenario_name,
+            cohort_id=cohort_id,
+            metadata=_cleaning_event_metadata(
+                cause=cause,
+                dispatch_id=dispatch_id,
+                pre_clean=pre_clean,
+                post_clean=post_clean,
+                cleaned_loss_kwh=cleaned_loss_kwh,
+                crew_hours=crew_hours,
+                water_liters=water_liters,
+                false_positive_cleaning=false_positive_cleaning,
+            ),
+        ),
+    ]
+
+
+def _inspection_id(day: object, cohort_id: int) -> str:
+    return f"inspection-{pd.Timestamp(str(day)).date().isoformat()}-cohort-{cohort_id}"
+
+
+def _dispatch_id(day: object, cohort_id: int) -> str:
+    return f"dispatch-{pd.Timestamp(str(day)).date().isoformat()}-cohort-{cohort_id}"
+
+
+def _contamination_loss_fraction(cohort: CohortState) -> float:
+    dust_loss = max(0.0, 1.0 - cohort.dust_soiling_ratio)
+    return max(0.0, min(1.0, dust_loss + cohort.bird_drop_loss_fraction))
+
+
+def _contamination_loss_kwh(
+    cohort: CohortState,
+    *,
+    clean_energy_per_panel_kwh: float,
+    loss_fraction: float | None = None,
+) -> float:
+    bounded_loss = (
+        _contamination_loss_fraction(cohort)
+        if loss_fraction is None
+        else max(0.0, min(1.0, loss_fraction))
+    )
+    return max(0.0, bounded_loss) * clean_energy_per_panel_kwh * cohort.panel_count
+
+
+def _estimated_observation_loss_kwh(
+    observation: CVObservation,
+    cohort: CohortState,
+    *,
+    clean_energy_per_panel_kwh: float,
+) -> float:
+    bounded_loss = max(0.0, min(1.0, observation.estimated_loss_fraction))
+    return bounded_loss * clean_energy_per_panel_kwh * cohort.panel_count
+
+
+def _cleaning_queue_cause(
+    *,
+    day: object,
+    cohort: CohortState,
+    clean_energy_per_panel_kwh: float,
+    estimated_loss_fraction: float,
+    confidence: float,
+    dispatch_threshold_fraction: float,
+) -> CleaningQueueCause:
+    return CleaningQueueCause(
+        cohort_id=cohort.cohort_id,
+        inspection_id=_inspection_id(day, cohort.cohort_id),
+        inspection_date=pd.Timestamp(str(day)).date(),
+        estimated_loss_fraction=estimated_loss_fraction,
+        estimated_loss_kwh=max(0.0, estimated_loss_fraction)
+        * clean_energy_per_panel_kwh
+        * cohort.panel_count,
+        confidence=confidence,
+        dispatch_threshold_fraction=dispatch_threshold_fraction,
+        dispatch_threshold_kwh=dispatch_threshold_fraction
+        * clean_energy_per_panel_kwh
+        * cohort.panel_count,
+    )
+
+
+def _fallback_cleaning_cause(
+    *,
+    day: object,
+    cohort: CohortState,
+    clean_energy_per_panel_kwh: float,
+    dispatch_threshold_fraction: float,
+) -> CleaningQueueCause:
+    true_loss_fraction = _contamination_loss_fraction(cohort)
+    return _cleaning_queue_cause(
+        day=day,
+        cohort=cohort,
+        clean_energy_per_panel_kwh=clean_energy_per_panel_kwh,
+        estimated_loss_fraction=true_loss_fraction,
+        confidence=0.0,
+        dispatch_threshold_fraction=dispatch_threshold_fraction,
+    )
+
+
+def _passes_dispatch_threshold(
+    *,
+    estimated_loss_fraction: float,
+    confidence: float,
+    dispatch_threshold_fraction: float,
+    confidence_threshold: float,
+) -> bool:
+    return (
+        estimated_loss_fraction >= dispatch_threshold_fraction
+        and confidence >= confidence_threshold
+    )
+
+
+def _inspection_event_metadata(
+    *,
+    day: object,
+    observation: CVObservation,
+    cohort: CohortState,
+    clean_energy_per_panel_kwh: float,
+    signal_created: bool,
+    dispatch_threshold_passed: bool,
+    dispatch_threshold_fraction: float,
+    confidence_threshold: float,
+) -> dict[str, object]:
+    estimated_loss_kwh = _estimated_observation_loss_kwh(
+        observation,
+        cohort,
+        clean_energy_per_panel_kwh=clean_energy_per_panel_kwh,
+    )
+    true_loss_fraction = _contamination_loss_fraction(cohort)
+    true_loss_kwh = _contamination_loss_kwh(
+        cohort,
+        clean_energy_per_panel_kwh=clean_energy_per_panel_kwh,
+        loss_fraction=true_loss_fraction,
+    )
+    dispatch_threshold_kwh = (
+        dispatch_threshold_fraction * clean_energy_per_panel_kwh * cohort.panel_count
+    )
+    true_actionable_dirty = true_loss_fraction >= dispatch_threshold_fraction
+    return {
+        "inspection_id": _inspection_id(day, observation.cohort_id),
+        "cohort_id": observation.cohort_id,
+        "estimated_loss_fraction": observation.estimated_loss_fraction,
+        "estimated_loss_kwh": estimated_loss_kwh,
+        "cv_confidence": observation.confidence,
+        "detected_dirty": observation.detected_dirty,
+        "missed_image": not observation.image_captured,
+        "controller_visible_decision_inputs": {
+            "image_captured": observation.image_captured,
+            "detected_dirty": observation.detected_dirty,
+            "estimated_loss_fraction": observation.estimated_loss_fraction,
+            "estimated_loss_kwh": estimated_loss_kwh,
+            "confidence": observation.confidence,
+            "dispatch_signal_created": signal_created,
+            "dispatch_threshold_passed": dispatch_threshold_passed,
+            "dispatch_threshold_fraction": dispatch_threshold_fraction,
+            "dispatch_threshold_kwh": dispatch_threshold_kwh,
+            "confidence_threshold": confidence_threshold,
+        },
+        "audit": {
+            "true_dirty": true_actionable_dirty,
+            "true_contaminated": true_loss_fraction > 0.0,
+            "true_actionable_dirty": true_actionable_dirty,
+            "true_observer_dirty": observation._ground_truth_dirty,
+            "true_dirty_threshold_fraction": dispatch_threshold_fraction,
+            "true_dirty_threshold_kwh": dispatch_threshold_kwh,
+            "true_contamination_loss_fraction": true_loss_fraction,
+            "true_contamination_loss_kwh": true_loss_kwh,
+            "true_dust_soiling_ratio": cohort.dust_soiling_ratio,
+            "true_bird_drop_coverage_fraction": cohort.bird_drop_coverage_fraction,
+            "true_bird_drop_loss_fraction": cohort.bird_drop_loss_fraction,
+        },
+    }
+
+
+def _dispatch_event_metadata(
+    *,
+    dispatch_id: str,
+    cause: CleaningQueueCause,
+    queue_age_days: int,
+) -> dict[str, object]:
+    return {
+        "dispatch_id": dispatch_id,
+        "triggering_inspection_id": cause.inspection_id,
+        "triggering_inspection_date": cause.inspection_date.isoformat(),
+        "cohort_id": cause.cohort_id,
+        "estimated_loss_fraction": cause.estimated_loss_fraction,
+        "estimated_loss_kwh": cause.estimated_loss_kwh,
+        "dispatch_threshold_fraction": cause.dispatch_threshold_fraction,
+        "dispatch_threshold_kwh": cause.dispatch_threshold_kwh,
+        "cv_confidence": cause.confidence,
+        "queue_age_days": queue_age_days,
+        "controller_visible_decision_inputs": {
+            "estimated_loss_fraction": cause.estimated_loss_fraction,
+            "estimated_loss_kwh": cause.estimated_loss_kwh,
+            "confidence": cause.confidence,
+            "dispatch_threshold_fraction": cause.dispatch_threshold_fraction,
+            "dispatch_threshold_kwh": cause.dispatch_threshold_kwh,
+        },
+    }
+
+
+def _cleaning_event_metadata(
+    *,
+    cause: CleaningQueueCause,
+    dispatch_id: str,
+    pre_clean: CohortState,
+    post_clean: CohortState,
+    cleaned_loss_kwh: float,
+    crew_hours: float,
+    water_liters: float,
+    false_positive_cleaning: bool,
+) -> dict[str, object]:
+    return {
+        "triggering_inspection_id": cause.inspection_id,
+        "dispatch_id": dispatch_id,
+        "estimated_loss_fraction": cause.estimated_loss_fraction,
+        "estimated_loss_kwh": cause.estimated_loss_kwh,
+        "dispatch_threshold_fraction": cause.dispatch_threshold_fraction,
+        "dispatch_threshold_kwh": cause.dispatch_threshold_kwh,
+        "cv_confidence": cause.confidence,
+        "pre_clean_dust_state": pre_clean.dust_soiling_ratio,
+        "pre_clean_bird_state": {
+            "coverage_fraction": pre_clean.bird_drop_coverage_fraction,
+            "loss_fraction": pre_clean.bird_drop_loss_fraction,
+        },
+        "dust_removed": max(0.0, post_clean.dust_soiling_ratio - pre_clean.dust_soiling_ratio),
+        "bird_removed": max(
+            0.0,
+            pre_clean.bird_drop_coverage_fraction - post_clean.bird_drop_coverage_fraction,
+        ),
+        "post_clean_dust_state": post_clean.dust_soiling_ratio,
+        "post_clean_bird_state": {
+            "coverage_fraction": post_clean.bird_drop_coverage_fraction,
+            "loss_fraction": post_clean.bird_drop_loss_fraction,
+        },
+        "crew_minutes": crew_hours * 60.0,
+        "crew_hours": crew_hours,
+        "water_liters": water_liters,
+        "recovered_loss_estimated_kwh": cleaned_loss_kwh,
+        "avoided_loss_estimated_kwh": cleaned_loss_kwh,
+        "audit": {
+            "false_positive_cleaning": false_positive_cleaning,
+            "pre_clean_contamination_loss_fraction": _contamination_loss_fraction(pre_clean),
+            "post_clean_contamination_loss_fraction": _contamination_loss_fraction(post_clean),
+        },
+    }
+
+
+def _empty_bucket_ints() -> dict[str, int]:
+    return {bucket: 0 for bucket in SEVERITY_BUCKETS}
+
+
+def _empty_bucket_floats() -> dict[str, float]:
+    return {bucket: 0.0 for bucket in SEVERITY_BUCKETS}
 
 
 def _advance_dust_for_farm(
@@ -379,11 +948,25 @@ def _count_observations(observations: list[CVObservation]) -> tuple[int, int, in
     return tp, fp, fn, tn, missed
 
 
-def _is_dirty_for_reporting(cohort: CohortState, dirty_soiling_ratio_threshold: float) -> bool:
-    return (
-        cohort.dust_soiling_ratio < dirty_soiling_ratio_threshold
-        or cohort.bird_drop_loss_fraction > 0.0
-    )
+def _count_actionable_observations(
+    observations: list[CVObservation],
+    *,
+    true_actionable_dirty_ids: frozenset[int],
+) -> tuple[int, int, int, int, int]:
+    tp = fp = fn = tn = missed = 0
+    for obs in observations:
+        true_actionable_dirty = obs.cohort_id in true_actionable_dirty_ids
+        if not obs.image_captured:
+            missed += 1
+        elif true_actionable_dirty and obs.detected_dirty:
+            tp += 1
+        elif true_actionable_dirty and not obs.detected_dirty:
+            fn += 1
+        elif not true_actionable_dirty and obs.detected_dirty:
+            fp += 1
+        else:
+            tn += 1
+    return tp, fp, fn, tn, missed
 
 
 def _hourly_for_day(hourly: pd.DataFrame, day: object) -> pd.DataFrame:

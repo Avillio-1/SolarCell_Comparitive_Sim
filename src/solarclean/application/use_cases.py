@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,7 +18,7 @@ from solarclean.domain.environment.weather import (
 )
 from solarclean.domain.events.tape import generate_event_tape
 from solarclean.domain.farm.representation import CohortFarm
-from solarclean.domain.reactive_cv.metrics import summarize_detection_performance
+from solarclean.domain.reactive_cv.metrics import SEVERITY_BUCKETS, summarize_detection_performance
 from solarclean.domain.reactive_cv.strategy import ReactiveCVStrategy
 from solarclean.domain.scenario.contracts import AnnualScenarioResult, ScenarioContext
 from solarclean.domain.simulation.baseline import BaselineSimulationEngine, BaselineSimulationResult
@@ -436,6 +437,18 @@ def _reactive_summary(
 ) -> dict[str, object]:
     period = _period_metadata(reactive)
     detection = summarize_detection_performance(reactive)
+    missed_count_by_severity = _sum_daily_bucket_counts(
+        reactive,
+        "missed_contamination_count_by_severity_bucket",
+    )
+    missed_energy_by_severity = _sum_daily_bucket_floats(
+        reactive,
+        "missed_contamination_estimated_energy_impact_by_severity_bucket",
+    )
+    detected_energy_by_severity = _sum_daily_bucket_floats(
+        reactive,
+        "detected_contamination_estimated_energy_impact_by_severity_bucket",
+    )
     weather_cancelled_days = sum(
         1
         for daily in reactive.daily_results
@@ -468,6 +481,33 @@ def _reactive_summary(
         "weather_cancelled_flight_days": weather_cancelled_days,
         "final_cleaning_queue_length": final_queue_length,
         "detection_performance": detection.to_record(),
+        "missed_contamination_count_by_severity_bucket": missed_count_by_severity,
+        "missed_contamination_estimated_energy_impact_kwh": _sum_daily_extension_default(
+            reactive,
+            "missed_contamination_estimated_energy_impact_kwh",
+        ),
+        "missed_contamination_estimated_energy_impact_by_severity_bucket": (
+            missed_energy_by_severity
+        ),
+        "detected_contamination_estimated_energy_impact_kwh": _sum_daily_extension_default(
+            reactive,
+            "detected_contamination_estimated_energy_impact_kwh",
+        ),
+        "detected_contamination_estimated_energy_impact_by_severity_bucket": (
+            detected_energy_by_severity
+        ),
+        "recovered_loss_estimated_kwh": _sum_daily_extension_default(
+            reactive,
+            "recovered_loss_estimated_kwh",
+        ),
+        "avoided_loss_estimated_kwh": _sum_daily_extension_default(
+            reactive,
+            "avoided_loss_estimated_kwh",
+        ),
+        "diagnostic_energy_impact_basis": (
+            "cohort clean energy times contamination loss fraction; missed impact uses "
+            "audit true-state loss, detected impact uses controller-visible CV estimate"
+        ),
         "cost_basis_available": False,
         "economics_owner": "T4",
     }
@@ -504,6 +544,44 @@ def _sum_daily_extension(result: AnnualScenarioResult, key: str) -> float:
             raise TypeError(f"daily extension {key} must be numeric")
         total += float(value)
     return total
+
+
+def _sum_daily_extension_default(result: AnnualScenarioResult, key: str) -> float:
+    total = 0.0
+    for daily in result.daily_results:
+        value = daily.extensions.get(key, 0.0)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise TypeError(f"daily extension {key} must be numeric")
+        total += float(value)
+    return total
+
+
+def _sum_daily_bucket_counts(result: AnnualScenarioResult, key: str) -> dict[str, int]:
+    totals = {bucket: 0 for bucket in SEVERITY_BUCKETS}
+    for daily in result.daily_results:
+        raw = daily.extensions.get(key, {})
+        if not isinstance(raw, Mapping):
+            raise TypeError(f"daily extension {key} must be a mapping")
+        for bucket in SEVERITY_BUCKETS:
+            value = raw.get(bucket, 0)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"daily extension {key}[{bucket}] must be an integer")
+            totals[bucket] += value
+    return totals
+
+
+def _sum_daily_bucket_floats(result: AnnualScenarioResult, key: str) -> dict[str, float]:
+    totals = {bucket: 0.0 for bucket in SEVERITY_BUCKETS}
+    for daily in result.daily_results:
+        raw = daily.extensions.get(key, {})
+        if not isinstance(raw, Mapping):
+            raise TypeError(f"daily extension {key} must be a mapping")
+        for bucket in SEVERITY_BUCKETS:
+            value = raw.get(bucket, 0.0)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError(f"daily extension {key}[{bucket}] must be numeric")
+            totals[bucket] += float(value)
+    return totals
 
 
 def _first_daily_extension_float(result: AnnualScenarioResult, key: str) -> float:
