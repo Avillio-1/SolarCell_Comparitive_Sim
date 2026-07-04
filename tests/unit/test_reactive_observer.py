@@ -94,3 +94,18 @@ def test_confidence_is_bounded_between_zero_and_one() -> None:
     for _ in range(500):
         observation = observer.observe(_dirty_cohort(), rng)
         assert 0.0 <= observation.confidence <= 1.0
+
+
+def test_estimated_loss_is_bounded_between_zero_and_one() -> None:
+    observer = PerfectInformationObserver(_inspection())
+    rng = np.random.default_rng(5)
+    cohort = CohortState(
+        cohort_id=2,
+        panel_count=100,
+        dust_soiling_ratio=0.0,
+        bird_drop_loss_fraction=0.8,
+    )
+
+    observation = observer.observe(cohort, rng)
+
+    assert observation.estimated_loss_fraction == 1.0

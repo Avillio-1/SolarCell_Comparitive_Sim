@@ -26,8 +26,8 @@ def to_dispatch_signal(observation: CVObservation) -> DispatchSignal | None:
         return None
     return DispatchSignal(
         cohort_id=observation.cohort_id,
-        estimated_loss_fraction=observation.estimated_loss_fraction,
-        confidence=observation.confidence,
+        estimated_loss_fraction=_bounded_fraction(observation.estimated_loss_fraction),
+        confidence=_bounded_fraction(observation.confidence),
     )
 
 
@@ -80,3 +80,7 @@ class ThresholdDispatchPolicy:
             updated_queue=remaining_ids,
             updated_queue_age_days=remaining_ages,
         )
+
+
+def _bounded_fraction(value: float) -> float:
+    return max(0.0, min(1.0, value))

@@ -31,20 +31,37 @@ Persisted CSV columns use the generic `extension_` prefix from
 | `queue_length` | cohorts | Cleaning queue size remaining after that day's dispatch/crew pass. |
 | `weather_cancelled_flight` | bool | Whether wind or precipitation cancelled all drone flights that day. |
 | `flights_flown` | count | Number of drone flights flown that day (0 if cancelled or nothing due). |
+| `scheduled_inspection_count` | cohorts/day | Cohorts newly scheduled by the rotating inspection calendar. |
+| `inspection_due_count` | cohorts/day | Scheduled cohorts plus any overdue backlog, after de-duplication. |
+| `inspection_skipped_count` | cohorts/day | Due cohorts not inspected that day because of weather or capacity limits. |
+| `inspection_backlog_length` | cohorts | Due-but-uninspected cohorts carried forward for priority inspection later. |
 | `inspection_true_positive_count` | count | Inspected cohorts that were truly dirty and were detected as dirty. |
 | `inspection_false_positive_count` | count | Inspected cohorts that were truly clean but were detected as dirty. |
 | `inspection_false_negative_count` | count | Inspected cohorts that were truly dirty but were not detected. |
 | `inspection_true_negative_count` | count | Inspected cohorts that were truly clean and were correctly not detected. |
 | `inspection_missed_image_count` | count | Inspections where no usable image was captured at all. |
+| `system_dirty_cohort_count` | cohort-days | True dirty cohorts present before that day's crew cleaning, including uninspected cohorts. |
+| `system_detected_dirty_count` | cohort-days | True dirty cohorts detected by CV that day. |
+| `system_missed_dirty_count` | cohort-days | True dirty cohorts not detected by CV that day, including uninspected/weather-skipped/capacity-skipped cohorts. |
+| `missed_contamination_count` | cohort-days | Alias of `system_missed_dirty_count` for economics/dashboard consumers. |
+| `dirty_cleaning_count` | cohorts/day | Cleaned cohorts that were truly dirty before cleaning. |
+| `false_positive_cleaning_count` | cohorts/day | Cleaned cohorts that were not truly dirty before cleaning. |
 | `event_tape_checksum` | SHA-256 string | Shared exogenous event tape checksum, for cross-scenario fairness verification. |
 
 The confusion-matrix counters (`inspection_*_count`) are recorded **only**
 for offline evaluation via `solarclean.domain.reactive_cv.metrics
 .summarize_detection_performance()`, which aggregates them into realized
-precision/recall/F1 across the run. They are not read by
+precision/recall/F1 across the run. The `system_*`, `dirty_cleaning_count`,
+and `false_positive_cleaning_count` fields are also aggregated there to
+report system-level detection recall, missed contamination, and cleaning
+precision. They are not read by
 `ThresholdDispatchPolicy`; dispatch only ever sees `DispatchSignal` values,
 which structurally cannot carry the ground-truth label used to compute these
 counters (see ADR-011).
+
+Due inspections that cannot be flown because of weather or daily drone
+capacity are not dropped. They remain in an inspection backlog and are
+prepended to the next day's scheduled cohort list before capacity is applied.
 
 ## Events
 
