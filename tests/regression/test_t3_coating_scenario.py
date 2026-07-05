@@ -80,6 +80,37 @@ def test_run_coating_writes_scenario_outputs() -> None:
     assert (reconciled - daily["actual_energy_kwh"]).abs().max() <= 1e-9
     assert (result.output_directory / "scenario_summary.json").exists()
     assert (result.output_directory / "coating_comparison_summary.json").exists()
+    scenario_summary = json.loads(
+        (result.output_directory / "scenario_summary.json").read_text(encoding="utf-8")
+    )
+    comparison_summary = json.loads(
+        (result.output_directory / "coating_comparison_summary.json").read_text(encoding="utf-8")
+    )
+    for persisted in (scenario_summary, comparison_summary):
+        assert persisted["annual_cleanliness_effect_kwh"] == pytest.approx(
+            result.summary["annual_cleanliness_effect_kwh"]
+        )
+        assert persisted["annual_remaining_soiling_loss_kwh"] == pytest.approx(
+            result.summary["annual_remaining_soiling_loss_kwh"]
+        )
+        assert persisted["annual_remaining_soiling_loss_percent"] == pytest.approx(
+            result.summary["annual_remaining_soiling_loss_percent"]
+        )
+        assert persisted["period_remaining_soiling_loss_kwh"] == pytest.approx(
+            result.summary["period_remaining_soiling_loss_kwh"]
+        )
+        assert persisted["period_remaining_soiling_loss_percent"] == pytest.approx(
+            result.summary["period_remaining_soiling_loss_percent"]
+        )
+        assert persisted["annual_cleanliness_improvement_vs_baseline_kwh"] == pytest.approx(
+            result.summary["annual_cleanliness_improvement_vs_baseline_kwh"]
+        )
+        assert persisted["annual_actual_energy_kwh"] == pytest.approx(
+            result.summary["annual_coating_actual_energy_kwh"]
+        )
+        assert persisted["coating_readiness"]["annualized_capex_included"] is False
+        assert persisted["coating_readiness"]["water_revenue_included"] is False
+        assert persisted["coating_readiness"]["warnings"] == persisted["coating_warnings"]
 
 
 def test_coating_presets_load() -> None:

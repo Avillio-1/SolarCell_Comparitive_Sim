@@ -20,7 +20,11 @@ from solarclean.domain.events.tape import generate_event_tape
 from solarclean.domain.farm.representation import CohortFarm
 from solarclean.domain.reactive_cv.metrics import SEVERITY_BUCKETS, summarize_detection_performance
 from solarclean.domain.reactive_cv.strategy import ReactiveCVStrategy
-from solarclean.domain.scenario.contracts import AnnualScenarioResult, ScenarioContext
+from solarclean.domain.scenario.contracts import (
+    AnnualScenarioResult,
+    ScenarioContext,
+    ScenarioOutputBundle,
+)
 from solarclean.domain.simulation.baseline import BaselineSimulationEngine, BaselineSimulationResult
 from solarclean.domain.simulation.scenario_engine import ScenarioSimulationEngine
 from solarclean.infrastructure.persistence.outputs import OutputWriter
@@ -175,23 +179,30 @@ class RunCoatingSimulation:
             random_seed=self.config.soiling.random_seed,
             event_tape=event_tape,
         )
-        writer = OutputWriter(self.config)
-        output_dir = writer.create_run_directory("run-coating")
-        writer.write_config(output_dir)
-        writer.write_weather(output_dir, weather)
-        writer.write_clean_energy(output_dir, profile)
-        writer.write_scenario_result(output_dir, coating)
-        metadata = _base_metadata(self.config, "run-coating")
-        metadata["weather_metadata"] = weather.metadata
-        metadata["pv_metadata"] = profile.metadata
-        metadata["event_tape_checksum"] = event_tape.checksum()
-        writer.write_metadata(output_dir, metadata)
         summary = _coating_summary(
             coating,
             baseline,
             config=self.config,
             event_tape_checksum=event_tape.checksum(),
         )
+        writer = OutputWriter(self.config)
+        output_dir = writer.create_run_directory("run-coating")
+        writer.write_config(output_dir)
+        writer.write_weather(output_dir, weather)
+        writer.write_clean_energy(output_dir, profile)
+        writer.write_scenario_result(
+            output_dir,
+            ScenarioOutputBundle(
+                summary=summary,
+                daily_frame=coating.to_daily_frame(),
+                events=coating.events,
+            ),
+        )
+        metadata = _base_metadata(self.config, "run-coating")
+        metadata["weather_metadata"] = weather.metadata
+        metadata["pv_metadata"] = profile.metadata
+        metadata["event_tape_checksum"] = event_tape.checksum()
+        writer.write_metadata(output_dir, metadata)
         writer.write_summary(output_dir, summary)
         writer.write_text_summary(output_dir, summary)
         write_json_report(output_dir / "coating_comparison_summary.json", summary)
@@ -372,9 +383,19 @@ def _coating_summary(
         temperature_effect_kwh=temperature,
         period=period,
     )
+    readiness = {
+        "status": "provisional",
+        "ready_for_economics": False,
+        "annualized_capex_included": False,
+        "water_revenue_included": False,
+        "warnings": warnings,
+    }
     payload = {
         "command": "run-coating",
         "scenario_name": coating.scenario_name,
+        "daily_result_count": len(coating.daily_results),
+        "event_count": len(coating.events),
+        "extension_keys": coating.extension_keys(),
         "event_tape_checksum": event_tape_checksum,
         **period,
         "coating_preset": config.coating.preset,
@@ -390,6 +411,7 @@ def _coating_summary(
             config.coating.physics.source_optical_transmittance_absolute_fraction
         ),
         "annual_clean_energy_kwh": coating.annual_clean_energy_kwh,
+        "annual_actual_energy_kwh": coating.annual_actual_energy_kwh,
         "annual_baseline_actual_energy_kwh": baseline.annual_actual_energy_kwh,
         "annual_coating_actual_energy_kwh": coating.annual_actual_energy_kwh,
         "coating_minus_baseline_energy_kwh": (
@@ -422,6 +444,7 @@ def _coating_summary(
         "water_revenue_included": False,
         "annualization_included": False,
         "paper_source_status": "prompt_quoted_values_only",
+        "coating_readiness": readiness,
         "coating_warnings": warnings,
         "coating_readiness_notes": warnings,
     }
