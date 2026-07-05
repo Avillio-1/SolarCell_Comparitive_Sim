@@ -30,6 +30,24 @@ but also reports `period_*` aliases plus period start, end, day count, and
 whether the simulated period is a full calendar year. A one-day paper fixture is
 therefore a one-day period total, not an annualized Riyadh result.
 
+Dashboard and report consumers should use
+`annual_remaining_soiling_loss_kwh`,
+`annual_remaining_soiling_loss_percent`,
+`period_remaining_soiling_loss_kwh`, and
+`period_remaining_soiling_loss_percent` for the remaining coating soiling loss.
+The legacy `annual_cleanliness_effect_kwh` and `period_cleanliness_effect_kwh`
+fields remain available for compatibility, but negative values are remaining
+loss relative to the clean reference, not a coating benefit. Use
+`annual_cleanliness_improvement_vs_baseline_kwh` or
+`period_cleanliness_improvement_vs_baseline_kwh` for the positive coating
+cleanliness benefit versus baseline.
+
+The coating annual JSON includes `coating_warnings`, `coating_readiness_notes`,
+and `coating_readiness`. These fields flag zero optical or temperature effects,
+weather-limited/provisional assumptions, non-guaranteed KAUST-paper field
+performance, missing annualized CAPEX, and missing water revenue when
+applicable.
+
 The coating scenario reports condensed water, potentially collectable water, and
 actually collected water separately as whole-farm totals and normalized
 liters/m2 period yields. The water chain is sequential: gross condensation,
