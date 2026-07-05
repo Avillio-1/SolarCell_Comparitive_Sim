@@ -110,3 +110,27 @@ def test_baseline_adapter_accepts_normal_cost_components() -> None:
     assert inputs.scenario_name == "baseline"
     assert len(inputs.cost_components) == 1
     assert inputs.cost_components[0].name == "monitoring opex"
+
+    def test_baseline_adapter_rejects_multiple_double_counting_names() -> None:
+        blocked_names = (
+            "soiling loss charge",
+            "dust loss charge",
+            "lost revenue charge",
+            "revenue loss adjustment",
+        )
+
+        for name in blocked_names:
+            with pytest.raises(ValueError, match="Baseline soiling loss"):
+                build_baseline_economic_inputs(
+                    actual_energy_kwh=10_000,
+                    clean_energy_kwh=11_000,
+                    cost_components=(
+                        CostComponent(
+                            name=name,
+                            category="opex",
+                            amount_sar=100,
+                            unit="SAR/year",
+                            source="invalid test component",
+                        ),
+                    ),
+                )

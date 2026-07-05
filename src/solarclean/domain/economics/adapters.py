@@ -65,10 +65,19 @@ def build_coating_economic_inputs(
 
 
 def _reject_soiling_loss_costs(cost_components: tuple[CostComponent, ...]) -> None:
+    blocked_patterns = (
+        ("soiling", "loss"),
+        ("dust", "loss"),
+        ("lost", "revenue"),
+        ("revenue", "loss"),
+    )
+
     for component in cost_components:
         normalized_name = component.name.lower().replace("-", " ")
-        if "soiling" in normalized_name and "loss" in normalized_name:
-            raise ValueError(
-                "Baseline soiling loss must not be added as a separate cost. "
-                "It is already represented through reduced actual_energy_kwh."
-            )
+
+        for first, second in blocked_patterns:
+            if first in normalized_name and second in normalized_name:
+                raise ValueError(
+                    "Baseline soiling loss must not be added as a separate cost. "
+                    "It is already represented through reduced actual_energy_kwh."
+                )
