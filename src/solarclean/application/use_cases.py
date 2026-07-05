@@ -383,6 +383,7 @@ def _coating_summary(
         temperature_effect_kwh=temperature,
         period=period,
     )
+
     readiness = {
         "status": "provisional",
         "ready_for_economics": False,
@@ -390,6 +391,8 @@ def _coating_summary(
         "water_revenue_included": False,
         "warnings": warnings,
     }
+
+
     payload = {
         "command": "run-coating",
         "scenario_name": coating.scenario_name,
@@ -445,6 +448,8 @@ def _coating_summary(
         "annualization_included": False,
         "paper_source_status": "prompt_quoted_values_only",
         "coating_readiness": readiness,
+
+
         "coating_warnings": warnings,
         "coating_readiness_notes": warnings,
     }
