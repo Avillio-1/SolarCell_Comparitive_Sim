@@ -33,6 +33,7 @@ class AnnualScenarioOutput:
     operational_quantities: OperationalQuantities = field(default_factory=OperationalQuantities)
     cost_components: tuple[CostComponent, ...] = ()
     metadata: Mapping[str, object] = field(default_factory=dict)
+    useful_life_years: float | None = None
 
     def __post_init__(self) -> None:
         if not self.scenario_name:
@@ -41,6 +42,8 @@ class AnnualScenarioOutput:
             raise ValueError("actual_energy_kwh must be non-negative.")
         if self.clean_energy_kwh < 0:
             raise ValueError("clean_energy_kwh must be non-negative.")
+        if self.useful_life_years is not None and self.useful_life_years <= 0:
+            raise ValueError("useful_life_years must be positive when provided.")
 
 
 def build_economic_inputs_from_annual_output(
@@ -56,6 +59,7 @@ def build_economic_inputs_from_annual_output(
             clean_energy_kwh=output.clean_energy_kwh,
             operational_quantities=output.operational_quantities,
             cost_components=output.cost_components,
+            useful_life_years=output.useful_life_years,
         )
 
     if scenario == "reactive" or scenario.startswith("reactive"):
@@ -64,6 +68,7 @@ def build_economic_inputs_from_annual_output(
             clean_energy_kwh=output.clean_energy_kwh,
             operational_quantities=output.operational_quantities,
             cost_components=output.cost_components,
+            useful_life_years=output.useful_life_years,
         )
 
     if scenario == "coating" or scenario.startswith("coating"):
@@ -75,6 +80,8 @@ def build_economic_inputs_from_annual_output(
             clean_energy_kwh=output.clean_energy_kwh,
             operational_quantities=output.operational_quantities,
             cost_components=cost_components,
+            useful_life_years=output.useful_life_years
+            or _coating_useful_life_years_from_metadata(output.metadata),
         )
 
     return ScenarioEconomicInputs(
@@ -83,6 +90,7 @@ def build_economic_inputs_from_annual_output(
         clean_energy_kwh=output.clean_energy_kwh,
         operational_quantities=output.operational_quantities,
         cost_components=output.cost_components,
+        useful_life_years=output.useful_life_years,
     )
 
 
@@ -120,3 +128,20 @@ def _coating_cost_components_from_metadata(
     return build_coating_cost_components_from_basis(
         coating_cost_basis={str(key): item for key, item in value.items()},
     )
+
+
+def _coating_useful_life_years_from_metadata(
+    metadata: Mapping[str, object],
+) -> float | None:
+    value = metadata.get("coating_cost_basis")
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError("metadata['coating_cost_basis'] must be a mapping.")
+    raw_life = value.get("useful_life_years")
+    if raw_life is None:
+        return None
+    life = float(raw_life)
+    if life <= 0:
+        raise ValueError("metadata['coating_cost_basis']['useful_life_years'] must be positive.")
+    return life

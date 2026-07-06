@@ -79,6 +79,18 @@ def test_authoritative_parameter_registry_is_complete_and_queryable() -> None:
     soiling_rate = registry.get("soiling.base_daily_loss_fraction")
     assert soiling_rate.configuration_path == "soiling.base_daily_soiling_loss_fraction"
     assert soiling_rate.status == "provisional"
+    assert soiling_rate.central_value == pytest.approx(0.001)
+
+    baseline_target = registry.get("soiling.no_clean_annual_loss_target_fraction")
+    assert baseline_target.central_value == pytest.approx(0.25)
+    assert baseline_target.low_value == pytest.approx(0.12)
+    assert baseline_target.high_value == pytest.approx(0.40)
+
+    coating_multiplier = registry.get("coating.dust_accumulation_multiplier")
+    assert coating_multiplier.central_value == pytest.approx(0.70)
+
+    coating_life = registry.get("coating.useful_life_years")
+    assert coating_life.central_value == pytest.approx(3.0)
 
 
 def test_calibration_presets_are_valid_current_config_overlays() -> None:
@@ -138,7 +150,7 @@ def test_economics_registry_bridge_builds_expected_config() -> None:
 
     calibration = build_economics_from_parameter_registry(registry)
 
-    assert calibration.config.tariff_sar_per_kwh == pytest.approx(0.2)
+    assert calibration.config.tariff_sar_per_kwh == pytest.approx(0.18)
     assert calibration.config.discount_rate == pytest.approx(0.08)
     assert calibration.config.useful_life_years == 15
 
@@ -147,11 +159,22 @@ def test_economics_registry_bridge_builds_expected_config() -> None:
     assert crew_rate.amount_sar_per_unit == pytest.approx(35.0)
     assert crew_rate.quantity_unit == "hour"
 
-    assert len(calibration.equipment_cost_components) == 1
+    assert len(calibration.equipment_cost_components) == 2
     drone_capex = calibration.equipment_cost_components[0]
     assert drone_capex.name == "drone equipment capex"
     assert drone_capex.category == "capex"
-    assert drone_capex.amount_sar == pytest.approx(100_000.0)
+    assert drone_capex.amount_sar == pytest.approx(150_000.0)
+    overhead = calibration.equipment_cost_components[1]
+    assert overhead.name == "reactive annual overhead opex"
+    assert overhead.category == "opex"
+    assert overhead.amount_sar == pytest.approx(100_000.0)
+
+    drone_rate = calibration.reactive_cost_rates.drone_flight_hour
+    assert drone_rate is not None
+    assert drone_rate.amount_sar_per_unit == pytest.approx(180.0)
+    energy_rate = calibration.reactive_cost_rates.energy_kwh
+    assert energy_rate is not None
+    assert energy_rate.amount_sar_per_unit == pytest.approx(0.18)
 
 
 def test_economics_registry_bridge_converts_water_m3_to_liter_rate() -> None:

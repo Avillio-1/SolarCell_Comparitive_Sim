@@ -1,6 +1,6 @@
 # Provisional low Riyadh soiling preset. Requires calibration before scientific use.
 soiling:
-  base_daily_soiling_loss_fraction: 0.0012
+base_daily_soiling_loss_fraction: 0.0005
   seasonal_multipliers: {}
   dust_event_probability: 0.015
   dust_event_loss_min_fraction: 0.003
@@ -13,4 +13,3 @@ rainfall_cleaning:
   full_rain_cleaning_threshold_mm: 5.0
   partial_rain_cleaning_efficiency: 0.45
   full_rain_cleaning_efficiency: 0.95
-

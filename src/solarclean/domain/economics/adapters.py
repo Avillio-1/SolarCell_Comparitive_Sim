@@ -50,6 +50,7 @@ def build_baseline_economic_inputs(
     clean_energy_kwh: float,
     operational_quantities: OperationalQuantities | None = None,
     cost_components: tuple[CostComponent, ...] = (),
+    useful_life_years: float | None = None,
 ) -> ScenarioEconomicInputs:
     """Build baseline economic inputs.
 
@@ -66,6 +67,7 @@ def build_baseline_economic_inputs(
         clean_energy_kwh=clean_energy_kwh,
         operational_quantities=operational_quantities or OperationalQuantities(),
         cost_components=cost_components,
+        useful_life_years=useful_life_years,
     )
 
 
@@ -138,6 +140,7 @@ def build_reactive_economic_inputs(
     clean_energy_kwh: float,
     operational_quantities: OperationalQuantities,
     cost_components: tuple[CostComponent, ...],
+    useful_life_years: float | None = None,
 ) -> ScenarioEconomicInputs:
     return ScenarioEconomicInputs(
         scenario_name="reactive",
@@ -145,6 +148,7 @@ def build_reactive_economic_inputs(
         clean_energy_kwh=clean_energy_kwh,
         operational_quantities=operational_quantities,
         cost_components=cost_components,
+        useful_life_years=useful_life_years,
     )
 
 
@@ -233,6 +237,7 @@ def build_coating_economic_inputs(
     clean_energy_kwh: float,
     operational_quantities: OperationalQuantities,
     cost_components: tuple[CostComponent, ...],
+    useful_life_years: float | None = None,
 ) -> ScenarioEconomicInputs:
     return ScenarioEconomicInputs(
         scenario_name="coating",
@@ -240,6 +245,7 @@ def build_coating_economic_inputs(
         clean_energy_kwh=clean_energy_kwh,
         operational_quantities=operational_quantities,
         cost_components=cost_components,
+        useful_life_years=useful_life_years,
     )
 
 

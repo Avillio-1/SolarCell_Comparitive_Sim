@@ -10,8 +10,12 @@ The current implementation is limited to:
 - Phase 3: cohort-based representation of exactly 10,000 panels.
 - Phase 3.5: validation, reproducibility, event-tape, calibration-preset, golden-regression, and profiling infrastructure.
 - T1: frozen shared scenario contracts for future parallel reactive, coating, economics, analytics, and dashboard development.
+- T2: provisional reactive CV inspection and targeted cleaning strategy.
+- T3: provisional self-cleaning coating strategy and cost basis.
+- T4/T5: common economics engine backed by the calibration parameter registry.
+- T6: three-scenario comparison, reconciliation, ranking, recommendation, and export package.
 
-Not implemented yet: drone inspection, computer vision, human crew dispatch, self-cleaning coating behavior, economics, optimization, sensitivity analysis, databases, dashboards, authentication, Docker, and cloud deployment.
+Not implemented yet: optimization, sensitivity analysis, databases, dashboards, authentication, Docker, and cloud deployment. Reactive CV, coating, economics, and ranking assumptions remain provisional until field calibration and validated cost inputs are available.
 
 ## Architecture Summary
 
@@ -62,6 +66,12 @@ Run the no-intervention baseline with cohort farm output:
 solarclean run-baseline --config configs/riyadh_2025.yaml
 ```
 
+Run the reconciled baseline/reactive/coating comparison:
+
+```powershell
+solarclean compare-all-scenarios --config configs/offline_fixture_full_year.yaml
+```
+
 Validate weather only:
 
 ```powershell
@@ -86,6 +96,7 @@ Run fully offline with the deterministic fixture:
 solarclean fetch-weather --config configs/offline_fixture.yaml
 solarclean run-clean --config configs/offline_fixture.yaml
 solarclean run-baseline --config configs/offline_fixture.yaml
+solarclean compare-all-scenarios --config configs/offline_fixture_full_year.yaml
 ```
 
 ## NASA POWER Weather
@@ -107,7 +118,9 @@ After a successful NASA fetch, keep `weather.cache_enabled: true` and rerun any 
 
 ## Offline Fixture Runs
 
-`configs/offline_fixture.yaml` uses a small deterministic generated fixture. It is test-only and is not scientifically representative Riyadh data.
+`configs/offline_fixture.yaml` uses a two-day deterministic generated fixture for fast tests. It is test-only and is not scientifically representative Riyadh data.
+
+`configs/offline_fixture_full_year.yaml` uses the same deterministic fixture weather provider over January 1, 2025 through December 31, 2025 for offline T6 comparison-package checks.
 
 ## Local Riyadh CSV Replacement
 
@@ -154,8 +167,21 @@ Each command creates `outputs/<run_id>/` containing some or all of:
 - `scenario_daily_results.csv`
 - `scenario_events.csv`
 - `scenario_summary.json`
+- `event_tape.json`
+- `comparison_metadata.json`
+- `scenario_daily_summary.csv`
+- `scenario_annual_summary.csv`
+- `scenario_cost_summary.csv`
+- `scenario_ranking.json`
+- `recommendation.json`
+- `reconciliation_report.json`
+- `comparison_daily_energy.png`
+- `comparison_cumulative_energy.png`
+- `comparison_annual_kpi_breakdown.png`
 
 Column names include units where practical. CSV is used instead of Parquet to keep Phase 1-3 dependencies lean.
+
+The T6 comparison package is documented in `docs/data_contracts/t6_comparison.md`.
 
 ## Testing And Quality
 

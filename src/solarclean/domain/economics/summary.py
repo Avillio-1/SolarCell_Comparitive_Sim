@@ -17,6 +17,7 @@ class AnnualFinancialSummaryRow:
     payback_years: float | None
     effective_lcoe_sar_per_kwh: float | None
     total_capex_sar: float
+    capital_recovery_life_years: float
 
     @classmethod
     def from_result(cls, result: EconomicResult) -> AnnualFinancialSummaryRow:
@@ -31,6 +32,7 @@ class AnnualFinancialSummaryRow:
             payback_years=result.payback_years,
             effective_lcoe_sar_per_kwh=result.effective_lcoe_sar_per_kwh,
             total_capex_sar=result.total_capex_sar,
+            capital_recovery_life_years=result.capital_recovery_life_years,
         )
 
     def to_record(self) -> dict[str, object]:

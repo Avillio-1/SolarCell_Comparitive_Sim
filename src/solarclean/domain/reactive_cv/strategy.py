@@ -331,6 +331,11 @@ class ReactiveCVStrategy:
                 "queue_length": len(decision.updated_queue),
                 "weather_cancelled_flight": flight_plan.weather_cancelled,
                 "flights_flown": flight_plan.flights_flown,
+                "whole_farm_survey_count": len(flight_plan.inspected_cohort_ids)
+                / self.farm_config.cohort_count,
+                "block_or_cohort_inspection_count": len(flight_plan.inspected_cohort_ids),
+                "cleaning_dispatch_count": len(decision.to_clean_ids),
+                "panels_cleaned": len(decision.to_clean_ids) * self.farm_config.panels_per_cohort,
                 "scheduled_inspection_count": len(scheduled_due),
                 "inspection_due_count": len(due),
                 "inspection_skipped_count": skipped_inspection_count,

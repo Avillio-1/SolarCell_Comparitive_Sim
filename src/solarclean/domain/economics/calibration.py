@@ -14,6 +14,8 @@ _TARIFF_KEY = "economics.electricity_tariff_sar_per_kwh"
 _LABOUR_KEY = "economics.labour_cost_sar_per_hour"
 _WATER_KEY = "economics.water_cost_sar_per_m3"
 _DRONE_EQUIPMENT_KEY = "economics.drone_equipment_cost_sar"
+_DRONE_FLIGHT_HOUR_KEY = "economics.drone_flight_operation_cost_sar_per_hour"
+_REACTIVE_OVERHEAD_OPEX_KEY = "economics.reactive_overhead_opex_sar_per_year"
 _DISCOUNT_RATE_KEY = "economics.discount_rate_fraction"
 _USEFUL_LIFE_KEY = "economics.useful_life_years"
 
@@ -22,6 +24,8 @@ _REQUIRED_PARAMETER_KEYS = (
     _LABOUR_KEY,
     _WATER_KEY,
     _DRONE_EQUIPMENT_KEY,
+    _DRONE_FLIGHT_HOUR_KEY,
+    _REACTIVE_OVERHEAD_OPEX_KEY,
     _DISCOUNT_RATE_KEY,
     _USEFUL_LIFE_KEY,
 )
@@ -83,8 +87,21 @@ def build_economics_from_parameter_registry(
             quantity_unit="hour",
         ),
         water_liter=_water_liter_rate(parameters[_WATER_KEY]),
+        drone_flight_hour=_unit_rate(
+            parameters[_DRONE_FLIGHT_HOUR_KEY],
+            expected_unit="SAR/drone_hour",
+            quantity_unit="drone_flight_hour",
+        ),
+        energy_kwh=_unit_rate(
+            parameters[_TARIFF_KEY],
+            expected_unit="SAR/kWh",
+            quantity_unit="kWh",
+        ),
     )
-    equipment_components = (_drone_equipment_capex_component(parameters[_DRONE_EQUIPMENT_KEY]),)
+    equipment_components = (
+        _drone_equipment_capex_component(parameters[_DRONE_EQUIPMENT_KEY]),
+        _reactive_overhead_opex_component(parameters[_REACTIVE_OVERHEAD_OPEX_KEY]),
+    )
 
     return EconomicsCalibration(
         config=config,
@@ -209,6 +226,25 @@ def _drone_equipment_capex_component(parameter: CalibrationParameter) -> CostCom
             extra=(
                 "mapped as a capex component, not a flight-hour rate; "
                 "the registry value is a total equipment cost"
+            ),
+        ),
+    )
+
+
+def _reactive_overhead_opex_component(parameter: CalibrationParameter) -> CostComponent:
+    _require_unit(parameter, "SAR/year")
+    return CostComponent(
+        name="reactive annual overhead opex",
+        category="opex",
+        amount_sar=parameter.central_value,
+        unit="SAR/year",
+        source=parameter.source,
+        source_status=parameter.status,
+        notes=_metadata_notes(
+            parameter,
+            extra=(
+                "explicit annual OPEX target for supervision, software, maintenance, "
+                "insurance, spares, and mobilization not captured by variable rates"
             ),
         ),
     )

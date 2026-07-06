@@ -65,6 +65,7 @@ class ScenarioEconomicInputs:
     clean_energy_kwh: float
     operational_quantities: OperationalQuantities = field(default_factory=OperationalQuantities)
     cost_components: tuple[CostComponent, ...] = ()
+    useful_life_years: float | None = None
 
     def __post_init__(self) -> None:
         if not self.scenario_name:
@@ -73,6 +74,8 @@ class ScenarioEconomicInputs:
             raise ValueError("actual_energy_kwh must be non-negative.")
         if self.clean_energy_kwh < 0:
             raise ValueError("clean_energy_kwh must be non-negative.")
+        if self.useful_life_years is not None and self.useful_life_years <= 0:
+            raise ValueError("useful_life_years must be positive when provided.")
 
 
 @dataclass(frozen=True)
@@ -90,3 +93,4 @@ class EconomicResult:
     effective_lcoe_sar_per_kwh: float | None
     total_capex_sar: float
     cost_breakdown: tuple[CostComponent, ...]
+    capital_recovery_life_years: float

@@ -1,6 +1,6 @@
 # T5 central calibration overlay for the current strict config model.
 soiling:
-  base_daily_soiling_loss_fraction: 0.0025
+  base_daily_soiling_loss_fraction: 0.001
   seasonal_multipliers:
     3: 1.1
     4: 1.15

@@ -5,6 +5,7 @@ from typing import Annotated
 
 import typer
 
+from solarclean.application.comparison import CompareAllScenarios
 from solarclean.application.phase35 import Phase35Validator, validate_weather_dataset
 from solarclean.application.use_cases import (
     FetchWeather,
@@ -51,6 +52,12 @@ def run_coating(config: ConfigPath) -> None:
 def run_reactive(config: ConfigPath) -> None:
     result = RunReactiveSimulation(load_config(config)).run()
     typer.echo(f"Reactive CV scenario run written to {result.output_directory}")
+
+
+@app.command("compare-all-scenarios")
+def compare_all_scenarios(config: ConfigPath) -> None:
+    result = CompareAllScenarios(load_config(config)).run()
+    typer.echo(f"Scenario comparison written to {result.output_directory}")
 
 
 @app.command("validate-weather")

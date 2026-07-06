@@ -101,3 +101,7 @@ output:
   include_cohort_daily_details: true
 logging:
   level: INFO
+calibration:
+  assumption_set: coating_humidity_water_rd
+  parameter_registry_path: data/calibration/parameter_registry.yaml
+  source_note: "Non-central R&D-style coating preset with cooling, condensation, and passive water-assisted behavior."

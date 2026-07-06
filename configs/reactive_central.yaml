@@ -29,7 +29,7 @@ farm:
   store_cohort_daily_details: true
   cohort_soiling_variation_fraction: 0.0
 soiling:
-  base_daily_soiling_loss_fraction: 0.0025
+  base_daily_soiling_loss_fraction: 0.001
   seasonal_multipliers:
     1: 1.0
   dust_event_probability: 0.2
@@ -53,33 +53,33 @@ reactive_cv:
   enabled: true
   perfect_information_benchmark: true
   inspection:
-    interval_days: 7
+    interval_days: 15
     first_inspection_day_index: 0
     dirty_soiling_ratio_threshold: 0.92
   drone:
-    cohorts_per_flight: 10
-    flights_per_day: 4
+    cohorts_per_flight: 5
+    flights_per_day: 2
     flight_duration_minutes: 18
     max_wind_speed_m_s: 12
     max_precipitation_mm: 0.2
     energy_kwh_per_flight: 0.35
     compute_energy_kwh_per_image: 0.01
   observer:
-    recall_fraction: 0.85
+    recall_fraction: 0.80
     false_positive_rate: 0.05
     missed_image_fraction: 0.03
     base_confidence: 0.8
     confidence_std_fraction: 0.1
     severity_error_std_fraction: 0.15
   dispatch:
-    estimated_loss_threshold_fraction: 0.05
+    estimated_loss_threshold_fraction: 0.04
     confidence_threshold: 0.5
     max_queue_age_days: 14
   crew:
     daily_capacity_cohorts: 6
     setup_minutes_per_cohort: 8
     cleaning_minutes_per_cohort: 25
-    water_liters_per_cohort: 180
+    water_liters_per_cohort: 150
     dust_removal_efficiency: 0.92
     bird_removal_efficiency: 0.95
 output:

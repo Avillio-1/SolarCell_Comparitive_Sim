@@ -160,7 +160,7 @@ class CalibrationRegistry:
                     label="Provisional low Riyadh soiling assumption",
                     status="provisional_requires_calibration",
                     soiling=SoilingConfig(
-                        base_daily_soiling_loss_fraction=0.0012,
+                        base_daily_soiling_loss_fraction=0.0005,
                         dust_event_probability=0.015,
                         dust_event_loss_min_fraction=0.003,
                         dust_event_loss_max_fraction=0.015,
@@ -183,7 +183,7 @@ class CalibrationRegistry:
                     label="Provisional medium Riyadh soiling assumption",
                     status="provisional_requires_calibration",
                     soiling=SoilingConfig(
-                        base_daily_soiling_loss_fraction=0.0025,
+                        base_daily_soiling_loss_fraction=0.001,
                         seasonal_multipliers={3: 1.1, 4: 1.15, 5: 1.1},
                         dust_event_probability=0.03,
                         dust_event_loss_min_fraction=0.005,
@@ -193,7 +193,7 @@ class CalibrationRegistry:
                         random_seed=42,
                     ),
                     rainfall=RainfallCleaningConfig(),
-                    notes="Default provisional assumption used by configs/riyadh_2025.yaml.",
+                    notes="Central-v2 provisional assumption used by T6 corrected comparison.",
                 ),
                 CalibrationPreset(
                     name="riyadh_high_soiling",

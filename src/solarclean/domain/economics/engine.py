@@ -19,7 +19,15 @@ class EconomicEngine:
         annual_opex_sar = self._sum_costs(inputs.cost_components, "opex")
 
         annual_revenue_sar = inputs.actual_energy_kwh * self.config.tariff_sar_per_kwh
-        annualized_capex_sar = self.annualize_capex(total_capex_sar)
+        capital_recovery_life_years = (
+            inputs.useful_life_years
+            if inputs.useful_life_years is not None
+            else float(self.config.useful_life_years)
+        )
+        annualized_capex_sar = self.annualize_capex(
+            total_capex_sar,
+            useful_life_years=capital_recovery_life_years,
+        )
 
         total_annual_cost_sar = annualized_capex_sar + annual_opex_sar
         net_annual_benefit_sar = annual_revenue_sar - total_annual_cost_sar
@@ -50,9 +58,15 @@ class EconomicEngine:
             effective_lcoe_sar_per_kwh=effective_lcoe_sar_per_kwh,
             total_capex_sar=total_capex_sar,
             cost_breakdown=inputs.cost_components,
+            capital_recovery_life_years=capital_recovery_life_years,
         )
 
-    def annualize_capex(self, total_capex_sar: float) -> float:
+    def annualize_capex(
+        self,
+        total_capex_sar: float,
+        *,
+        useful_life_years: float | None = None,
+    ) -> float:
         if total_capex_sar < 0:
             raise ValueError("total_capex_sar must be non-negative.")
 
@@ -60,7 +74,9 @@ class EconomicEngine:
             return 0.0
 
         r = self.config.discount_rate
-        n = self.config.useful_life_years
+        n = useful_life_years if useful_life_years is not None else self.config.useful_life_years
+        if n <= 0:
+            raise ValueError("useful_life_years must be positive.")
 
         if r == 0:
             return total_capex_sar / n

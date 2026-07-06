@@ -166,6 +166,31 @@ def test_coating_output_metadata_can_feed_financial_summary_without_engine_branc
     assert rows[0].annualized_capex_sar == 450
     assert rows[0].annual_opex_sar == 120
     assert rows[0].total_annual_cost_sar == 570
+    assert rows[0].capital_recovery_life_years == 5
+
+
+def test_coating_useful_life_overrides_generic_capital_recovery_life() -> None:
+    config = EconomicConfig(
+        currency="SAR",
+        tariff_sar_per_kwh=0.20,
+        discount_rate=0.0,
+        useful_life_years=15,
+    )
+    basis = _coating_cost_basis()
+    basis["useful_life_years"] = 3.0
+    outputs = (
+        AnnualScenarioOutput(
+            scenario_name="coating",
+            actual_energy_kwh=10_800,
+            clean_energy_kwh=11_000,
+            metadata={"coating_cost_basis": basis},
+        ),
+    )
+
+    rows = build_annual_financial_summary_from_outputs(outputs=outputs, config=config)
+
+    assert rows[0].annualized_capex_sar == 750
+    assert rows[0].capital_recovery_life_years == 3
 
 
 def _coating_cost_basis() -> dict[str, object]:

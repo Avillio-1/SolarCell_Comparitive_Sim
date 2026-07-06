@@ -1,13 +1,15 @@
 metadata:
   registry_name: solarclean_dt_t5_parameter_registry
-  version: "2026-06-30-t5"
+  version: "2026-07-06-central-v2"
   target_site: Riyadh, Saudi Arabia
   retrieval_date: "2026-06-30"
   climate_context: Hot arid Gulf interior site using Asia/Riyadh daily aggregation.
   current_config_presets:
     low: configs/calibration/low.yaml
     central: configs/calibration/central.yaml
+    central_v2_t6: configs/offline_fixture_full_year.yaml
     high: configs/calibration/high.yaml
+  corrected_assumption_set: riyadh_central_v2
   scope_note: >
     Current production presets only include sections accepted by SolarCleanConfig.
     Future T2, T3, and T4 paths are registered here and documented as interface
@@ -16,9 +18,9 @@ parameters:
   - name: soiling.base_daily_loss_fraction
     configuration_path: soiling.base_daily_soiling_loss_fraction
     category: soiling
-    central_value: 0.0025
-    low_value: 0.0012
-    high_value: 0.004
+    central_value: 0.001
+    low_value: 0.0005
+    high_value: 0.0022
     unit: fraction/day
     source: "SolarClean Phase 3.5 provisional presets; Kimber et al. 2006 PV soiling model; Ilse et al. 2019 Joule soiling-economics review, https://doi.org/10.1016/j.joule.2019.08.019"
     evidence_type: inferred
@@ -26,8 +28,24 @@ parameters:
     applicability_to_saudi_conditions: "Comparable dry, dusty operating context but not a measured Riyadh site soiling station."
     confidence: medium
     status: provisional
-    rationale: "Keeps the current central model value and brackets lower and higher arid soiling conditions."
+    rationale: "Central-v2 tuning keeps sparse-rain event physics while targeting about 25% annual no-clean loss for the 2025 full-year fixture."
     limitations: "Needs measured clean/reference cell or measured production calibration at the target farm."
+    responsible_module_or_owner: T1/core baseline
+  - name: soiling.no_clean_annual_loss_target_fraction
+    configuration_path: calibration.central_v2_targets.baseline_no_clean_annual_loss_fraction
+    category: soiling
+    central_value: 0.25
+    low_value: 0.12
+    high_value: 0.4
+    unit: fraction/year
+    source: "T6 parameter audit correction, 2026-07-06; target range selected for Riyadh central mitigation comparison."
+    evidence_type: assumed
+    source_geography_and_climate: "Riyadh hot-arid central planning target, not a measured soiling-station result."
+    applicability_to_saudi_conditions: "Used to prevent the central case from becoming a severe no-clean stress test."
+    confidence: low
+    status: provisional
+    rationale: "Documents the annual no-clean loss target used to tune runtime soiling parameters without hardcoding an output."
+    limitations: "Must be replaced by measured soiling/reference-cell data before decision use."
     responsible_module_or_owner: T1/core baseline
   - name: soiling.minimum_soiling_ratio
     configuration_path: soiling.minimum_soiling_ratio
@@ -318,11 +336,11 @@ parameters:
     limitations: "Requires T1/core agreement before adding to SolarCleanConfig."
     responsible_module_or_owner: T1/core baseline
   - name: cv.true_positive_rate
-    configuration_path: reactive_cv.detector.true_positive_rate
+    configuration_path: reactive_cv.observer.recall_fraction
     category: computer_vision
-    central_value: 0.9
-    low_value: 0.75
-    high_value: 0.98
+    central_value: 0.8
+    low_value: 0.6
+    high_value: 0.9
     unit: fraction
     source: "DeepSolarEye and PV image-inspection literature; exact production CV model not yet selected."
     evidence_type: inferred
@@ -330,11 +348,11 @@ parameters:
     applicability_to_saudi_conditions: "Saudi dust color, glare, and drone altitude may change detector recall."
     confidence: low
     status: blocked
-    rationale: "Provides a provisional recall input for T2 reactive CV sensitivity."
+    rationale: "Provides the central-v2 provisional recall input for T2 reactive CV sensitivity."
     limitations: "Needs T2 model evaluation on Saudi or Saudi-like imagery."
     responsible_module_or_owner: T2 reactive CV
   - name: cv.false_positive_rate
-    configuration_path: reactive_cv.detector.false_positive_rate
+    configuration_path: reactive_cv.observer.false_positive_rate
     category: computer_vision
     central_value: 0.08
     low_value: 0.02
@@ -350,13 +368,13 @@ parameters:
     limitations: "Cannot be validated until T2 publishes detector outputs and test data."
     responsible_module_or_owner: T2 reactive CV
   - name: cv.false_negative_rate
-    configuration_path: reactive_cv.detector.false_negative_rate
+    configuration_path: reactive_cv.observer.recall_fraction
     category: computer_vision
-    central_value: 0.1
-    low_value: 0.02
-    high_value: 0.25
+    central_value: 0.2
+    low_value: 0.1
+    high_value: 0.4
     unit: fraction
-    source: "Complement of provisional CV true-positive range."
+    source: "Complement of provisional central-v2 CV recall range."
     evidence_type: calculated
     source_geography_and_climate: "Derived from provisional CV sensitivity inputs."
     applicability_to_saudi_conditions: "Represents missed soiling defects under Saudi image conditions."
@@ -366,7 +384,7 @@ parameters:
     limitations: "Should be computed directly from the T2 confusion matrix when available."
     responsible_module_or_owner: T2 reactive CV
   - name: cv.severity_mae_fraction
-    configuration_path: reactive_cv.detector.severity_mae_fraction
+    configuration_path: reactive_cv.observer.severity_error_std_fraction
     category: computer_vision
     central_value: 0.05
     low_value: 0.02
@@ -381,37 +399,53 @@ parameters:
     rationale: "Bounds CV uncertainty when mapping detected coverage to cleaning decisions."
     limitations: "Requires measured labels from T2 image annotation or soiling-ratio ground truth."
     responsible_module_or_owner: T2 reactive CV
-  - name: inspection.panels_per_flight_hour
-    configuration_path: reactive_cv.operations.inspection_panels_per_flight_hour
+  - name: inspection.whole_farm_surveys_per_year
+    configuration_path: reactive_cv.inspection.interval_days
     category: drone_inspection_cleaning
-    central_value: 800.0
-    low_value: 300.0
-    high_value: 1500.0
-    unit: panels/hour
-    source: "Inferred operational placeholder using 10,000-panel scale and UAV flight-duration constraints."
-    evidence_type: inferred
+    central_value: 24.0
+    low_value: 12.0
+    high_value: 52.0
+    unit: whole_farm_surveys/year
+    source: "T6 parameter audit correction, 2026-07-06; central annual survey cadence for whole-farm UAV inspection."
+    evidence_type: assumed
     source_geography_and_climate: "Operational estimate, not climate-specific."
     applicability_to_saudi_conditions: "Heat, dust, and flight rules may reduce achievable inspection rate."
     confidence: low
     status: blocked
-    rationale: "Lets T2 estimate inspection workload without creating dispatch logic in T5."
-    limitations: "Requires T2 flight plan, image overlap, altitude, camera, and regulatory assumptions."
+    rationale: "Separates full-farm survey cadence from lower-level cohort inspection counts."
+    limitations: "Runtime config stores interval_days; annual survey equivalents depend on simulated days and weather cancellations."
     responsible_module_or_owner: T2 reactive CV
   - name: inspection.drone_flight_duration_minutes
-    configuration_path: reactive_cv.operations.drone_flight_duration_minutes
+    configuration_path: reactive_cv.drone.flight_duration_minutes
     category: drone_inspection_cleaning
-    central_value: 45.0
-    low_value: 30.0
-    high_value: 55.0
+    central_value: 18.0
+    low_value: 15.0
+    high_value: 30.0
     unit: minutes/flight
-    source: "DJI Matrice 350 RTK official maximum flight-time specification, https://enterprise.dji.com/matrice-350-rtk/specs"
-    evidence_type: quoted
+    source: "Operational flight-segment placeholder for central-v2 SolarClean comparison; not a manufacturer endurance limit."
+    evidence_type: assumed
     source_geography_and_climate: "Manufacturer global specification; not hot-desert derated."
     applicability_to_saudi_conditions: "Saudi heat, payload, wind, and battery aging can reduce practical duration."
     confidence: medium
     status: blocked
-    rationale: "Uses a conservative central duration below the quoted maximum."
-    limitations: "Future T2 hardware choice may differ from the Matrice 350 RTK."
+    rationale: "Targets about 220 annual drone flight hours with 24 whole-farm survey equivalents."
+    limitations: "Future T2 hardware, image overlap, battery, and airspace constraints may change segment duration."
+    responsible_module_or_owner: T2 reactive CV
+  - name: inspection.drone_flight_hours_per_year_target
+    configuration_path: calibration.central_v2_targets.reactive_drone_flight_hours_per_year
+    category: drone_inspection_cleaning
+    central_value: 220.0
+    low_value: 120.0
+    high_value: 420.0
+    unit: drone_hours/year
+    source: "T6 parameter audit correction, 2026-07-06; central reactive inspection workload target."
+    evidence_type: assumed
+    source_geography_and_climate: "Operational estimate, not climate-specific."
+    applicability_to_saudi_conditions: "Heat, dust, and flight rules may reduce achievable inspection hours."
+    confidence: low
+    status: provisional
+    rationale: "Keeps annual drone workload visible separately from cohort-level inspection event counts."
+    limitations: "Requires T2 flight plan, image overlap, altitude, camera, and regulatory assumptions."
     responsible_module_or_owner: T2 reactive CV
   - name: inspection.battery_sets_per_drone
     configuration_path: reactive_cv.operations.battery_sets_per_drone
@@ -448,8 +482,8 @@ parameters:
   - name: cleaning.water_liters_per_panel
     configuration_path: reactive_cv.cleaning.water_liters_per_panel
     category: drone_inspection_cleaning
-    central_value: 1.0
-    low_value: 0.2
+    central_value: 1.5
+    low_value: 0.5
     high_value: 3.0
     unit: liters/panel
     source: "PV cleaning literature and arid-site water-use envelopes; water-free cleaning alternatives noted separately."
@@ -460,6 +494,22 @@ parameters:
     status: blocked
     rationale: "Captures wet-cleaning water demand without implementing dispatch behavior."
     limitations: "Depends on cleaning method, dust adhesion, panel size, and water recycling."
+    responsible_module_or_owner: T2 reactive CV
+  - name: cleaning.trigger_loss_fraction
+    configuration_path: reactive_cv.dispatch.estimated_loss_threshold_fraction
+    category: drone_inspection_cleaning
+    central_value: 0.04
+    low_value: 0.02
+    high_value: 0.07
+    unit: fraction
+    source: "T6 parameter audit correction, 2026-07-06; reactive cleaning trigger for central comparison."
+    evidence_type: assumed
+    source_geography_and_climate: "Operational dispatch placeholder, not climate-specific."
+    applicability_to_saudi_conditions: "Saudi soiling severity and water scarcity make trigger sensitivity important."
+    confidence: low
+    status: provisional
+    rationale: "Documents the central 4% estimated-loss trigger used by the reactive controller."
+    limitations: "Should be optimized against validated economics and local soiling once T7/T8 data exist."
     responsible_module_or_owner: T2 reactive CV
   - name: cleaning.labour_hours_per_action
     configuration_path: reactive_cv.cleaning.labour_hours_per_action
@@ -478,11 +528,11 @@ parameters:
     limitations: "Requires T2 definition of cleaning action size."
     responsible_module_or_owner: T2 reactive CV
   - name: coating.capex_sar_per_m2
-    configuration_path: coating.cost.capex_sar_per_m2
+    configuration_path: coating.costs.material_cost_per_m2 + coating.costs.surface_preparation_cost_per_m2
     category: coating
-    central_value: 20.0
-    low_value: 5.0
-    high_value: 60.0
+    central_value: 17.5
+    low_value: 10.0
+    high_value: 50.0
     unit: SAR/m2
     source: "Self-cleaning coating literature and commercial anti-soiling cost envelope; no selected vendor quote."
     evidence_type: inferred
@@ -490,15 +540,47 @@ parameters:
     applicability_to_saudi_conditions: "Material and application cost may differ in Saudi procurement."
     confidence: low
     status: blocked
-    rationale: "Provides a broad coating capex sensitivity until T3 selects a coating product."
+    rationale: "Central-v2 installed CAPEX target is 350,000 SAR over 20,000 m2 coated area."
     limitations: "Requires installed coating quote, module area, application process, warranty, and replacement schedule."
     responsible_module_or_owner: T3 coating/economics
-  - name: coating.dust_adhesion_reduction_fraction
-    configuration_path: coating.performance.dust_adhesion_reduction_fraction
+  - name: coating.installed_capex_sar
+    configuration_path: calibration.central_v2_targets.coating_installed_capex_sar
     category: coating
-    central_value: 0.45
+    central_value: 350000.0
+    low_value: 200000.0
+    high_value: 1000000.0
+    unit: SAR
+    source: "T6 parameter audit correction, 2026-07-06; installed front-surface anti-soiling coating cost target."
+    evidence_type: assumed
+    source_geography_and_climate: "Planning estimate for Saudi utility-scale PV, not a vendor quote."
+    applicability_to_saudi_conditions: "Saudi procurement, labor, abrasion warranty, and access logistics may change installed cost."
+    confidence: low
+    status: provisional
+    rationale: "Documents the total installed central-v2 coating CAPEX consumed by the full-year T6 config."
+    limitations: "Requires product quote, application method, warranty, and field demonstration before decision use."
+    responsible_module_or_owner: T3 coating/economics
+  - name: coating.residual_annual_loss_target_fraction
+    configuration_path: calibration.central_v2_targets.coating_residual_annual_loss_fraction
+    category: coating
+    central_value: 0.18
+    low_value: 0.1
+    high_value: 0.28
+    unit: fraction/year
+    source: "T6 parameter audit correction, 2026-07-06; central residual-loss target for the front-surface anti-soiling coating case."
+    evidence_type: assumed
+    source_geography_and_climate: "Riyadh hot-arid planning target, not a measured coated-field result."
+    applicability_to_saudi_conditions: "Used to keep the central coating case near a defensible residual-loss target while preserving sparse-rain physics."
+    confidence: low
+    status: provisional
+    rationale: "Documents the central coating residual annual loss target without hardcoding final annual output."
+    limitations: "Must be replaced by coated-versus-uncoated field data for a selected product."
+    responsible_module_or_owner: T3 coating/economics
+  - name: coating.dust_adhesion_reduction_fraction
+    configuration_path: calibration.central_v2_targets.coating_dust_deposition_reduction_fraction
+    category: coating
+    central_value: 0.3
     low_value: 0.15
-    high_value: 0.75
+    high_value: 0.5
     unit: fraction
     source: "Hydrophobic/nanotextured self-cleaning coating studies and arid PV coating reviews; not the paper endpoint ratio by itself."
     evidence_type: inferred
@@ -506,13 +588,29 @@ parameters:
     applicability_to_saudi_conditions: "Relevant to Saudi dust adhesion but needs local dust chemistry validation."
     confidence: low
     status: blocked
-    rationale: "Represents a mechanistic fractional reduction in new dust accumulation under a coating scenario."
+    rationale: "Represents a mechanistic 30% reduction in new dust accumulation; runtime multiplier is 1 - this value."
     limitations: "Performance depends on abrasion, UV exposure, cleaning method, and dust particle properties. Endpoint-derived coated/uncoated power-loss ratios must not be combined with passive cleaning as if they were independent adhesion measurements."
+    responsible_module_or_owner: T3 coating/economics
+  - name: coating.dust_accumulation_multiplier
+    configuration_path: coating.physics.dust_accumulation_multiplier
+    category: coating
+    central_value: 0.7
+    low_value: 0.5
+    high_value: 0.85
+    unit: multiplier
+    source: "Calculated as 1 - coating.dust_adhesion_reduction_fraction for central-v2 T6 runtime configuration."
+    evidence_type: calculated
+    source_geography_and_climate: "Derived from the central-v2 anti-soiling coating assumption."
+    applicability_to_saudi_conditions: "Relevant to Saudi dust accumulation but requires local dust validation."
+    confidence: low
+    status: provisional
+    rationale: "Stores the direct runtime multiplier used by CoatingPhysicsConfig."
+    limitations: "Should be replaced by measured coated-versus-uncoated dust accumulation rates."
     responsible_module_or_owner: T3 coating/economics
   - name: coating.cell_temperature_reduction_c
     configuration_path: coating.performance.cell_temperature_reduction_c
     category: coating
-    central_value: 2.0
+    central_value: 0.0
     low_value: 0.0
     high_value: 6.0
     unit: deg_C
@@ -522,7 +620,7 @@ parameters:
     applicability_to_saudi_conditions: "Saudi high irradiance and heat make cooling potentially relevant."
     confidence: low
     status: blocked
-    rationale: "Allows T3 to test whether the coating includes a cooling benefit."
+    rationale: "Central-v2 anti-soiling coating assumes no cooling benefit; cooling belongs in a separate R&D preset."
     limitations: "Must not be applied unless the selected coating has measured thermal behavior."
     responsible_module_or_owner: T3 coating/economics
   - name: coating.dew_soiling_multiplier
@@ -560,9 +658,9 @@ parameters:
   - name: coating.optical_penalty_fraction
     configuration_path: coating.physics.optical_transmittance_multiplier
     category: coating
-    central_value: 0.01
+    central_value: 0.0
     low_value: 0.0
-    high_value: 0.03
+    high_value: 0.02
     unit: fraction
     source: "Transparent coating literature and low-side sensitivity assumption; optical losses vary by material and application thickness. Absolute glass transmittance must not be used directly as a relative PV multiplier."
     evidence_type: inferred
@@ -570,13 +668,29 @@ parameters:
     applicability_to_saudi_conditions: "Optical penalty applies regardless of climate; dust abrasion may increase it."
     confidence: low
     status: blocked
-    rationale: "Prevents coating scenarios from receiving a free anti-soiling benefit without transmission cost."
+    rationale: "Central-v2 assumes near-neutral optical transmission; sensitivity allows modest losses up to 2%."
     limitations: "Weak-preset optical penalty is not a measured result from the named coating paper. Must use product- or module-specific relative coated-versus-uncoated PV performance once T3 selects a coating."
+    responsible_module_or_owner: T3 coating/economics
+  - name: coating.optical_relative_energy_effect_fraction
+    configuration_path: calibration.central_v2_targets.coating_optical_relative_energy_effect_fraction
+    category: coating
+    central_value: 0.0
+    low_value: -0.01
+    high_value: 0.02
+    unit: fraction
+    source: "T6 parameter audit correction, 2026-07-06; conservative optical sensitivity for transparent front-surface coating."
+    evidence_type: assumed
+    source_geography_and_climate: "Global coating optical tests, not a selected Riyadh product."
+    applicability_to_saudi_conditions: "Optical effect applies regardless of climate, but Saudi abrasion may change it over life."
+    confidence: low
+    status: provisional
+    rationale: "Records the -1% to +2% optical sensitivity range while central runtime remains near neutral."
+    limitations: "Requires product- and module-specific relative coated-versus-uncoated PV measurements."
     responsible_module_or_owner: T3 coating/economics
   - name: coating.water_collection_l_per_m2_day
     configuration_path: coating.performance.water_collection_l_per_m2_day
     category: coating
-    central_value: 0.02
+    central_value: 0.0
     low_value: 0.0
     high_value: 0.1
     unit: liters/m2/day
@@ -586,15 +700,47 @@ parameters:
     applicability_to_saudi_conditions: "Could matter in Saudi water-scarcity analysis but is technology-specific."
     confidence: low
     status: blocked
-    rationale: "Keeps water collection separate from dust reduction and cooling."
+    rationale: "Central-v2 anti-soiling coating does not rely on humidity or water collection; water behavior belongs in an R&D preset."
     limitations: "Should remain zero unless T3 implements a coating with measured water capture and a collection system. The 0.128 L/m2/night paper value is favorable-condition collected water, not guaranteed nightly gross condensation."
+    responsible_module_or_owner: T3 coating/economics
+  - name: coating.annual_opex_reserve_sar_per_year
+    configuration_path: coating.costs.maintenance_cost_per_year
+    category: coating
+    central_value: 20000.0
+    low_value: 5000.0
+    high_value: 80000.0
+    unit: SAR/year
+    source: "T6 parameter audit correction, 2026-07-06; coating inspection/maintenance reserve target."
+    evidence_type: assumed
+    source_geography_and_climate: "Planning estimate for Saudi utility-scale PV, not a vendor quote."
+    applicability_to_saudi_conditions: "Saudi abrasion, cleaning method, and warranty inspections may alter annual reserve."
+    confidence: low
+    status: provisional
+    rationale: "Documents central-v2 annual coating OPEX reserve consumed by T6 economics."
+    limitations: "Requires product-specific O&M and warranty terms before decision use."
+    responsible_module_or_owner: T3 coating/economics
+  - name: coating.useful_life_years
+    configuration_path: coating.costs.useful_life_years
+    category: coating
+    central_value: 3.0
+    low_value: 1.0
+    high_value: 7.0
+    unit: years
+    source: "T6 parameter audit correction, 2026-07-06; front-surface anti-soiling coating replacement interval."
+    evidence_type: assumed
+    source_geography_and_climate: "Outdoor coating durability context, not a selected Saudi product warranty."
+    applicability_to_saudi_conditions: "Saudi UV, sand abrasion, and cleaning cycles can shorten coating life."
+    confidence: low
+    status: provisional
+    rationale: "Annualizes coating CAPEX over coating useful life instead of the generic 15-year economic horizon."
+    limitations: "Requires selected product warranty and abrasion testing."
     responsible_module_or_owner: T3 coating/economics
   - name: economics.electricity_tariff_sar_per_kwh
     configuration_path: economics.tariff.sar_per_kwh
     category: economics
-    central_value: 0.2
-    low_value: 0.12
-    high_value: 0.32
+    central_value: 0.18
+    low_value: 0.18
+    high_value: 0.3
     unit: SAR/kWh
     source: "Saudi electricity tariff references from SEC/WERA public tariff material; current tariff must be refreshed before decision use."
     evidence_type: quoted
@@ -602,7 +748,7 @@ parameters:
     applicability_to_saudi_conditions: "Directly relevant to Saudi economic valuation but customer category may differ."
     confidence: medium
     status: blocked
-    rationale: "Central value reflects commonly cited commercial/government tariff scale for Saudi analysis."
+    rationale: "Central-v2 uses 0.18 SAR/kWh with sensitivity up to 0.30 SAR/kWh."
     limitations: "Tariffs can change and may depend on customer class, contract, and netting rules."
     responsible_module_or_owner: T3 coating/economics
   - name: economics.labour_cost_sar_per_hour
@@ -640,8 +786,8 @@ parameters:
   - name: economics.drone_equipment_cost_sar
     configuration_path: economics.capex.drone_equipment_sar
     category: economics
-    central_value: 100000.0
-    low_value: 50000.0
+    central_value: 150000.0
+    low_value: 80000.0
     high_value: 250000.0
     unit: SAR
     source: "Manufacturer-class UAV specification context and market-price sensitivity envelope; no binding quote."
@@ -650,8 +796,40 @@ parameters:
     applicability_to_saudi_conditions: "Saudi import, warranty, payload, and spares can shift total installed cost."
     confidence: low
     status: blocked
-    rationale: "Gives T3/T4 an equipment capex placeholder for reactive inspection sensitivity."
+    rationale: "Central-v2 reactive CV comparison uses a 150,000 SAR drone/camera/battery equipment CAPEX."
     limitations: "Requires selected drone, camera payload, batteries, chargers, insurance, and spares."
+    responsible_module_or_owner: T3 coating/economics
+  - name: economics.drone_flight_operation_cost_sar_per_hour
+    configuration_path: economics.costs.drone_flight_sar_per_hour
+    category: economics
+    central_value: 180.0
+    low_value: 80.0
+    high_value: 350.0
+    unit: SAR/drone_hour
+    source: "T6 parameter audit correction, 2026-07-06; placeholder for pilot, battery-cycle, maintenance, and consumables per flight hour."
+    evidence_type: assumed
+    source_geography_and_climate: "Operational estimate, not climate-specific."
+    applicability_to_saudi_conditions: "Saudi heat, regulatory requirements, battery life, and staffing can change the rate."
+    confidence: low
+    status: provisional
+    rationale: "Prices recorded reactive drone_flight_hours rather than leaving flight activity economically silent."
+    limitations: "Requires T2 vendor quote and operations plan."
+    responsible_module_or_owner: T3 coating/economics
+  - name: economics.reactive_overhead_opex_sar_per_year
+    configuration_path: economics.costs.reactive_overhead_sar_per_year
+    category: economics
+    central_value: 100000.0
+    low_value: 60000.0
+    high_value: 180000.0
+    unit: SAR/year
+    source: "T6 parameter audit correction, 2026-07-06; explicit annual OPEX target for reactive CV operations."
+    evidence_type: assumed
+    source_geography_and_climate: "Operational estimate, not climate-specific."
+    applicability_to_saudi_conditions: "Saudi staffing, insurance, maintenance, software, spares, and mobilization can change the overhead."
+    confidence: low
+    status: provisional
+    rationale: "Prevents reactive supervision/software/maintenance overhead from being silently unpriced."
+    limitations: "Requires project-specific O&M quote before decision use."
     responsible_module_or_owner: T3 coating/economics
   - name: economics.discount_rate_fraction
     configuration_path: economics.finance.discount_rate_fraction

@@ -28,7 +28,10 @@ def test_dew_point_and_condensation_require_surface_below_dew_point() -> None:
         surface_temperature_c=surface,
         exposure_hours=1.0,
         area_m2=10.0,
-        water=CoatingWaterConfig(condensation_liters_per_m2_per_c_hour=0.01),
+        water=CoatingWaterConfig(
+            condensation_liters_per_m2_per_c_hour=0.01,
+            minimum_relative_humidity_pct=60.0,
+        ),
     )
 
     assert dew_point == pytest.approx(16.44, abs=0.15)
