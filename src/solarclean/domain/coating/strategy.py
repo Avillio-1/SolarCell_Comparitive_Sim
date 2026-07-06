@@ -273,9 +273,6 @@ class CoatingStrategy:
                 coated_panel_count=self.farm.total_panels,
                 water_liters=day_water.actually_collected_liters,
                 energy_used_kwh=self.cost_basis.process_energy_kwh / 365.0,
-                capex_cost=self.cost_basis.material_cost_total
-                + self.cost_basis.surface_preparation_cost_total
-                + self.cost_basis.fixed_equipment_setup_cost,
             ),
             events=tuple(events),
             extensions=extensions,

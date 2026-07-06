@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Mapping
 
 from solarclean.domain.economics.adapters import (
     build_baseline_economic_inputs,
+    build_coating_cost_components_from_basis,
     build_coating_economic_inputs,
     build_reactive_economic_inputs,
 )
@@ -66,11 +67,14 @@ def build_economic_inputs_from_annual_output(
         )
 
     if scenario == "coating" or scenario.startswith("coating"):
+        cost_components = output.cost_components or _coating_cost_components_from_metadata(
+            output.metadata
+        )
         return build_coating_economic_inputs(
             actual_energy_kwh=output.actual_energy_kwh,
             clean_energy_kwh=output.clean_energy_kwh,
             operational_quantities=output.operational_quantities,
-            cost_components=output.cost_components,
+            cost_components=cost_components,
         )
 
     return ScenarioEconomicInputs(
@@ -92,8 +96,7 @@ def evaluate_annual_scenario_outputs(
     engine = EconomicEngine(config)
 
     return tuple(
-        engine.evaluate(build_economic_inputs_from_annual_output(output))
-        for output in outputs
+        engine.evaluate(build_economic_inputs_from_annual_output(output)) for output in outputs
     )
 
 
@@ -104,3 +107,16 @@ def build_annual_financial_summary_from_outputs(
 ) -> tuple[AnnualFinancialSummaryRow, ...]:
     results = evaluate_annual_scenario_outputs(outputs=outputs, config=config)
     return build_annual_financial_summary(results)
+
+
+def _coating_cost_components_from_metadata(
+    metadata: Mapping[str, object],
+) -> tuple[CostComponent, ...]:
+    value = metadata.get("coating_cost_basis")
+    if value is None:
+        return ()
+    if not isinstance(value, Mapping):
+        raise ValueError("metadata['coating_cost_basis'] must be a mapping.")
+    return build_coating_cost_components_from_basis(
+        coating_cost_basis={str(key): item for key, item in value.items()},
+    )

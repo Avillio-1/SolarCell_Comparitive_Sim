@@ -5,7 +5,6 @@ from typing import Literal
 
 from solarclean.domain.scenario.contracts import OperationalQuantities
 
-
 CostCategory = Literal["capex", "opex"]
 
 
@@ -40,8 +39,9 @@ class CostComponent:
     category: CostCategory
     amount_sar: float
     unit: str
-    source: str | None = None
+    source: str = "unspecified"
     notes: str | None = None
+    source_status: str = "unspecified"
 
     def __post_init__(self) -> None:
         if not self.name:
@@ -50,6 +50,10 @@ class CostComponent:
             raise ValueError("CostComponent.amount_sar must be non-negative.")
         if not self.unit:
             raise ValueError("CostComponent.unit must not be empty.")
+        if not self.source:
+            raise ValueError("CostComponent.source must not be empty.")
+        if not self.source_status:
+            raise ValueError("CostComponent.source_status must not be empty.")
 
 
 @dataclass(frozen=True)

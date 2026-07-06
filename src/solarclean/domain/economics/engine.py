@@ -27,7 +27,11 @@ class EconomicEngine:
         roi = self._safe_divide(net_annual_benefit_sar, total_annual_cost_sar)
 
         annual_cash_after_opex = annual_revenue_sar - annual_opex_sar
-        payback_years = self._safe_divide(total_capex_sar, annual_cash_after_opex)
+        payback_years = self._payback_years(
+            total_capex_sar=total_capex_sar,
+            annual_cash_after_opex=annual_cash_after_opex,
+            net_annual_benefit_sar=net_annual_benefit_sar,
+        )
 
         effective_lcoe_sar_per_kwh = self._safe_divide(
             total_annual_cost_sar,
@@ -71,9 +75,7 @@ class EconomicEngine:
         category: str,
     ) -> float:
         return sum(
-            component.amount_sar
-            for component in cost_components
-            if component.category == category
+            component.amount_sar for component in cost_components if component.category == category
         )
 
     @staticmethod
@@ -81,3 +83,16 @@ class EconomicEngine:
         if denominator <= 0:
             return None
         return numerator / denominator
+
+    @staticmethod
+    def _payback_years(
+        *,
+        total_capex_sar: float,
+        annual_cash_after_opex: float,
+        net_annual_benefit_sar: float,
+    ) -> float | None:
+        if net_annual_benefit_sar <= 0:
+            return None
+        if total_capex_sar == 0:
+            return 0.0
+        return EconomicEngine._safe_divide(total_capex_sar, annual_cash_after_opex)

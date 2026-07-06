@@ -113,6 +113,7 @@ def test_coating_outputs_water_and_cost_quantities_separately() -> None:
         >= first.extensions["actually_collected_water_liters"]
     )
     assert first.operational.coated_panel_count == 10000
+    assert first.operational.capex_cost == 0.0
     assert first.extensions["coating_cost_basis"]["total_coated_area_m2"] == pytest.approx(20000.0)
     assert first.extensions["coating_cost_basis"]["material_cost_total"] > 0.0
 

@@ -47,9 +47,12 @@ def reconcile_operational_costs(
 ) -> tuple[CostReconciliationCheck, ...]:
     """Check whether recorded operational quantities reconcile with costs."""
 
-    component_by_name = {
-        component.name.lower(): component for component in cost_components
-    }
+    amount_by_name: dict[str, float] = {}
+    for component in cost_components:
+        component_key = component.name.lower()
+        amount_by_name[component_key] = (
+            amount_by_name.get(component_key, 0.0) + component.amount_sar
+        )
 
     checks: list[CostReconciliationCheck] = []
 
@@ -60,9 +63,9 @@ def reconcile_operational_costs(
         )
         expected = quantity_value * rule.rate_sar_per_unit
 
-        component = component_by_name.get(rule.cost_component_name.lower())
+        recorded_amount = amount_by_name.get(rule.cost_component_name.lower())
 
-        if component is None:
+        if recorded_amount is None:
             checks.append(
                 CostReconciliationCheck(
                     cost_component_name=rule.cost_component_name,
@@ -73,12 +76,16 @@ def reconcile_operational_costs(
                     recorded_amount_sar=None,
                     difference_sar=None,
                     passed=False,
-                    message="Missing cost component.",
+                    message=(
+                        f"Missing cost component {rule.cost_component_name!r}; "
+                        f"expected {expected:.6g} SAR from {quantity_value:.6g} "
+                        f"{rule.quantity_name} at {rule.rate_sar_per_unit:.6g} SAR/unit."
+                    ),
                 )
             )
             continue
 
-        difference = component.amount_sar - expected
+        difference = recorded_amount - expected
         passed = abs(difference) <= rule.tolerance_sar
 
         checks.append(
@@ -88,10 +95,10 @@ def reconcile_operational_costs(
                 quantity_value=quantity_value,
                 rate_sar_per_unit=rule.rate_sar_per_unit,
                 expected_amount_sar=expected,
-                recorded_amount_sar=component.amount_sar,
+                recorded_amount_sar=recorded_amount,
                 difference_sar=difference,
                 passed=passed,
-                message="OK" if passed else "Recorded cost does not match operational quantity.",
+                message="OK" if passed else _mismatch_message(rule, quantity_value, difference),
             )
         )
 
@@ -116,3 +123,18 @@ def _get_quantity_value(
         raise TypeError(f"Operational quantity {quantity_name} is not numeric.")
 
     return float(value)
+
+
+def _mismatch_message(
+    rule: CostReconciliationRule,
+    quantity_value: float,
+    difference: float,
+) -> str:
+    expected = quantity_value * rule.rate_sar_per_unit
+    recorded = expected + difference
+    return (
+        f"Recorded cost component {rule.cost_component_name!r} does not match "
+        f"{rule.quantity_name}: expected {expected:.6g} SAR from {quantity_value:.6g} "
+        f"at {rule.rate_sar_per_unit:.6g} SAR/unit, recorded {recorded:.6g} SAR, "
+        f"difference {difference:.6g} SAR, tolerance {rule.tolerance_sar:.6g} SAR."
+    )

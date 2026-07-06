@@ -81,3 +81,60 @@ def test_reconciliation_fails_when_cost_does_not_match_quantity() -> None:
     assert not all_reconciled(checks)
     assert checks[0].expected_amount_sar == 300
     assert checks[0].recorded_amount_sar == 250
+    assert "labour opex" in checks[0].message
+    assert "crew_hours" in checks[0].message
+    assert "difference" in checks[0].message
+
+
+def test_reconciliation_sums_same_named_cost_components() -> None:
+    operational = OperationalQuantities(crew_hours=10)
+    cost_components = (
+        CostComponent(
+            name="labour opex",
+            category="opex",
+            amount_sar=150,
+            unit="SAR/year",
+            source="test",
+        ),
+        CostComponent(
+            name="labour opex",
+            category="opex",
+            amount_sar=150,
+            unit="SAR/year",
+            source="test",
+        ),
+    )
+
+    checks = reconcile_operational_costs(
+        operational_quantities=operational,
+        cost_components=cost_components,
+        rules=(
+            CostReconciliationRule(
+                cost_component_name="labour opex",
+                quantity_name="crew_hours",
+                rate_sar_per_unit=30,
+            ),
+        ),
+    )
+
+    assert all_reconciled(checks)
+    assert checks[0].recorded_amount_sar == 300
+
+
+def test_reconciliation_missing_component_message_includes_expected_basis() -> None:
+    checks = reconcile_operational_costs(
+        operational_quantities=OperationalQuantities(water_liters=100),
+        cost_components=(),
+        rules=(
+            CostReconciliationRule(
+                cost_component_name="water opex",
+                quantity_name="water_liters",
+                rate_sar_per_unit=0.5,
+            ),
+        ),
+    )
+
+    assert not all_reconciled(checks)
+    assert "water opex" in checks[0].message
+    assert "expected 50" in checks[0].message
+    assert "water_liters" in checks[0].message

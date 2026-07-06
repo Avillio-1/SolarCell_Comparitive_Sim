@@ -392,7 +392,6 @@ def _coating_summary(
         "warnings": warnings,
     }
 
-
     payload = {
         "command": "run-coating",
         "scenario_name": coating.scenario_name,
@@ -448,8 +447,6 @@ def _coating_summary(
         "annualization_included": False,
         "paper_source_status": "prompt_quoted_values_only",
         "coating_readiness": readiness,
-
-
         "coating_warnings": warnings,
         "coating_readiness_notes": warnings,
     }

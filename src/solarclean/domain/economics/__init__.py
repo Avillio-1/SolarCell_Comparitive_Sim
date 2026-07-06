@@ -1,6 +1,10 @@
 from solarclean.domain.economics.adapters import (
+    ReactiveCostRates,
+    UnitCostRate,
     build_baseline_economic_inputs,
+    build_coating_cost_components_from_basis,
     build_coating_economic_inputs,
+    build_reactive_cost_components,
     build_reactive_economic_inputs,
 )
 from solarclean.domain.economics.contracts import (
@@ -43,13 +47,17 @@ __all__ = [
     "EconomicEngine",
     "EconomicResult",
     "RegisteredCostComponent",
+    "ReactiveCostRates",
     "ScenarioEconomicInputs",
+    "UnitCostRate",
     "all_reconciled",
     "build_annual_financial_summary",
     "build_annual_financial_summary_from_outputs",
     "build_baseline_economic_inputs",
+    "build_coating_cost_components_from_basis",
     "build_coating_economic_inputs",
     "build_economic_inputs_from_annual_output",
+    "build_reactive_cost_components",
     "build_reactive_economic_inputs",
     "evaluate_annual_scenario_outputs",
     "financial_summary_to_records",
