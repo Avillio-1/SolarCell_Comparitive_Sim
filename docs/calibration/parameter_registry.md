@@ -53,6 +53,25 @@ registry = ParameterRegistry.from_yaml(Path("data/calibration/parameter_registry
 soiling = registry.get("soiling.base_daily_loss_fraction")
 ```
 
+T4 economics can map an already-loaded registry into runtime economics objects without making
+`EconomicEngine` read YAML:
+
+```python
+from solarclean.domain.economics.calibration import build_economics_from_parameter_registry
+
+calibration = build_economics_from_parameter_registry(registry)
+economic_config = calibration.config
+reactive_rates = calibration.reactive_cost_rates
+equipment_components = calibration.equipment_cost_components
+```
+
+The default economics bridge permits blocked or provisional values for research and sensitivity
+runs, returning warnings that name each registry key and status. Use
+`status_policy="require_validated"` when decision workflows must reject blocked, provisional, or
+unsourced values. `economics.drone_equipment_cost_sar` is exposed as a traceable capex component,
+not converted into a flight-hour rate, because the registry does not define utilization or
+allocation assumptions.
+
 To exercise current presets through production models, run:
 
 ```powershell

@@ -7,6 +7,13 @@ from solarclean.domain.economics.adapters import (
     build_reactive_cost_components,
     build_reactive_economic_inputs,
 )
+from solarclean.domain.economics.calibration import (
+    EconomicsCalibration,
+    EconomicsCalibrationWarning,
+    RegistryParameterMetadata,
+    RegistryStatusPolicy,
+    build_economics_from_parameter_registry,
+)
 from solarclean.domain.economics.contracts import (
     CostComponent,
     EconomicConfig,
@@ -44,9 +51,13 @@ __all__ = [
     "CostReconciliationCheck",
     "CostReconciliationRule",
     "EconomicConfig",
+    "EconomicsCalibration",
+    "EconomicsCalibrationWarning",
     "EconomicEngine",
     "EconomicResult",
     "RegisteredCostComponent",
+    "RegistryParameterMetadata",
+    "RegistryStatusPolicy",
     "ReactiveCostRates",
     "ScenarioEconomicInputs",
     "UnitCostRate",
@@ -56,6 +67,7 @@ __all__ = [
     "build_baseline_economic_inputs",
     "build_coating_cost_components_from_basis",
     "build_coating_economic_inputs",
+    "build_economics_from_parameter_registry",
     "build_economic_inputs_from_annual_output",
     "build_reactive_cost_components",
     "build_reactive_economic_inputs",

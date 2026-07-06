@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
+import pytest
 import yaml
 
 from solarclean.config.loader import load_config
-from solarclean.domain.calibration.registry import ParameterRegistry
+from solarclean.domain.calibration.registry import CalibrationParameter, ParameterRegistry
+from solarclean.domain.economics.calibration import build_economics_from_parameter_registry
 
 ROOT = Path(__file__).resolve().parents[2]
 REGISTRY_PATH = ROOT / "data" / "calibration" / "parameter_registry.yaml"
@@ -128,6 +131,137 @@ def test_sensitivity_script_dry_run_uses_phase35_production_interface() -> None:
     assert payload["production_interface"] == "solarclean.application.phase35.Phase35Validator"
     assert [item["preset"] for item in payload["presets"]] == ["low", "central", "high"]
     assert all("base_daily_soiling_loss_fraction" in item for item in payload["presets"])
+
+
+def test_economics_registry_bridge_builds_expected_config() -> None:
+    registry = ParameterRegistry.from_yaml(REGISTRY_PATH)
+
+    calibration = build_economics_from_parameter_registry(registry)
+
+    assert calibration.config.tariff_sar_per_kwh == pytest.approx(0.2)
+    assert calibration.config.discount_rate == pytest.approx(0.08)
+    assert calibration.config.useful_life_years == 15
+
+    crew_rate = calibration.reactive_cost_rates.crew_hour
+    assert crew_rate is not None
+    assert crew_rate.amount_sar_per_unit == pytest.approx(35.0)
+    assert crew_rate.quantity_unit == "hour"
+
+    assert len(calibration.equipment_cost_components) == 1
+    drone_capex = calibration.equipment_cost_components[0]
+    assert drone_capex.name == "drone equipment capex"
+    assert drone_capex.category == "capex"
+    assert drone_capex.amount_sar == pytest.approx(100_000.0)
+
+
+def test_economics_registry_bridge_converts_water_m3_to_liter_rate() -> None:
+    registry = ParameterRegistry.from_yaml(REGISTRY_PATH)
+
+    calibration = build_economics_from_parameter_registry(registry)
+
+    water_rate = calibration.reactive_cost_rates.water_liter
+    assert water_rate is not None
+    assert water_rate.amount_sar_per_unit == pytest.approx(0.006)
+    assert water_rate.quantity_unit == "liter"
+    assert "conversion=1 m3 = 1000 liters" in str(water_rate.notes)
+
+
+def test_economics_registry_bridge_preserves_metadata_and_status() -> None:
+    registry = ParameterRegistry.from_yaml(REGISTRY_PATH)
+
+    calibration = build_economics_from_parameter_registry(registry)
+    metadata_by_key = {
+        metadata.registry_key: metadata for metadata in calibration.parameter_metadata
+    }
+
+    labour_metadata = metadata_by_key["economics.labour_cost_sar_per_hour"]
+    crew_rate = calibration.reactive_cost_rates.crew_hour
+    assert crew_rate is not None
+    assert crew_rate.source == labour_metadata.source
+    assert crew_rate.source_status == "blocked"
+    assert labour_metadata.status == "blocked"
+    assert labour_metadata.confidence == "low"
+    assert labour_metadata.evidence_type == "inferred"
+    assert labour_metadata.unit == "SAR/worker_hour"
+    assert "registry_key=economics.labour_cost_sar_per_hour" in str(crew_rate.notes)
+    assert "evidence_type=inferred" in str(crew_rate.notes)
+    assert "confidence=low" in str(crew_rate.notes)
+
+    drone_capex = calibration.equipment_cost_components[0]
+    assert drone_capex.source_status == "blocked"
+    assert "registry_key=economics.drone_equipment_cost_sar" in str(drone_capex.notes)
+    assert "total equipment cost" in str(drone_capex.notes)
+
+
+def test_economics_registry_bridge_warns_for_blocked_values_by_default() -> None:
+    registry = ParameterRegistry.from_yaml(REGISTRY_PATH)
+
+    calibration = build_economics_from_parameter_registry(registry)
+    warnings_by_key = {warning.registry_key: warning for warning in calibration.warnings}
+
+    warning = warnings_by_key["economics.electricity_tariff_sar_per_kwh"]
+    assert warning.status == "blocked"
+    assert "economics.electricity_tariff_sar_per_kwh has status blocked" in warning.message
+
+
+def test_economics_registry_bridge_strict_policy_rejects_blocked_values() -> None:
+    registry = ParameterRegistry.from_yaml(REGISTRY_PATH)
+
+    with pytest.raises(
+        ValueError,
+        match=r"economics\.electricity_tariff_sar_per_kwh \(status=blocked\)",
+    ):
+        build_economics_from_parameter_registry(
+            registry,
+            status_policy="require_validated",
+        )
+
+
+def test_economics_registry_bridge_rejects_unknown_water_units() -> None:
+    registry = ParameterRegistry.from_yaml(REGISTRY_PATH)
+    water = registry.get("economics.water_cost_sar_per_m3")
+    registry_with_bad_water_unit = _registry_with_parameter(
+        registry,
+        replace(water, unit="SAR/gallon"),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"economics\.water_cost_sar_per_m3 uses unit 'SAR/gallon'; expected 'SAR/m3'",
+    ):
+        build_economics_from_parameter_registry(registry_with_bad_water_unit)
+
+
+def test_economics_registry_bridge_missing_keys_fail_clearly() -> None:
+    registry = ParameterRegistry.from_yaml(REGISTRY_PATH)
+    registry_without_water = ParameterRegistry(
+        metadata=registry.metadata,
+        parameters=tuple(
+            parameter
+            for parameter in registry.parameters
+            if parameter.name != "economics.water_cost_sar_per_m3"
+        ),
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"missing required economics calibration parameter\(s\): "
+        r"economics\.water_cost_sar_per_m3",
+    ):
+        build_economics_from_parameter_registry(registry_without_water)
+
+
+def _registry_with_parameter(
+    registry: ParameterRegistry,
+    replacement_parameter: CalibrationParameter,
+) -> ParameterRegistry:
+    return ParameterRegistry(
+        metadata=registry.metadata,
+        parameters=tuple(
+            replacement_parameter if parameter.name == replacement_parameter.name else parameter
+            for parameter in registry.parameters
+        ),
+    )
 
 
 def _load_yaml(path: Path) -> dict[str, object]:
