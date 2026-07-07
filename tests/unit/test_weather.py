@@ -87,6 +87,24 @@ def test_fixture_provider_returns_requested_timezone_and_columns() -> None:
     assert dataset.hourly.index.min() == pd.Timestamp("2025-01-01T00:00:00+03:00")
     assert dataset.hourly.index.max() == pd.Timestamp("2025-01-02T23:00:00+03:00")
     assert dataset.metadata["provider"] == "fixture"
+    assert dataset.metadata["fixture_profile"] == "riyadh_synthetic"
+
+
+def test_fixture_profiles_expose_favorable_and_dry_weather() -> None:
+    favorable = FixtureWeatherProvider(profile="kaust_paper_favorable").load(_request())
+    dry = FixtureWeatherProvider(profile="riyadh_dry").load(_request())
+
+    night = pd.Timestamp("2025-01-01T00:00:00+03:00")
+    noon = pd.Timestamp("2025-01-01T12:00:00+03:00")
+    assert (
+        favorable.hourly.loc[night, "relative_humidity_pct"]
+        > dry.hourly.loc[night, "relative_humidity_pct"]
+    )
+    assert favorable.hourly.loc[noon, "ghi_w_m2"] > 0.0
+    assert (
+        dry.hourly["relative_humidity_pct"].max() < favorable.hourly["relative_humidity_pct"].max()
+    )
+    assert favorable.metadata["checksum"] != dry.metadata["checksum"]
 
 
 def test_csv_provider_maps_columns_and_units(tmp_path: Path) -> None:

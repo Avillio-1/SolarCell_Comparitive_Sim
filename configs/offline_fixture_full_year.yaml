@@ -68,14 +68,14 @@ coating:
     dust_accumulation_multiplier: 0.70
     initial_effectiveness_fraction: 1.0
     annual_degradation_fraction: 0.05
-    max_surface_cooling_c: 0.0
+    max_surface_cooling_c: 6.0
     humidity_cooling_reference_pct: 80
     wind_cooling_decay_per_m_s: 0.08
-    daytime_cooling_fraction: 0.0
-    passive_cleaning_base_efficiency: 0.0
+    daytime_cooling_fraction: 0.05
+    passive_cleaning_base_efficiency: 0.80
     passive_cleaning_tilt_reference_degrees: 25
-    bird_removal_efficiency: 0.0
-    max_bird_removal_fraction_per_day: 0.0
+    bird_removal_efficiency: 0.50
+    max_bird_removal_fraction_per_day: 0.25
   water:
     condensation_liters_per_m2_per_c_hour: 0.0
     minimum_relative_humidity_pct: 100

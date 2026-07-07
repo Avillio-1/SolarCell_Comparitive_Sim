@@ -116,6 +116,10 @@ def test_coating_outputs_water_and_cost_quantities_separately() -> None:
     assert first.operational.capex_cost == 0.0
     assert first.extensions["coating_cost_basis"]["total_coated_area_m2"] == pytest.approx(20000.0)
     assert first.extensions["coating_cost_basis"]["material_cost_total"] > 0.0
+    assert "condensation_dew_eligible" in first.extensions
+    assert "passive_cleaning_day" in first.extensions
+    assert "retained_dust_fraction" in first.extensions
+    assert "bird_loss_fraction" in first.extensions
 
 
 def test_coating_passive_cleaning_events_include_dew_and_dust_metadata() -> None:

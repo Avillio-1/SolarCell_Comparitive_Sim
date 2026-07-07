@@ -151,6 +151,63 @@ def test_passive_cleaning_and_bird_removal_are_bounded() -> None:
     assert bird.remaining_coverage_fraction == pytest.approx(0.08)
 
 
+def test_passive_cleaning_combines_dew_wind_and_rain_without_overcleaning() -> None:
+    physics = CoatingPhysicsConfig(
+        passive_cleaning_base_efficiency=0.10,
+        wind_shedding_threshold_m_s=6.0,
+        wind_shedding_reference_m_s=10.0,
+        wind_shedding_base_efficiency=0.20,
+        rain_shedding_reference_mm=5.0,
+        rain_shedding_base_efficiency=0.40,
+    )
+
+    dew_only = calculate_passive_dust_cleaning(
+        current_dust_soiling_ratio=0.90,
+        condensed_liters_per_m2=0.128,
+        tilt_degrees=25.0,
+        coating_effectiveness=1.0,
+        physics=physics,
+    )
+    combined = calculate_passive_dust_cleaning(
+        current_dust_soiling_ratio=0.90,
+        condensed_liters_per_m2=0.128,
+        tilt_degrees=25.0,
+        coating_effectiveness=1.0,
+        physics=physics,
+        wind_speed_m_s=10.0,
+        precipitation_mm=5.0,
+    )
+
+    assert dew_only > 0.0
+    assert dew_only < combined <= 0.10
+
+
+def test_bird_droppings_are_not_removed_as_easily_as_loose_dust() -> None:
+    physics = CoatingPhysicsConfig(
+        passive_cleaning_base_efficiency=0.50,
+        bird_removal_efficiency=0.50,
+        max_bird_removal_fraction_per_day=0.02,
+    )
+
+    dust_restored = calculate_passive_dust_cleaning(
+        current_dust_soiling_ratio=0.90,
+        condensed_liters_per_m2=0.128,
+        tilt_degrees=25.0,
+        coating_effectiveness=1.0,
+        physics=physics,
+    )
+    bird = apply_bird_removal(
+        current_coverage_fraction=0.10,
+        condensed_liters_per_m2=0.128,
+        coating_effectiveness=1.0,
+        physics=physics,
+    )
+
+    assert dust_restored > 0.0
+    assert bird.removed_coverage_fraction <= physics.max_bird_removal_fraction_per_day
+    assert bird.removed_coverage_fraction < dust_restored
+
+
 def test_energy_mechanisms_report_realized_sequential_contributions() -> None:
     result = calculate_energy_mechanisms(
         clean_energy_kwh=100.0,
@@ -184,3 +241,16 @@ def test_cooling_can_exceed_uncoated_clean_reference_without_contamination() -> 
     assert result.cleanliness_effect_kwh == pytest.approx(0.0)
     assert result.temperature_effect_kwh == pytest.approx(1.75)
     assert result.final_energy_kwh == pytest.approx(101.75)
+
+
+def test_cleanliness_alone_cannot_exceed_clean_reference() -> None:
+    result = calculate_energy_mechanisms(
+        clean_energy_kwh=100.0,
+        cleanliness_ratio=1.05,
+        optical_transmittance_multiplier=1.0,
+        cooling_delta_c=0.0,
+        gamma_pdc_per_c=-0.0035,
+    )
+
+    assert result.cleanliness_ratio == pytest.approx(1.0)
+    assert result.final_energy_kwh == pytest.approx(100.0)

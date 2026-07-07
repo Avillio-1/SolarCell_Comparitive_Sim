@@ -111,6 +111,10 @@ class CoatingStrategy:
             for event in base_update.events
         ]
         next_cohorts: list[CoatingCohortState] = []
+        total_restored = 0.0
+        total_bird_removed = 0.0
+        passive_cleaning_day = False
+        bird_removal_day = False
         for cohort in state.cohorts:
             effectiveness = _effectiveness_after_degradation(cohort, self.coating)
             uncoated_delta = base_update.state.dust_soiling_ratio - previous_average_dust
@@ -134,9 +138,13 @@ class CoatingStrategy:
                 tilt_degrees=self.pv_system.tilt_degrees,
                 coating_effectiveness=effectiveness,
                 physics=self.coating.physics,
+                wind_speed_m_s=day_water.max_wind_speed_m_s,
+                precipitation_mm=day_input.environment.precipitation_mm,
             )
             dust_ratio_before_cleaning = dust_ratio
             dust_ratio = min(1.0, dust_ratio + restored)
+            total_restored += restored * cohort.panel_count
+            passive_cleaning_day = passive_cleaning_day or restored > 0.0
             coverage_addition = (
                 day_input.event_inputs.bird_coverage_additions.get(cohort.cohort_id, 0.0)
                 if day_input.event_inputs is not None
@@ -151,6 +159,9 @@ class CoatingStrategy:
                 coating_effectiveness=effectiveness,
                 physics=self.coating.physics,
             )
+            total_bird_removed += bird.removed_coverage_fraction * cohort.panel_count
+            bird_removed = bird.removed_coverage_fraction > 0.0
+            bird_removal_day = bird_removal_day or bird_removed
             bird_loss = min(
                 1.0,
                 bird.remaining_coverage_fraction * self.birds.loss_per_coverage_fraction,
@@ -193,7 +204,7 @@ class CoatingStrategy:
                         ),
                     )
                 )
-            if bird.removed_coverage_fraction > 0.0:
+            if bird_removed:
                 events.append(
                     DomainEvent(
                         date=day_input.date,
@@ -233,7 +244,44 @@ class CoatingStrategy:
                 )
             )
         typed_next = tuple(next_cohorts)
-        cleanliness_ratio = _average_cleanliness(typed_next)
+        result = self._build_daily_result(
+            day_input=day_input,
+            context=context,
+            hourly=hourly,
+            day_water=day_water,
+            condensed_per_m2=condensed_per_m2,
+            cohorts=typed_next,
+            events=tuple(events),
+            passive_cleaning_day=passive_cleaning_day,
+            bird_removal_day=bird_removal_day,
+            total_restored=total_restored,
+            total_bird_removed=total_bird_removed,
+        )
+        return StrategyStep(
+            state=CoatingScenarioState(date=day_input.date, cohorts=typed_next),
+            result=result,
+        )
+
+    def _build_daily_result(
+        self,
+        *,
+        day_input: DailyScenarioInput,
+        context: ScenarioContext,
+        hourly: pd.DataFrame,
+        day_water: DailyWaterDiagnostics,
+        condensed_per_m2: float,
+        cohorts: tuple[CoatingCohortState, ...],
+        events: tuple[DomainEvent, ...],
+        passive_cleaning_day: bool,
+        bird_removal_day: bool,
+        total_restored: float,
+        total_bird_removed: float,
+    ) -> DailyScenarioResult:
+        cleanliness_ratio = _average_cleanliness(cohorts)
+        average_dust_soiling_ratio = _average_dust(cohorts)
+        average_bird_loss_fraction = _average_bird_loss(cohorts)
+        average_restored = total_restored / self.farm.total_panels
+        average_bird_removed = total_bird_removed / self.farm.total_panels
         cooling_delta = _mean_cooling_delta(hourly, self.coating)
         energy = calculate_energy_mechanisms(
             clean_energy_kwh=day_input.clean_energy_kwh,
@@ -255,10 +303,24 @@ class CoatingStrategy:
             "condensed_water_liters": day_water.condensed_liters,
             "potentially_collectable_water_liters": day_water.potentially_collectable_liters,
             "actually_collected_water_liters": day_water.actually_collected_liters,
-            "coating_age_days": max(cohort.age_days for cohort in typed_next),
-            "coating_effectiveness_fraction": _average_effectiveness(typed_next),
-            "average_dust_soiling_ratio": _average_dust(typed_next),
-            "average_bird_loss_fraction": _average_bird_loss(typed_next),
+            "condensation_dew_eligible": day_water.condensation_dew_eligible,
+            "dew_point_c": day_water.dew_point_c,
+            "coated_surface_temperature_c": day_water.coated_surface_temperature_c,
+            "ambient_temperature_c": day_water.ambient_temperature_c,
+            "relative_humidity_pct": day_water.relative_humidity_pct,
+            "condensed_liters_per_m2": condensed_per_m2,
+            "max_wind_speed_m_s": day_water.max_wind_speed_m_s,
+            "precipitation_mm": day_input.environment.precipitation_mm,
+            "passive_cleaning_day": passive_cleaning_day,
+            "passive_dust_restored_fraction": average_restored,
+            "bird_removal_day": bird_removal_day,
+            "average_bird_removed_coverage_fraction": average_bird_removed,
+            "coating_age_days": max(cohort.age_days for cohort in cohorts),
+            "coating_effectiveness_fraction": _average_effectiveness(cohorts),
+            "average_dust_soiling_ratio": average_dust_soiling_ratio,
+            "retained_dust_fraction": max(0.0, 1.0 - average_dust_soiling_ratio),
+            "average_bird_loss_fraction": average_bird_loss_fraction,
+            "bird_loss_fraction": average_bird_loss_fraction,
             "coated_area_m2": self.cost_basis.total_coated_area_m2,
             "coating_cost_basis": self.cost_basis.to_record(),
             "event_tape_checksum": checksum,
@@ -277,10 +339,7 @@ class CoatingStrategy:
             events=tuple(events),
             extensions=extensions,
         )
-        return StrategyStep(
-            state=CoatingScenarioState(date=day_input.date, cohorts=typed_next),
-            result=result,
-        )
+        return result
 
 
 @dataclass(frozen=True)
@@ -294,6 +353,7 @@ class DailyWaterDiagnostics:
     ambient_temperature_c: float
     coated_surface_temperature_c: float
     relative_humidity_pct: float
+    max_wind_speed_m_s: float
 
 
 def _hourly_for_day(hourly: pd.DataFrame, day: date) -> pd.DataFrame:
@@ -357,6 +417,7 @@ def _daily_water(
         ambient_temperature_c=representative_air_temperature,
         coated_surface_temperature_c=representative.surface_temperature_c,
         relative_humidity_pct=representative_relative_humidity,
+        max_wind_speed_m_s=float(hourly["wind_speed_m_s"].max()),
     )
 
 
@@ -421,6 +482,7 @@ def _base_condensation_metadata(
         "dew_point_c": water.dew_point_c,
         "relative_humidity_pct": water.relative_humidity_pct,
         "condensed_liters_per_m2": condensed_liters_per_m2,
+        "max_wind_speed_m_s": water.max_wind_speed_m_s,
     }
 
 

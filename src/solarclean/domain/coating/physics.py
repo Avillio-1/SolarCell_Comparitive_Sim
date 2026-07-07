@@ -108,17 +108,34 @@ def calculate_passive_dust_cleaning(
     tilt_degrees: float,
     coating_effectiveness: float,
     physics: CoatingPhysicsConfig,
+    wind_speed_m_s: float = 0.0,
+    precipitation_mm: float = 0.0,
 ) -> float:
     recoverable = max(0.0, 1.0 - current_dust_soiling_ratio)
-    if recoverable == 0.0 or condensed_liters_per_m2 <= 0.0 or coating_effectiveness <= 0.0:
+    if recoverable == 0.0 or coating_effectiveness <= 0.0:
         return 0.0
     tilt_factor = min(
         1.0,
         max(0.0, tilt_degrees / physics.passive_cleaning_tilt_reference_degrees),
     )
     water_factor = min(1.0, condensed_liters_per_m2 / 0.128)
-    restored = recoverable * physics.passive_cleaning_base_efficiency * tilt_factor * water_factor
-    return min(recoverable, restored * coating_effectiveness)
+    dew_efficiency = physics.passive_cleaning_base_efficiency * tilt_factor * water_factor
+    wind_efficiency = 0.0
+    if wind_speed_m_s > physics.wind_shedding_threshold_m_s:
+        denominator = max(
+            1e-9, physics.wind_shedding_reference_m_s - physics.wind_shedding_threshold_m_s
+        )
+        wind_factor = min(
+            1.0, max(0.0, (wind_speed_m_s - physics.wind_shedding_threshold_m_s) / denominator)
+        )
+        wind_efficiency = physics.wind_shedding_base_efficiency * tilt_factor * wind_factor
+    rain_factor = min(1.0, max(0.0, precipitation_mm) / physics.rain_shedding_reference_mm)
+    rain_efficiency = physics.rain_shedding_base_efficiency * tilt_factor * rain_factor
+    combined_efficiency = 1.0
+    for efficiency in (dew_efficiency, wind_efficiency, rain_efficiency):
+        combined_efficiency *= 1.0 - min(1.0, max(0.0, efficiency))
+    restored = recoverable * (1.0 - combined_efficiency) * coating_effectiveness
+    return min(recoverable, restored)
 
 
 def apply_bird_removal(

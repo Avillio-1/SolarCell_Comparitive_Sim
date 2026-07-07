@@ -28,7 +28,10 @@ from solarclean.domain.scenario.contracts import (
 from solarclean.domain.simulation.baseline import BaselineSimulationEngine, BaselineSimulationResult
 from solarclean.domain.simulation.scenario_engine import ScenarioSimulationEngine
 from solarclean.infrastructure.persistence.outputs import OutputWriter
-from solarclean.infrastructure.persistence.plots import write_baseline_diagnostic_plot
+from solarclean.infrastructure.persistence.plots import (
+    write_baseline_diagnostic_plot,
+    write_coating_diagnostic_plots,
+)
 from solarclean.infrastructure.persistence.reports import write_json_report
 from solarclean.infrastructure.pvlib_adapter.pvwatts import PVWattsPowerModel
 from solarclean.infrastructure.weather.csv_provider import CsvWeatherProvider
@@ -206,6 +209,11 @@ class RunCoatingSimulation:
         writer.write_summary(output_dir, summary)
         writer.write_text_summary(output_dir, summary)
         write_json_report(output_dir / "coating_comparison_summary.json", summary)
+        write_coating_diagnostic_plots(
+            output_dir=output_dir,
+            coating_daily=coating.to_daily_frame(),
+            baseline_daily=baseline.daily,
+        )
         return UseCaseResult(output_directory=output_dir, summary=summary)
 
 
@@ -310,7 +318,7 @@ def _weather_request(config: SolarCleanConfig) -> WeatherRequest:
 
 def _weather_provider(config: SolarCleanConfig) -> WeatherProvider:
     if config.weather.provider == "fixture":
-        return FixtureWeatherProvider()
+        return FixtureWeatherProvider(profile=config.weather.fixture_profile)
     if config.weather.provider == "csv":
         if config.weather.local_csv_path is None:
             raise ValueError("weather.local_csv_path is required for csv provider")
@@ -334,6 +342,13 @@ def _base_metadata(config: SolarCleanConfig, command: str) -> dict[str, object]:
         "created_at_utc": datetime.now(UTC).isoformat(),
         "site": config.site.model_dump(mode="json"),
         "simulation": config.simulation.model_dump(mode="json"),
+        "weather": config.weather.model_dump(mode="json"),
+        "calibration": config.calibration.model_dump(mode="json"),
+        "coating": {
+            "enabled": config.coating.enabled,
+            "preset": config.coating.preset,
+            "physics": config.coating.physics.model_dump(mode="json"),
+        },
     }
 
 
@@ -377,6 +392,8 @@ def _coating_summary(
     coated_area_m2 = _first_daily_extension_float(coating, "coated_area_m2")
     cleanliness_improvement = _sum_cleanliness_improvement_vs_baseline(coating, baseline)
     period = _period_metadata(coating)
+    final_metrics = _coating_period_endpoint_metrics(coating, baseline)
+    coating_day_counts = _coating_period_day_counts(coating)
     warnings = _coating_warnings(
         config=config,
         optical_effect_kwh=optical,
@@ -402,7 +419,7 @@ def _coating_summary(
         **period,
         "coating_preset": config.coating.preset,
         "calibration_fixture": config.coating.preset
-        in {"paper_calibration", "paper_endpoint_calibration"},
+        in {"paper_calibration", "paper_endpoint_calibration", "kaust_paper_strong"},
         "annual_field_basis": "simulated_period_total",
         "clean_energy_reference": (
             "clean uncoated PVWatts AC energy at the modeled operating temperature"
@@ -427,6 +444,8 @@ def _coating_summary(
         "annual_remaining_soiling_loss_kwh": remaining_soiling_loss,
         "annual_remaining_soiling_loss_percent": remaining_soiling_loss_percent,
         "annual_cleanliness_improvement_vs_baseline_kwh": cleanliness_improvement,
+        **final_metrics,
+        **coating_day_counts,
         "annual_condensed_water_liters": condensed,
         "annual_potentially_collectable_water_liters": potential,
         "annual_actually_collected_water_liters": actual_water,
@@ -718,6 +737,54 @@ def _sum_cleanliness_improvement_vs_baseline(
         )
         total += daily.clean_energy_kwh * float(value) - baseline_actual
     return total
+
+
+def _coating_period_endpoint_metrics(
+    coating: AnnualScenarioResult,
+    baseline: BaselineSimulationResult,
+) -> dict[str, object]:
+    if not coating.daily_results:
+        return {
+            "period_final_coating_normalized_performance": None,
+            "period_final_baseline_normalized_performance": None,
+            "period_final_coating_loss_percent": None,
+            "period_final_baseline_loss_percent": None,
+            "period_final_average_dust_soiling_ratio": None,
+            "period_final_cleanliness_ratio": None,
+            "period_final_bird_loss_fraction": None,
+        }
+    final = coating.daily_results[-1]
+    date_key = final.date.isoformat()
+    baseline_clean = float(cast(float, baseline.daily.at[date_key, "clean_energy_kwh"]))
+    baseline_actual = float(cast(float, baseline.daily.at[date_key, "actual_energy_kwh"]))
+    coating_ratio = _safe_divide(final.actual_energy_kwh, final.clean_energy_kwh)
+    baseline_ratio = _safe_divide(baseline_actual, baseline_clean)
+    return {
+        "period_final_coating_normalized_performance": coating_ratio,
+        "period_final_baseline_normalized_performance": baseline_ratio,
+        "period_final_coating_loss_percent": (1.0 - coating_ratio) * 100.0,
+        "period_final_baseline_loss_percent": (1.0 - baseline_ratio) * 100.0,
+        "period_final_average_dust_soiling_ratio": final.extensions.get(
+            "average_dust_soiling_ratio"
+        ),
+        "period_final_cleanliness_ratio": final.extensions.get("cleanliness_ratio"),
+        "period_final_bird_loss_fraction": final.extensions.get("average_bird_loss_fraction"),
+    }
+
+
+def _coating_period_day_counts(result: AnnualScenarioResult) -> dict[str, object]:
+    dew_days = 0
+    passive_days = 0
+    bird_removal_days = 0
+    for daily in result.daily_results:
+        dew_days += int(bool(daily.extensions.get("condensation_dew_eligible", False)))
+        passive_days += int(bool(daily.extensions.get("passive_cleaning_day", False)))
+        bird_removal_days += int(bool(daily.extensions.get("bird_removal_day", False)))
+    return {
+        "period_dew_eligible_day_count": dew_days,
+        "period_passive_cleaning_day_count": passive_days,
+        "period_bird_removal_day_count": bird_removal_days,
+    }
 
 
 def _period_metadata(result: AnnualScenarioResult) -> dict[str, object]:

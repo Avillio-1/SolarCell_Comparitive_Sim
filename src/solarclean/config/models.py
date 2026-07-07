@@ -8,10 +8,16 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 WeatherProviderName = Literal["nasa_power", "csv", "fixture"]
+FixtureWeatherProfileName = Literal["riyadh_synthetic", "riyadh_dry", "kaust_paper_favorable"]
 FarmRepresentationName = Literal["representative", "cohort"]
 MissingDataPolicy = Literal["error", "drop", "interpolate"]
 CoatingPresetName = Literal[
-    "weak", "central", "strong", "paper_calibration", "paper_endpoint_calibration"
+    "weak",
+    "central",
+    "strong",
+    "paper_calibration",
+    "paper_endpoint_calibration",
+    "kaust_paper_strong",
 ]
 CoatingDeploymentMode = Literal["factory_preinstall", "retrofit"]
 AssumptionLevel = Literal["weak", "central", "strong"]
@@ -70,6 +76,7 @@ class SiteConfig(StrictModel):
 
 class WeatherConfig(StrictModel):
     provider: WeatherProviderName = "nasa_power"
+    fixture_profile: FixtureWeatherProfileName = "riyadh_synthetic"
     cache_enabled: bool = True
     cache_directory: Path = Path("data/cache/weather")
     local_csv_path: Path | None = None
@@ -243,6 +250,11 @@ class CoatingPhysicsConfig(StrictModel):
     daytime_cooling_fraction: float = Field(default=0.0, ge=0, le=1)
     passive_cleaning_base_efficiency: float = Field(default=0.0, ge=0, le=1)
     passive_cleaning_tilt_reference_degrees: float = Field(default=25.0, ge=1, le=90)
+    wind_shedding_threshold_m_s: float = Field(default=999.0, ge=0)
+    wind_shedding_reference_m_s: float = Field(default=12.0, gt=0)
+    wind_shedding_base_efficiency: float = Field(default=0.0, ge=0, le=1)
+    rain_shedding_reference_mm: float = Field(default=5.0, gt=0)
+    rain_shedding_base_efficiency: float = Field(default=0.0, ge=0, le=1)
     bird_removal_efficiency: float = Field(default=0.0, ge=0, le=1)
     max_bird_removal_fraction_per_day: float = Field(default=0.0, ge=0, le=1)
 

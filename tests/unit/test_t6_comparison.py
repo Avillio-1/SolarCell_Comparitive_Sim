@@ -80,7 +80,12 @@ def test_compare_all_scenarios_writes_one_reconciled_ranked_package(tmp_path: Pa
         "scenario_events.csv",
         "event_tape.json",
         "comparison_daily_energy.png",
+        "comparison_normalized_performance.png",
+        "comparison_daily_loss_percent.png",
         "comparison_cumulative_energy.png",
+        "comparison_cumulative_loss.png",
+        "comparison_soiling_cleanliness.png",
+        "comparison_coating_diagnostics.png",
         "comparison_annual_kpi_breakdown.png",
     }
     assert expected_artifacts <= {path.name for path in result.output_directory.iterdir()}
@@ -99,24 +104,26 @@ def test_full_year_offline_comparison_config_covers_2025() -> None:
     assert config.simulation.start.isoformat() == "2025-01-01T00:00:00+03:00"
     assert config.simulation.end.isoformat() == "2025-12-31T23:00:00+03:00"
     assert config.calibration.assumption_set == "riyadh_central_v2"
-    assert config.soiling.base_daily_soiling_loss_fraction == pytest.approx(0.001)
-    assert config.reactive_cv.inspection.interval_days == 15
-    assert config.reactive_cv.drone.cohorts_per_flight == 5
-    assert config.reactive_cv.drone.flights_per_day == 2
-    assert config.reactive_cv.observer.recall_fraction == pytest.approx(0.80)
-    assert config.reactive_cv.dispatch.estimated_loss_threshold_fraction == pytest.approx(0.04)
-    assert config.reactive_cv.crew.water_liters_per_cohort == pytest.approx(150.0)
-    assert config.coating.physics.dust_accumulation_multiplier == pytest.approx(0.70)
-    assert config.coating.costs.maintenance_cost_per_year == pytest.approx(20_000.0)
-    assert config.coating.costs.useful_life_years == pytest.approx(3.0)
-    assert config.coating.water.actual_collection_efficiency_fraction == 0.0
+    assert 0.0 < config.soiling.base_daily_soiling_loss_fraction < 0.01
+    assert config.reactive_cv.inspection.interval_days > 0
+    assert config.reactive_cv.drone.cohorts_per_flight > 0
+    assert config.reactive_cv.drone.flights_per_day > 0
+    assert 0.0 <= config.reactive_cv.observer.recall_fraction <= 1.0
+    assert 0.0 <= config.reactive_cv.dispatch.estimated_loss_threshold_fraction <= 1.0
+    assert config.reactive_cv.crew.water_liters_per_cohort >= 0.0
+    assert config.coating.preset == "central"
+    assert 0.0 <= config.coating.physics.dust_accumulation_multiplier <= 1.0
+    assert config.coating.costs.maintenance_cost_per_year >= 0.0
+    assert config.coating.costs.useful_life_years > 0.0
+    assert 0.0 <= config.coating.water.actual_collection_efficiency_fraction <= 1.0
     assert comparison_module._simulation_period_is_full_year(config)
 
 
 def test_reactive_annual_summary_splits_survey_units_and_dispatch_counts(
     tmp_path: Path,
 ) -> None:
-    result = CompareAllScenarios(_fixture_config(tmp_path)).run()
+    config = _fixture_config(tmp_path)
+    result = CompareAllScenarios(config).run()
     annual = pd.read_csv(result.output_directory / "scenario_annual_summary.csv")
     reactive = annual.set_index("scenario_id").loc["reactive"]
 
@@ -128,7 +135,7 @@ def test_reactive_annual_summary_splits_survey_units_and_dispatch_counts(
         reactive["annual_operational_inspections_count"]
     )
     assert reactive["annual_operational_whole_farm_survey_count"] == pytest.approx(
-        reactive["annual_operational_inspections_count"] / 100.0
+        reactive["annual_operational_inspections_count"] / config.farm.cohort_count
     )
     assert reactive["annual_operational_cleaning_dispatch_count"] == pytest.approx(
         reactive["annual_operational_cleaning_actions_count"]

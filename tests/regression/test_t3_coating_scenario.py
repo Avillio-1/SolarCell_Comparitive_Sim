@@ -120,6 +120,7 @@ def test_coating_presets_load() -> None:
         ("configs/coating_strong.yaml", "strong"),
         ("configs/coating_paper_calibration.yaml", "paper_calibration"),
         ("configs/coating_endpoint_calibration.yaml", "paper_endpoint_calibration"),
+        ("configs/coating_kaust_paper_strong.yaml", "kaust_paper_strong"),
     ]:
         config = load_config(Path(path))
         assert config.coating.preset == preset
@@ -199,6 +200,50 @@ def test_endpoint_calibration_reproduces_six_month_power_loss_targets() -> None:
     assert last["extension_cleanliness_ratio"] == pytest.approx(0.985)
     baseline_endpoint_ratio = 1.0 - config.soiling.base_daily_soiling_loss_fraction * 180
     assert baseline_endpoint_ratio == pytest.approx(0.72)
+
+
+def test_kaust_paper_strong_preset_improves_under_favorable_dew() -> None:
+    config = load_config(
+        Path("configs/coating_kaust_paper_strong.yaml"),
+        overrides={"output": {"base_directory": Path("outputs/test-t3-coating-kaust-strong")}},
+    )
+
+    result = RunCoatingSimulation(config).run()
+    daily = pd.read_csv(result.output_directory / "scenario_daily_results.csv")
+
+    assert result.summary["period_day_count"] == len(daily)
+    assert result.summary["period_dew_eligible_day_count"] > 0
+    assert result.summary["period_passive_cleaning_day_count"] > 0
+    assert (
+        result.summary["period_final_coating_loss_percent"]
+        < result.summary["period_final_baseline_loss_percent"]
+    )
+    assert (
+        result.summary["period_final_coating_normalized_performance"]
+        > result.summary["period_final_baseline_normalized_performance"]
+    )
+    assert result.summary["period_final_average_dust_soiling_ratio"] <= 1.0
+    assert result.summary["period_final_cleanliness_ratio"] <= 1.0
+    assert (result.output_directory / "coating_normalized_performance.png").exists()
+    assert (result.output_directory / "coating_daily_loss_percent.png").exists()
+    assert (result.output_directory / "coating_contamination_diagnostics.png").exists()
+
+
+def test_kaust_paper_strong_preset_does_not_create_dew_cleaning_in_dry_weather() -> None:
+    config = load_config(
+        Path("configs/coating_kaust_paper_strong.yaml"),
+        overrides={
+            "weather": {"fixture_profile": "riyadh_dry"},
+            "output": {"base_directory": Path("outputs/test-t3-coating-kaust-dry")},
+        },
+    )
+
+    result = RunCoatingSimulation(config).run()
+    daily = pd.read_csv(result.output_directory / "scenario_daily_results.csv")
+
+    assert result.summary["period_dew_eligible_day_count"] == 0
+    assert result.summary["period_condensed_water_liters"] == pytest.approx(0.0)
+    assert not daily["extension_condensation_dew_eligible"].any()
 
 
 def test_endpoint_calibration_rejects_clipping_soiling_floor() -> None:
