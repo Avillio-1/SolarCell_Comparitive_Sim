@@ -326,6 +326,151 @@ def _write_annual_kpi_plot(
     plt.close(fig)
 
 
+def write_monte_carlo_plots(
+    *,
+    output_dir: Path,
+    trials_frame: pd.DataFrame,
+) -> tuple[Path, ...]:
+    """Write T7 Monte Carlo diagnostic plots from the flat per-trial results table."""
+
+    paths = (
+        output_dir / "monte_carlo_outcome_distributions.png",
+        output_dir / "monte_carlo_win_probability.png",
+    )
+    _write_monte_carlo_outcome_distributions_plot(paths[0], trials_frame)
+    _write_monte_carlo_win_probability_plot(paths[1], trials_frame)
+    return paths
+
+
+def _write_monte_carlo_outcome_distributions_plot(path: Path, trials_frame: pd.DataFrame) -> None:
+    reconciled = trials_frame.loc[trials_frame["reconciled"]]
+    scenario_ids = [
+        column.removesuffix("_net_annual_benefit_sar")
+        for column in trials_frame.columns
+        if column.endswith("_net_annual_benefit_sar")
+    ]
+    data = [
+        pd.to_numeric(reconciled[f"{scenario_id}_net_annual_benefit_sar"], errors="coerce").dropna()
+        for scenario_id in scenario_ids
+    ]
+    fig, ax = plt.subplots(figsize=(8, 5))
+    if any(len(series) > 0 for series in data):
+        ax.boxplot(data, showmeans=True)
+        ax.set_xticks(range(1, len(scenario_ids) + 1))
+        ax.set_xticklabels(scenario_ids)
+    ax.set_ylabel("Net annual benefit (SAR/year)")
+    ax.set_title("Monte Carlo outcome distribution by scenario")
+    fig.tight_layout()
+    fig.savefig(path, dpi=140)
+    plt.close(fig)
+
+
+def _write_monte_carlo_win_probability_plot(path: Path, trials_frame: pd.DataFrame) -> None:
+    reconciled = trials_frame.loc[trials_frame["reconciled"]]
+    counts = reconciled["winner"].value_counts()
+    total = len(reconciled)
+    fig, ax = plt.subplots(figsize=(7, 5))
+    if total > 0 and len(counts) > 0:
+        labels = list(counts.index)
+        probabilities = [count / total for count in counts.to_numpy()]
+        ax.bar(labels, probabilities, color="tab:blue")
+    ax.set_ylabel("Win probability")
+    ax.set_ylim(0, 1.0)
+    ax.set_title("Monte Carlo scenario win probability")
+    fig.tight_layout()
+    fig.savefig(path, dpi=140)
+    plt.close(fig)
+
+
+def write_sensitivity_tornado_plot(
+    path: Path,
+    frame: pd.DataFrame,
+    *,
+    focus_scenario: str,
+) -> None:
+    """Horizontal tornado chart: each bar spans [min, max] net benefit for focus_scenario
+    as one parameter sweeps its registry low->high range, parameters ordered by swing size
+    (largest first, as produced by OneWaySensitivityResult.ranked_by_swing)."""
+
+    fig, ax = plt.subplots(figsize=(9, max(3, 0.45 * len(frame) + 1)))
+    if not frame.empty:
+        y_positions = range(len(frame))
+        low = frame["min_benefit_sar"]
+        high = frame["max_benefit_sar"]
+        ax.barh(list(y_positions), high - low, left=low, color="tab:orange", alpha=0.85)
+        ax.set_yticks(list(y_positions), frame["parameter_name"])
+        ax.invert_yaxis()
+    ax.set_xlabel(f"{focus_scenario} net annual benefit (SAR/year)")
+    ax.set_title("One-way sensitivity (tornado)")
+    fig.tight_layout()
+    fig.savefig(path, dpi=140)
+    plt.close(fig)
+
+
+def write_winner_map_plot(
+    path: Path,
+    *,
+    frame: pd.DataFrame,
+    parameter_a: str,
+    parameter_b: str,
+) -> None:
+    """Grid heatmap of which scenario wins across a two-parameter sweep."""
+
+    value_a_col = f"{parameter_a}_value"
+    value_b_col = f"{parameter_b}_value"
+    fig, ax = plt.subplots(figsize=(7, 6))
+    winners = sorted(w for w in frame["winner"].dropna().unique())
+    color_by_winner = dict(zip(winners, _WINNER_MAP_COLORS, strict=False))
+    for winner, group in frame.groupby("winner", dropna=False, sort=True):
+        color = color_by_winner.get(winner, "lightgray") if winner is not None else "lightgray"
+        label = str(winner) if winner is not None else "unreconciled"
+        ax.scatter(
+            group[value_a_col],
+            group[value_b_col],
+            color=color,
+            label=label,
+            s=140,
+            marker="s",
+        )
+    ax.set_xlabel(f"{parameter_a}")
+    ax.set_ylabel(f"{parameter_b}")
+    ax.set_title("Two-way sensitivity winner map")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(path, dpi=140)
+    plt.close(fig)
+
+
+_WINNER_MAP_COLORS = ("tab:blue", "tab:green", "tab:red", "tab:purple", "tab:brown")
+
+
+def write_breakeven_plot(
+    path: Path,
+    *,
+    frame: pd.DataFrame,
+    parameter_name: str,
+    scenario_a: str,
+    scenario_b: str,
+    crossover_value: float | None,
+) -> None:
+    """Plot the (scenario_a - scenario_b) net benefit margin against the swept parameter,
+    with the zero-crossing (break-even point), if found, marked."""
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    ordered = frame.sort_values("value")
+    ax.axhline(0.0, color="black", linewidth=0.8)
+    ax.plot(ordered["value"], ordered["margin_sar"], marker="o", color="tab:blue")
+    if crossover_value is not None:
+        ax.axvline(crossover_value, color="tab:red", linestyle="--", label="break-even")
+        ax.legend()
+    ax.set_xlabel(parameter_name)
+    ax.set_ylabel(f"{scenario_a} - {scenario_b} net annual benefit (SAR/year)")
+    ax.set_title("Break-even analysis")
+    fig.tight_layout()
+    fig.savefig(path, dpi=140)
+    plt.close(fig)
+
+
 def _daily_frame(frame: pd.DataFrame) -> pd.DataFrame:
     prepared = frame.copy()
     prepared["date"] = pd.to_datetime(prepared["date"])

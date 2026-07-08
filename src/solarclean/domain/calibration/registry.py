@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Self
@@ -129,6 +129,24 @@ class ParameterRegistry:
 
     def to_records(self) -> list[dict[str, object]]:
         return [parameter.to_record() for parameter in self.parameters]
+
+    def with_central_value(self, name: str, value: float) -> Self:
+        """Return a copy of this registry with one parameter's central_value replaced.
+
+        Used by T7 sensitivity/break-even sweeps to perturb a single economics
+        parameter (e.g. ``economics.electricity_tariff_sar_per_kwh``) without
+        mutating the on-disk registry. The replacement value must stay within the
+        parameter's own [low_value, high_value] band — sweeps are only meaningful
+        within the T5-sourced uncertainty range, and CalibrationParameter.validate()
+        enforces this ordering the same way it does when loading from YAML.
+        """
+        existing = self.get(name)
+        updated = replace(existing, central_value=float(value))
+        updated.validate()
+        parameters = tuple(
+            updated if parameter.name == name else parameter for parameter in self.parameters
+        )
+        return type(self)(metadata=self.metadata, parameters=parameters)
 
 
 @dataclass(frozen=True)

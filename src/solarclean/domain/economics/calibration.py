@@ -30,6 +30,12 @@ _REQUIRED_PARAMETER_KEYS = (
     _USEFUL_LIFE_KEY,
 )
 
+# Public alias: the T5 registry parameter names that build_economics_from_parameter_registry
+# reads directly by name (not via configuration_path). T7 sensitivity sweeps use this to know
+# which registry entries can be perturbed purely by rebuilding EconomicsCalibration from a
+# mutated ParameterRegistry, with no SolarCleanConfig change required.
+REQUIRED_ECONOMICS_PARAMETER_KEYS = _REQUIRED_PARAMETER_KEYS
+
 
 @dataclass(frozen=True)
 class RegistryParameterMetadata:

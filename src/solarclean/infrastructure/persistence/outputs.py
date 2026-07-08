@@ -50,13 +50,21 @@ class OutputWriter:
         self.config = config
 
     def create_run_directory(self, command: str) -> Path:
-        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-        run_id = (
-            f"{self.config.simulation.run_id_prefix}-{command}-{timestamp}-{uuid.uuid4().hex[:8]}"
-        )
-        output_dir = self.config.output.base_directory / run_id
+        output_dir = self.config.output.base_directory / self.build_run_id(command)
         output_dir.mkdir(parents=True, exist_ok=False)
         return output_dir
+
+    def build_run_id(self, command: str) -> str:
+        """Generate a run id without touching the filesystem.
+
+        Used by T7 Monte Carlo / sensitivity trials that skip artifact writing
+        (`write_artifacts=False`) but still need a unique, traceable run id without
+        creating an empty output directory for every one of hundreds of trials.
+        """
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        unique_suffix = uuid.uuid4().hex[:8]
+        prefix = self.config.simulation.run_id_prefix
+        return f"{prefix}-{command}-{timestamp}-{unique_suffix}"
 
     def write_config(self, output_dir: Path) -> None:
         path = output_dir / "config_resolved.yaml"
