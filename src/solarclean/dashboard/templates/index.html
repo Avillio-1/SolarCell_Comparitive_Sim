@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% block title %}Runs · SolarClean-DT{% endblock %}
+{% block content %}
+
+<section class="panel">
+  <h2>Start a run</h2>
+  <form id="launch-form" onsubmit="return false;">
+    <div class="field-row">
+      <label>
+        <span>Analysis</span>
+        <select id="kind" name="kind">
+          <option value="compare">Compare all scenarios</option>
+          <option value="monte-carlo">Monte Carlo</option>
+          <option value="sensitivity-oneway">One-way sensitivity</option>
+          <option value="winner-map">Two-way winner map</option>
+          <option value="break-even">Break-even search</option>
+        </select>
+      </label>
+      <label>
+        <span>Configuration</span>
+        <select id="config" name="config">
+          {% for c in configs %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+        </select>
+      </label>
+      <a class="quiet-link" href="#" id="edit-config-link">view / edit config</a>
+    </div>
+
+    <div class="field-row kind-opts" data-kind="monte-carlo" hidden>
+      <label><span>Trials</span><input id="trials" type="number" min="2" max="500" value="25"></label>
+      <label><span>Base seed (optional)</span><input id="base-seed" type="number" placeholder="registry default"></label>
+    </div>
+    <div class="field-row kind-opts" data-kind="sensitivity-oneway" hidden>
+      <label><span>Steps per parameter</span><input id="steps" type="number" min="3" max="21" value="5"></label>
+      <label class="wide"><span>Parameters (comma separated, blank = all supported)</span>
+        <input id="parameters" type="text" placeholder="economics.coating_material_cost_per_m2, soiling.base_daily_loss_fraction"></label>
+    </div>
+    <div class="field-row kind-opts" data-kind="winner-map" hidden>
+      <label class="wide"><span>Parameter A</span><input id="parameter-a" type="text"></label>
+      <label class="wide"><span>Parameter B</span><input id="parameter-b" type="text"></label>
+      <label><span>Grid steps</span><input id="grid-steps" type="number" min="3" max="15" value="5"></label>
+    </div>
+    <div class="field-row kind-opts" data-kind="break-even" hidden>
+      <label class="wide"><span>Registry parameter</span><input id="be-parameter" type="text"></label>
+      <label><span>Scenario A</span>
+        <select id="scenario-a"><option>coating</option><option>reactive</option><option>baseline</option></select></label>
+      <label><span>Scenario B</span>
+        <select id="scenario-b"><option>baseline</option><option>reactive</option><option>coating</option></select></label>
+    </div>
+
+    <div class="field-row">
+      <button id="launch" class="primary" type="button">Start run</button>
+      <span id="launch-error" class="error-text" role="alert"></span>
+    </div>
+  </form>
+  <p class="hint">Full-year comparisons take a few minutes; Monte Carlo scales with trial count.
+     Parameter names come from <code>data/calibration/parameter_registry.yaml</code>.</p>
+</section>
+
+<section class="panel" id="jobs-panel" {% if not jobs %}hidden{% endif %}>
+  <h2>Jobs this session</h2>
+  <table class="data-table" id="jobs-table">
+    <thead><tr><th>Started</th><th>Analysis</th><th>Configuration</th><th>Status</th><th>Result</th></tr></thead>
+    <tbody>
+      {% for j in jobs %}
+      <tr data-job="{{ j.job_id }}">
+        <td class="mono">{{ j.created_at[:19] }}</td>
+        <td>{{ j.kind }}</td>
+        <td class="mono">{{ j.config_name }}</td>
+        <td><span class="status status-{{ j.status }}">{{ j.status }}</span></td>
+        <td>{% if j.run_id %}<a href="/run/{{ j.run_id }}">{{ j.run_id }}</a>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Completed runs</h2>
+  {% if runs %}
+  <table class="data-table">
+    <thead><tr><th>Run</th><th>Analysis</th><th>Winner</th><th>Reconciled</th><th></th></tr></thead>
+    <tbody>
+      {% for r in runs %}
+      <tr>
+        <td class="mono"><a href="/run/{{ r.run_id }}">{{ r.run_id }}</a></td>
+        <td>{{ r.kind }}</td>
+        <td>{{ r.winner or "–" }}</td>
+        <td>
+          {% if r.valid is none %}–
+          {% elif r.valid %}<span class="chip chip-pass">valid</span>
+          {% else %}<span class="chip chip-fail">failed</span>{% endif %}
+        </td>
+        <td><a class="quiet-link" href="/api/runs/{{ r.run_id }}/download">download .zip</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No runs yet. Start one above; the offline fixture configs finish quickly and are
+     good for checking the pipeline before a full Riyadh year.</p>
+  {% endif %}
+</section>
+
+{% endblock %}

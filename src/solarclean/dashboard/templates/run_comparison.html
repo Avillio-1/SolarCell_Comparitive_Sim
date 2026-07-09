@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}{{ run_id }} · SolarClean-DT{% endblock %}
+{% block content %}
+
+<div class="run-head">
+  <h1 class="mono">{{ run_id }}</h1>
+  <a class="quiet-link" href="/api/runs/{{ run_id }}/download">download full run (.zip)</a>
+</div>
+
+{# Reconciliation comes first on purpose: nothing below it means anything if these fail. #}
+{% if reconciliation %}
+<section class="recon-strip {% if not reconciliation.passed %}recon-strip-failed{% endif %}">
+  <span class="recon-title">Reconciliation</span>
+  {% for check in reconciliation.checks %}
+    <span class="chip {{ 'chip-pass' if check.passed else 'chip-fail' }}"
+          title="{{ check.message }}">{{ check.name }}</span>
+  {% endfor %}
+</section>
+{% if not reconciliation.passed %}
+<p class="warn-note">One or more reconciliation checks failed, so no ranking was accepted for this
+run. Failure messages are in <code>reconciliation_report.json</code>.</p>
+{% endif %}
+{% endif %}
+
+{% if recommendation and ranking and ranking.ranking %}
+<section class="panel">
+  <h2>Ranking by net annual benefit</h2>
+  <table class="data-table">
+    <thead><tr><th>#</th><th>Scenario</th><th class="num">Annual AC energy (kWh)</th>
+      <th class="num">Gain vs baseline (kWh)</th><th class="num">Net annual benefit (SAR)</th></tr></thead>
+    <tbody>
+      {% for row in ranking.ranking %}
+      <tr class="{{ 'winner-row' if row.rank == 1 }}">
+        <td>{{ row.rank }}{% if row.tied_with_previous %} (tie){% endif %}</td>
+        <td>{{ row.scenario_id }}</td>
+        <td class="num mono">{{ "%.1f"|format(row.annual_actual_energy_kwh) }}</td>
+        <td class="num mono">{{ "%.2f"|format(row.energy_gain_vs_baseline_kwh) }}</td>
+        <td class="num mono">{{ "%.0f"|format(row.net_annual_benefit_sar) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if recommendation.warnings %}
+  <div class="assumption-block">
+    <h3>Warnings ({{ recommendation.warnings|length }})</h3>
+    <ul>
+      {% for w in recommendation.warnings %}
+      <li>{% if w.message is defined %}{{ w.message }}{% else %}{{ w }}{% endif %}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  <details class="assumption-block">
+    <summary>Assumptions behind this ranking ({{ recommendation.assumptions|length }})</summary>
+    <ul>
+      {% for a in recommendation.assumptions %}
+      <li>
+        {% if a.message is defined %}{{ a.message }}
+        {% elif a.configuration_path is defined %}
+          <span class="mono">{{ a.configuration_path }}</span> = {{ a.central_value }}
+          (range {{ a.low_value }}–{{ a.high_value }}, confidence {{ a.confidence }},
+          {{ a.evidence_type }})
+        {% else %}{{ a }}{% endif %}
+      </li>
+      {% endfor %}
+    </ul>
+  </details>
+</section>
+{% endif %}
+
+{% if kpi_table %}
+<section class="panel">
+  <h2>Annual KPIs</h2>
+  <table class="data-table kpi-table">
+    <thead><tr><th></th>{% for s in kpi_table.scenarios %}<th class="num">{{ s }}</th>{% endfor %}</tr></thead>
+    <tbody>
+      {% for row in kpi_table.rows %}
+      <tr><th>{{ row.label }}</th>
+        {% for v in row["values"] %}<td class="num mono">{{ v | display_number }}</td>{% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="hint">Rounded for reading. Full precision is in
+    <a href="/api/runs/{{ run_id }}/artifact/scenario_annual_summary.csv">scenario_annual_summary.csv</a>.</p>
+</section>
+{% endif %}
+
+{% if daily_energy %}
+<section class="panel">
+  <h2>Daily AC energy by scenario</h2>
+  <canvas id="daily-energy-chart" height="110"></canvas>
+</section>
+{% endif %}
+
+{% if plots %}
+<section class="panel">
+  <h2>Generated plots</h2>
+  <div class="plot-grid">
+    {% for p in plots %}
+    <figure>
+      <img src="/api/runs/{{ run_id }}/artifact/{{ p }}" alt="{{ p }}" loading="lazy">
+      <figcaption class="mono">{{ p }}</figcaption>
+    </figure>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+{% if cost_summary %}
+<section class="panel">
+  <h2>Cost components</h2>
+  <div class="scroll-x">
+  <table class="data-table small">
+    <thead><tr>{% for h in cost_summary.header %}<th>{{ h }}</th>{% endfor %}</tr></thead>
+    <tbody>
+      {% for row in cost_summary.rows %}
+      <tr>{% for v in row %}<td class="mono">{{ v }}</td>{% endfor %}</tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</section>
+{% endif %}
+
+<section class="panel">
+  <h2>Artifacts</h2>
+  <table class="data-table small">
+    <tbody>
+      {% for f in artifacts %}
+      <tr>
+        <td class="mono"><a href="/api/runs/{{ run_id }}/artifact/{{ f.name }}">{{ f.name }}</a></td>
+        <td class="num mono">{{ f.size_bytes }} B</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% endblock %}
+{% block scripts %}
+{% if daily_energy %}
+<script src="/static/chart.umd.js"></script>
+<script>
+  window.solarcleanDailyEnergy = {{ daily_energy | tojson }};
+  drawDailyEnergyChart();
+</script>
+{% endif %}
+{% endblock %}

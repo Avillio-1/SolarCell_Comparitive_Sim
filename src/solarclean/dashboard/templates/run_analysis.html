@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}{{ run_id }} · SolarClean-DT{% endblock %}
+{% block content %}
+
+<div class="run-head">
+  <h1 class="mono">{{ run_id }}</h1>
+  <a class="quiet-link" href="/api/runs/{{ run_id }}/download">download full run (.zip)</a>
+</div>
+
+{% if mc_summary %}
+<section class="panel">
+  <h2>Monte Carlo summary</h2>
+  <dl class="fact-strip">
+    <div><dt>Trials reconciled</dt><dd class="mono">{{ mc_summary.reconciled_trial_count }} / {{ mc_summary.trial_count }}</dd></div>
+    <div><dt>Central T6 winner</dt><dd>{{ mc_summary.central_t6_winner }}</dd></div>
+    <div><dt>Majority trial winner</dt><dd>{{ mc_summary.majority_trial_winner }}</dd></div>
+    <div><dt>Uncertainty mode</dt><dd>{{ mc_summary.uncertainty_mode }}</dd></div>
+    <div><dt>Base seed</dt><dd class="mono">{{ mc_summary.base_seed }}</dd></div>
+  </dl>
+  {% if mc_summary.failed_trial_count %}
+  <p class="warn-note">{{ mc_summary.failed_trial_count }} trial(s) failed or did not reconcile and
+  are excluded from the statistics — details in <code>monte_carlo_summary.json</code>.</p>
+  {% endif %}
+  <table class="data-table">
+    <thead><tr><th>Scenario</th><th class="num">Win probability</th>
+      <th class="num">Mean net benefit (SAR)</th><th class="num">Std dev</th>
+      <th class="num">P5</th><th class="num">P95</th></tr></thead>
+    <tbody>
+      {% for sid, s in mc_summary.scenario_summaries.items() %}
+      <tr>
+        <td>{{ sid }}</td>
+        <td class="num mono">{{ "%.2f"|format(s.win_probability) }}</td>
+        <td class="num mono">{{ "%.0f"|format(s.mean_net_annual_benefit_sar) }}</td>
+        <td class="num mono">{{ "%.1f"|format(s.std_net_annual_benefit_sar) }}</td>
+        <td class="num mono">{{ "%.0f"|format(s.p5_net_annual_benefit_sar) }}</td>
+        <td class="num mono">{{ "%.0f"|format(s.p95_net_annual_benefit_sar) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if summary_text %}
+<section class="panel">
+  <h2>Run summary</h2>
+  <pre class="summary-pre">{{ summary_text }}</pre>
+</section>
+{% endif %}
+
+{% if plots %}
+<section class="panel">
+  <h2>Generated plots</h2>
+  <div class="plot-grid">
+    {% for p in plots %}
+    <figure>
+      <img src="/api/runs/{{ run_id }}/artifact/{{ p }}" alt="{{ p }}" loading="lazy">
+      <figcaption class="mono">{{ p }}</figcaption>
+    </figure>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section class="panel">
+  <h2>Artifacts</h2>
+  <table class="data-table small">
+    <tbody>
+      {% for f in artifacts %}
+      <tr>
+        <td class="mono"><a href="/api/runs/{{ run_id }}/artifact/{{ f.name }}">{{ f.name }}</a></td>
+        <td class="num mono">{{ f.size_bytes }} B</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% endblock %}
