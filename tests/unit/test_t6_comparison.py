@@ -109,6 +109,7 @@ def test_full_year_offline_comparison_config_covers_2025() -> None:
     assert config.reactive_cv.drone.cohorts_per_flight > 0
     assert config.reactive_cv.drone.flights_per_day > 0
     assert 0.0 <= config.reactive_cv.observer.recall_fraction <= 1.0
+    assert config.reactive_cv.observer.false_positive_rate == pytest.approx(0.08)
     assert 0.0 <= config.reactive_cv.dispatch.estimated_loss_threshold_fraction <= 1.0
     assert config.reactive_cv.crew.water_liters_per_cohort >= 0.0
     assert config.coating.preset == "central"

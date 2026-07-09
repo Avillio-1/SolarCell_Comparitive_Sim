@@ -84,7 +84,8 @@ def monte_carlo(
         f"Monte Carlo ({result.reconciled_trial_count}/{result.trial_count} reconciled) "
         f"written to {result.output_directory}"
     )
-    typer.echo(f"Central winner across trials: {result.central_winner}")
+    typer.echo(f"Central T6 winner: {result.central_t6_winner}")
+    typer.echo(f"Majority trial winner: {result.majority_trial_winner}")
 
 
 @app.command("sensitivity-oneway")

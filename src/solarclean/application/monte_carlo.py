@@ -27,13 +27,51 @@ from types import MappingProxyType
 
 import pandas as pd
 
-from solarclean.application.comparison import CANONICAL_SCENARIO_IDS, CompareAllScenarios
+from solarclean.application.comparison import (
+    CANONICAL_SCENARIO_IDS,
+    CompareAllScenarios,
+    ComparisonResult,
+)
 from solarclean.config.models import SolarCleanConfig
 from solarclean.infrastructure.persistence.outputs import OutputWriter
 from solarclean.infrastructure.persistence.plots import write_monte_carlo_plots
 from solarclean.infrastructure.persistence.reports import write_json_report
 
 DEFAULT_TRIAL_COUNT = 100
+UNCERTAINTY_MODE = "stochastic_seed_only"
+
+
+def _failed_reconciliation_checks(
+    comparison: ComparisonResult,
+) -> tuple[Mapping[str, object], ...]:
+    failed = [
+        MappingProxyType(check.to_record())
+        for check in comparison.reconciliation_report.checks
+        if not check.passed
+    ]
+    if comparison.reconciliation_report.passed and not comparison.recommendation.valid:
+        failed.append(
+            MappingProxyType(
+                {
+                    "name": "recommendation_invalid",
+                    "message": comparison.recommendation.message,
+                    "details": {},
+                }
+            )
+        )
+    return tuple(failed)
+
+
+def _failed_check_names(checks: Sequence[Mapping[str, object]]) -> tuple[str, ...]:
+    return tuple(str(check.get("name", "")) for check in checks if check.get("name"))
+
+
+def _failed_check_messages(checks: Sequence[Mapping[str, object]]) -> tuple[str, ...]:
+    return tuple(str(check.get("message", "")) for check in checks if check.get("message"))
+
+
+def _check_records(checks: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
+    return [dict(check) for check in checks]
 
 
 @dataclass(frozen=True)
@@ -45,6 +83,7 @@ class MonteCarloTrialRecord:
     net_annual_benefit_sar: Mapping[str, float]
     annual_actual_energy_kwh: Mapping[str, float]
     energy_gain_vs_baseline_kwh: Mapping[str, float]
+    failed_reconciliation_checks: tuple[Mapping[str, object], ...] = ()
 
     def to_flat_record(self) -> dict[str, object]:
         record: dict[str, object] = {
@@ -52,6 +91,12 @@ class MonteCarloTrialRecord:
             "seed": self.seed,
             "reconciled": self.reconciled,
             "winner": self.winner,
+            "failed_reconciliation_check_names": "; ".join(
+                _failed_check_names(self.failed_reconciliation_checks)
+            ),
+            "failed_reconciliation_check_messages": "; ".join(
+                _failed_check_messages(self.failed_reconciliation_checks)
+            ),
         }
         for scenario_id in CANONICAL_SCENARIO_IDS:
             record[f"{scenario_id}_net_annual_benefit_sar"] = self.net_annual_benefit_sar[
@@ -63,6 +108,11 @@ class MonteCarloTrialRecord:
             record[f"{scenario_id}_energy_gain_vs_baseline_kwh"] = self.energy_gain_vs_baseline_kwh[
                 scenario_id
             ]
+        return record
+
+    def to_record(self) -> dict[str, object]:
+        record = self.to_flat_record()
+        record["failed_reconciliation_checks"] = _check_records(self.failed_reconciliation_checks)
         return record
 
 
@@ -104,17 +154,30 @@ class MonteCarloResult:
     failed_trial_count: int
     trials: tuple[MonteCarloTrialRecord, ...]
     scenario_summaries: Mapping[str, ScenarioMonteCarloSummary]
-    central_winner: str | None
+    central_t6_winner: str | None
+    central_t6_reconciled: bool
+    central_t6_failed_reconciliation_checks: tuple[Mapping[str, object], ...]
+    majority_trial_winner: str | None
+    uncertainty_mode: str
     output_artifacts: tuple[str, ...]
 
     def to_record(self) -> dict[str, object]:
         return {
             "run_id": self.run_id,
             "base_seed": self.base_seed,
+            "uncertainty_mode": self.uncertainty_mode,
+            "sampled_parameter_uncertainty": False,
+            "seed_only": True,
             "trial_count": self.trial_count,
             "reconciled_trial_count": self.reconciled_trial_count,
             "failed_trial_count": self.failed_trial_count,
-            "central_winner": self.central_winner,
+            "central_t6_winner": self.central_t6_winner,
+            "central_t6_reconciled": self.central_t6_reconciled,
+            "central_t6_failed_reconciliation_checks": _check_records(
+                self.central_t6_failed_reconciliation_checks
+            ),
+            "majority_trial_winner": self.majority_trial_winner,
+            "failed_trials": [trial.to_record() for trial in self.trials if not trial.reconciled],
             "scenario_summaries": {
                 scenario_id: summary.to_record()
                 for scenario_id, summary in self.scenario_summaries.items()
@@ -159,6 +222,23 @@ class MonteCarloExperiment:
         return tuple(rng.randrange(1, 2**31 - 1) for _ in range(self.trial_count))
 
     def run(self) -> MonteCarloExperimentOutcome:
+        central_comparison = (
+            CompareAllScenarios(
+                self.config,
+                scenario_order=self.scenario_order,
+                parameter_registry_path=self.parameter_registry_path,
+                write_artifacts=False,
+            )
+            .run()
+            .comparison
+        )
+        central_reconciled = (
+            central_comparison.reconciliation_report.passed
+            and central_comparison.recommendation.valid
+        )
+        central_t6_winner = central_comparison.recommendation.winner if central_reconciled else None
+        central_failed_checks = _failed_reconciliation_checks(central_comparison)
+
         seeds = self.trial_seeds()
         trials = tuple(
             self._run_trial(trial_index=index, seed=seed) for index, seed in enumerate(seeds)
@@ -170,7 +250,7 @@ class MonteCarloExperiment:
             scenario_id: _summarize_scenario(scenario_id, trials, reconciled_trials)
             for scenario_id in CANONICAL_SCENARIO_IDS
         }
-        central_winner = _majority_winner(reconciled_trials)
+        majority_trial_winner = _majority_winner(reconciled_trials)
 
         writer = OutputWriter(self.config)
         if self.write_artifacts:
@@ -188,7 +268,11 @@ class MonteCarloExperiment:
             failed_trial_count=failed_count,
             trials=trials,
             scenario_summaries=MappingProxyType(scenario_summaries),
-            central_winner=central_winner,
+            central_t6_winner=central_t6_winner,
+            central_t6_reconciled=central_reconciled,
+            central_t6_failed_reconciliation_checks=central_failed_checks,
+            majority_trial_winner=majority_trial_winner,
+            uncertainty_mode=UNCERTAINTY_MODE,
             output_artifacts=(),
         )
 
@@ -239,6 +323,7 @@ class MonteCarloExperiment:
             net_annual_benefit_sar=MappingProxyType(net_benefit),
             annual_actual_energy_kwh=MappingProxyType(actual_energy),
             energy_gain_vs_baseline_kwh=MappingProxyType(energy_gain),
+            failed_reconciliation_checks=_failed_reconciliation_checks(comparison),
         )
 
 
@@ -313,7 +398,11 @@ def _replace_artifacts(result: MonteCarloResult, artifacts: tuple[str, ...]) -> 
         failed_trial_count=result.failed_trial_count,
         trials=result.trials,
         scenario_summaries=result.scenario_summaries,
-        central_winner=result.central_winner,
+        central_t6_winner=result.central_t6_winner,
+        central_t6_reconciled=result.central_t6_reconciled,
+        central_t6_failed_reconciliation_checks=result.central_t6_failed_reconciliation_checks,
+        majority_trial_winner=result.majority_trial_winner,
+        uncertainty_mode=result.uncertainty_mode,
         output_artifacts=artifacts,
     )
 
@@ -348,10 +437,17 @@ def _write_monte_carlo_package(
     summary: dict[str, object] = {
         "command": "monte-carlo",
         "run_id": result.run_id,
+        "uncertainty_mode": result.uncertainty_mode,
+        "sampled_parameter_uncertainty": False,
         "trial_count": result.trial_count,
         "reconciled_trial_count": result.reconciled_trial_count,
         "failed_trial_count": result.failed_trial_count,
-        "central_winner": result.central_winner,
+        "central_t6_winner": result.central_t6_winner,
+        "central_t6_reconciled": result.central_t6_reconciled,
+        "central_t6_failed_reconciliation_check_names": list(
+            _failed_check_names(result.central_t6_failed_reconciliation_checks)
+        ),
+        "majority_trial_winner": result.majority_trial_winner,
         "output_artifacts": list(artifacts),
     }
     writer.write_summary(output_dir, summary)

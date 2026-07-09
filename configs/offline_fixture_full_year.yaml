@@ -121,7 +121,7 @@ reactive_cv:
     compute_energy_kwh_per_image: 0.01
   observer:
     recall_fraction: 0.80
-    false_positive_rate: 0.05
+    false_positive_rate: 0.08
     missed_image_fraction: 0.03
     base_confidence: 0.8
     confidence_std_fraction: 0.1

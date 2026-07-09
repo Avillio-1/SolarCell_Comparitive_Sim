@@ -77,6 +77,11 @@ def test_monte_carlo_writes_full_artifact_package(tmp_path: Path) -> None:
         (result.output_directory / "monte_carlo_summary.json").read_text(encoding="utf-8")
     )
     assert summary["trial_count"] == 6
+    assert summary["uncertainty_mode"] == "stochastic_seed_only"
+    assert summary["sampled_parameter_uncertainty"] is False
+    assert "central_t6_winner" in summary
+    assert "majority_trial_winner" in summary
+    assert "central_winner" not in summary
     assert set(summary["scenario_summaries"]) == set(CANONICAL_SCENARIO_IDS)
 
 
@@ -97,3 +102,18 @@ def test_monte_carlo_no_artifact_mode_does_not_create_output_directory(tmp_path:
     outcome = MonteCarloExperiment(config, trial_count=3, base_seed=5, write_artifacts=False).run()
     assert not outcome.output_directory.exists()
     assert outcome.result.output_artifacts == ()
+
+
+def test_monte_carlo_separates_central_t6_and_majority_trial_winners(tmp_path: Path) -> None:
+    config = _fixture_config(tmp_path)
+    outcome = MonteCarloExperiment(config, trial_count=4, base_seed=11, write_artifacts=False).run()
+    result = outcome.result
+
+    assert result.uncertainty_mode == "stochastic_seed_only"
+    assert result.central_t6_winner in (*CANONICAL_SCENARIO_IDS, None)
+    assert result.majority_trial_winner in (*CANONICAL_SCENARIO_IDS, None)
+    assert isinstance(result.central_t6_reconciled, bool)
+    for trial in result.trials:
+        record = trial.to_record()
+        assert "failed_reconciliation_check_names" in record
+        assert "failed_reconciliation_checks" in record

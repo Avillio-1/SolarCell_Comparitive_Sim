@@ -6,11 +6,14 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+import solarclean.application.sensitivity as sensitivity_module
 from solarclean.application.comparison import CANONICAL_SCENARIO_IDS
 from solarclean.application.sensitivity import (
+    BreakEvenEvaluation,
     BreakEvenExperiment,
     OneWaySensitivityExperiment,
     TwoWaySensitivityExperiment,
+    VariantResult,
 )
 from solarclean.config.loader import load_config
 
@@ -189,7 +192,18 @@ def test_twoway_writes_full_artifact_package(tmp_path: Path) -> None:
     names = {p.name for p in result.output_directory.iterdir()}
     assert "sensitivity_twoway.csv" in names
     assert "sensitivity_twoway_summary.json" in names
-    assert any(n.startswith("sensitivity_winner_map_") and n.endswith(".png") for n in names)
+    plot_names = [
+        n for n in names if n.startswith("sensitivity_winner_map_") and n.endswith(".png")
+    ]
+    assert plot_names
+    assert all(len(name) < 100 for name in plot_names)
+
+    summary = json.loads(
+        (result.output_directory / "sensitivity_twoway_summary.json").read_text(encoding="utf-8")
+    )
+    assert summary["parameter_a"] == "soiling.base_daily_loss_fraction"
+    assert summary["parameter_b"] == "coating.useful_life_years"
+    assert summary["failed_grid_point_count"] == 0
 
 
 # --- Break-even -----------------------------------------------------------
@@ -217,6 +231,111 @@ def test_breakeven_rejects_unknown_scenario(tmp_path: Path) -> None:
         )
 
 
+def _synthetic_breakeven_result(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, margin_fn):
+    config = _fixture_config(tmp_path)
+    experiment = BreakEvenExperiment(
+        config,
+        parameter_name="coating.useful_life_years",
+        scenario_a="reactive",
+        scenario_b="baseline",
+        max_evaluations=30,
+        write_artifacts=False,
+    )
+
+    def fake_evaluate(value: float) -> BreakEvenEvaluation:
+        margin = float(margin_fn(value))
+        return BreakEvenEvaluation(
+            value=value,
+            margin_sar=margin,
+            reconciled=True,
+            net_annual_benefit_sar={
+                "baseline": 0.0,
+                "reactive": margin,
+                "coating": 0.0,
+            },
+        )
+
+    monkeypatch.setattr(experiment, "_evaluate", fake_evaluate)
+    return experiment.run().result
+
+
+def test_breakeven_scan_reports_one_crossing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _synthetic_breakeven_result(
+        tmp_path,
+        monkeypatch,
+        lambda value: value - 3.5,
+    )
+
+    assert result.crossover_found is True
+    assert result.crossing_status == "one_crossing"
+    assert len(result.crossover_values) == 1
+    assert result.crossover_values[0] == pytest.approx(3.5, rel=1e-2)
+    assert result.likely_non_monotonic is False
+
+
+def test_breakeven_scan_reports_multiple_non_monotonic_crossings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _synthetic_breakeven_result(
+        tmp_path,
+        monkeypatch,
+        lambda value: (value - 2.0) * (value - 5.0),
+    )
+
+    assert result.crossover_found is True
+    assert result.crossing_status == "multiple_crossings"
+    assert result.likely_non_monotonic is True
+    assert len(result.crossover_values) == 2
+    assert result.crossover_values[0] == pytest.approx(2.0, rel=1e-2)
+    assert result.crossover_values[1] == pytest.approx(5.0, rel=1e-2)
+
+
+def test_breakeven_refuses_unreconciled_evaluations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _fixture_config(tmp_path)
+
+    def fake_run_variant(**_kwargs):
+        return VariantResult(
+            net_annual_benefit_sar={
+                "baseline": 0.0,
+                "reactive": 10.0,
+                "coating": 0.0,
+            },
+            winner=None,
+            reconciled=False,
+            failed_reconciliation_checks=(
+                {
+                    "name": "same_weather_checksum",
+                    "message": "Scenarios did not share exactly one weather checksum.",
+                    "details": {},
+                },
+            ),
+        )
+
+    monkeypatch.setattr(sensitivity_module, "_run_variant", fake_run_variant)
+    result = (
+        BreakEvenExperiment(
+            config,
+            parameter_name="coating.useful_life_years",
+            scenario_a="reactive",
+            scenario_b="baseline",
+            write_artifacts=False,
+        )
+        .run()
+        .result
+    )
+
+    assert result.crossover_found is False
+    assert result.crossing_status == "invalid_evaluation"
+    assert result.invalid_evaluation_count > 0
+    assert "same_weather_checksum" in result.message
+    assert result.evaluations[0].margin_sar is None
+    assert result.evaluations[0].failed_reconciliation_checks
+
+
 def test_breakeven_reports_no_crossover_when_one_scenario_dominates(tmp_path: Path) -> None:
     # On the 2-day offline fixture, coating's capex overwhelms any benefit within the
     # registry's useful_life_years range, so baseline should dominate throughout.
@@ -231,6 +350,7 @@ def test_breakeven_reports_no_crossover_when_one_scenario_dominates(tmp_path: Pa
     result = outcome.result
     assert result.crossover_found is False
     assert result.crossover_value is None
+    assert result.crossing_status in {"no_crossing", "no_crossing_non_monotonic"}
     assert "No crossover" in result.message
 
 
@@ -270,3 +390,6 @@ def test_breakeven_writes_full_artifact_package(tmp_path: Path) -> None:
     assert report["parameter_name"] == "coating.useful_life_years"
     assert report["scenario_a"] == "coating"
     assert report["scenario_b"] == "baseline"
+    assert report["objective_metric"] == "net_annual_benefit_sar"
+    assert "crossing_status" in report
+    assert "evaluations" in report
