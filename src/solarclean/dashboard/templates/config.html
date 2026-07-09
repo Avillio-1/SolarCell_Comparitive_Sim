@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} · SolarClean-DT{% endblock %}
+{% block content %}
+
+<div class="run-head">
+  <h1 class="mono">configs/{{ name }}</h1>
+  <a class="quiet-link" href="/">back to runs</a>
+</div>
+
+<section class="panel">
+  <p class="hint">Edits are checked with the same loader the simulator uses, so anything that
+  validates here will load for a run. Saving never overwrites the original file — pick a new
+  name and it lands in <code>configs/</code>.</p>
+  <textarea id="config-editor" class="mono" spellcheck="false"
+            data-name="{{ name }}">{{ content }}</textarea>
+  <div class="field-row">
+    <button class="primary" id="validate-btn" type="button">Validate</button>
+    <label class="wide"><span>Save as</span>
+      <input id="save-as" type="text" placeholder="my_variant.yaml"></label>
+    <button id="save-btn" type="button">Validate and save</button>
+  </div>
+  <p id="config-status" role="status"></p>
+</section>
+
+{% endblock %}

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}SolarClean-DT{% endblock %}</title>
+<link rel="stylesheet" href="/static/dashboard.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/">SolarClean-DT</a>
+  <span class="topbar-note">10,000-panel farm &middot; Riyadh &middot; cleaning strategy comparator</span>
+  <nav><a href="/">Runs</a></nav>
+</header>
+<main>
+{% block content %}{% endblock %}
+</main>
+<footer>
+  Results are read directly from <code>outputs/&lt;run_id&gt;/</code>. The dashboard performs no
+  scientific or financial calculation; a displayed number always has a file it came from.
+</footer>
+<script src="/static/dashboard.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>
