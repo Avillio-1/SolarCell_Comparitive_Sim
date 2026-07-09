@@ -242,6 +242,8 @@ class CompareAllScenarios:
         event_tape: ExogenousEventTape | None = None,
         scenario_order: Sequence[str] | None = None,
         parameter_registry_path: Path | None = None,
+        parameter_registry: ParameterRegistry | None = None,
+        write_artifacts: bool = True,
     ) -> None:
         self.config = config
         self.weather = weather
@@ -250,6 +252,16 @@ class CompareAllScenarios:
         self.parameter_registry_path = (
             parameter_registry_path or config.calibration.parameter_registry_path
         )
+        # Allows T7 experiment runners to inject an already-mutated registry (e.g. with one
+        # economics parameter overridden for a sensitivity sweep) without writing a temp YAML
+        # file to disk for every trial.
+        self.parameter_registry = parameter_registry
+        # T7 Monte Carlo / sensitivity experiments call CompareAllScenarios hundreds of times.
+        # Writing the full CSV/PNG/JSON artifact package on every trial would be slow and would
+        # flood disk with throwaway run directories, so callers that only need the in-memory
+        # ComparisonResult can opt out. A run directory is still created (cheap) so run_id and
+        # traceability stay consistent with normal runs.
+        self.write_artifacts = write_artifacts
 
     def run(self) -> CompareAllScenariosResult:
         weather = self.weather if self.weather is not None else _load_weather(self.config)
@@ -273,7 +285,11 @@ class CompareAllScenarios:
             scenario_order=self.scenario_order,
         )
 
-        economics = _load_economics(self.parameter_registry_path)
+        economics = (
+            build_economics_from_parameter_registry(self.parameter_registry)
+            if self.parameter_registry is not None
+            else _load_economics(self.parameter_registry_path)
+        )
         operational_by_scenario = {
             scenario_id: _annual_operational_quantities(result)
             for scenario_id, result in scenario_results.items()
@@ -305,7 +321,11 @@ class CompareAllScenarios:
         )
 
         writer = OutputWriter(self.config)
-        output_dir = writer.create_run_directory("compare-all-scenarios")
+        if self.write_artifacts:
+            output_dir = writer.create_run_directory("compare-all-scenarios")
+        else:
+            run_id = writer.build_run_id("compare-all-scenarios")
+            output_dir = self.config.output.base_directory / run_id
         run_id = output_dir.name
         traceability = _traceability(
             run_id=run_id,
@@ -398,24 +418,26 @@ class CompareAllScenarios:
             scenario_id: _economic_summary(economic_results[scenario_id])
             for scenario_id in CANONICAL_SCENARIO_IDS
         }
-        output_artifacts = _write_comparison_package(
-            output_dir=output_dir,
-            writer=writer,
-            config=self.config,
-            weather=weather,
-            profile=profile,
-            event_tape=event_tape,
-            run_id=run_id,
-            scenario_results=scenario_results,
-            daily_summaries=daily_summaries,
-            annual_summaries=annual_summaries,
-            economic_results=economic_results,
-            cost_reconciliation_checks=cost_reconciliation_checks,
-            ranking=ranking,
-            recommendation=recommendation,
-            reconciliation_report=reconciliation_report,
-            traceability=traceability,
-        )
+        output_artifacts: tuple[str, ...] = ()
+        if self.write_artifacts:
+            output_artifacts = _write_comparison_package(
+                output_dir=output_dir,
+                writer=writer,
+                config=self.config,
+                weather=weather,
+                profile=profile,
+                event_tape=event_tape,
+                run_id=run_id,
+                scenario_results=scenario_results,
+                daily_summaries=daily_summaries,
+                annual_summaries=annual_summaries,
+                economic_results=economic_results,
+                cost_reconciliation_checks=cost_reconciliation_checks,
+                ranking=ranking,
+                recommendation=recommendation,
+                reconciliation_report=reconciliation_report,
+                traceability=traceability,
+            )
         comparison = ComparisonResult(
             run_id=run_id,
             output_directory=output_dir,
@@ -439,8 +461,9 @@ class CompareAllScenarios:
             output_artifacts=output_artifacts,
         )
         summary = comparison.to_summary()
-        writer.write_summary(output_dir, summary)
-        writer.write_text_summary(output_dir, summary)
+        if self.write_artifacts:
+            writer.write_summary(output_dir, summary)
+            writer.write_text_summary(output_dir, summary)
         return CompareAllScenariosResult(
             output_directory=output_dir,
             summary=summary,

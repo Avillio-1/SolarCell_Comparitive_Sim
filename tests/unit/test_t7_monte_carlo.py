@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pandas as pd
+import pytest
+
+from solarclean.application.comparison import CANONICAL_SCENARIO_IDS
+from solarclean.application.monte_carlo import MonteCarloExperiment
+from solarclean.config.loader import load_config
+
+
+def _fixture_config(output_dir: Path):
+    return load_config(
+        Path("configs/offline_fixture.yaml"),
+        overrides={"output": {"base_directory": output_dir}},
+    )
+
+
+def test_monte_carlo_requires_at_least_two_trials(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="at least 2"):
+        MonteCarloExperiment(_fixture_config(tmp_path), trial_count=1)
+
+
+def test_monte_carlo_is_reproducible_for_a_fixed_base_seed(tmp_path: Path) -> None:
+    config = _fixture_config(tmp_path)
+    first = MonteCarloExperiment(config, trial_count=5, base_seed=7, write_artifacts=False).run()
+    second = MonteCarloExperiment(config, trial_count=5, base_seed=7, write_artifacts=False).run()
+
+    seeds_first = [trial.seed for trial in first.result.trials]
+    seeds_second = [trial.seed for trial in second.result.trials]
+    assert seeds_first == seeds_second
+
+    benefits_first = [trial.net_annual_benefit_sar for trial in first.result.trials]
+    benefits_second = [trial.net_annual_benefit_sar for trial in second.result.trials]
+    assert benefits_first == benefits_second
+
+
+def test_monte_carlo_different_base_seeds_can_produce_different_trial_seeds(
+    tmp_path: Path,
+) -> None:
+    config = _fixture_config(tmp_path)
+    a = MonteCarloExperiment(config, trial_count=5, base_seed=1, write_artifacts=False).run()
+    b = MonteCarloExperiment(config, trial_count=5, base_seed=2, write_artifacts=False).run()
+    seeds_a = [trial.seed for trial in a.result.trials]
+    seeds_b = [trial.seed for trial in b.result.trials]
+    assert seeds_a != seeds_b
+
+
+def test_monte_carlo_writes_full_artifact_package(tmp_path: Path) -> None:
+    config = _fixture_config(tmp_path)
+    outcome = MonteCarloExperiment(config, trial_count=6, base_seed=42).run()
+    result = outcome.result
+
+    assert result.trial_count == 6
+    assert result.reconciled_trial_count + result.failed_trial_count == result.trial_count
+    assert set(result.scenario_summaries) == set(CANONICAL_SCENARIO_IDS)
+
+    expected_artifacts = {
+        "config_resolved.yaml",
+        "monte_carlo_trials.csv",
+        "monte_carlo_summary.json",
+        "monte_carlo_outcome_distributions.png",
+        "monte_carlo_win_probability.png",
+        "summary.json",
+        "summary.txt",
+    }
+    assert expected_artifacts <= {path.name for path in result.output_directory.iterdir()}
+
+    trials = pd.read_csv(result.output_directory / "monte_carlo_trials.csv")
+    assert len(trials) == 6
+    for scenario_id in CANONICAL_SCENARIO_IDS:
+        assert f"{scenario_id}_net_annual_benefit_sar" in trials.columns
+
+    summary = json.loads(
+        (result.output_directory / "monte_carlo_summary.json").read_text(encoding="utf-8")
+    )
+    assert summary["trial_count"] == 6
+    assert set(summary["scenario_summaries"]) == set(CANONICAL_SCENARIO_IDS)
+
+
+def test_monte_carlo_win_probabilities_sum_to_one_when_fully_reconciled(tmp_path: Path) -> None:
+    config = _fixture_config(tmp_path)
+    outcome = MonteCarloExperiment(config, trial_count=8, base_seed=99, write_artifacts=False).run()
+    result = outcome.result
+    if result.reconciled_trial_count == 0:
+        pytest.skip("no reconciled trials to check win probabilities against")
+    total_probability = sum(
+        summary.win_probability for summary in result.scenario_summaries.values()
+    )
+    assert total_probability == pytest.approx(1.0)
+
+
+def test_monte_carlo_no_artifact_mode_does_not_create_output_directory(tmp_path: Path) -> None:
+    config = _fixture_config(tmp_path)
+    outcome = MonteCarloExperiment(config, trial_count=3, base_seed=5, write_artifacts=False).run()
+    assert not outcome.output_directory.exists()
+    assert outcome.result.output_artifacts == ()

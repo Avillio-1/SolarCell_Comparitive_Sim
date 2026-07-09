@@ -8,6 +8,7 @@ from solarclean.domain.economics.adapters import (
     build_reactive_economic_inputs,
 )
 from solarclean.domain.economics.calibration import (
+    REQUIRED_ECONOMICS_PARAMETER_KEYS,
     EconomicsCalibration,
     EconomicsCalibrationWarning,
     RegistryParameterMetadata,
@@ -44,6 +45,7 @@ from solarclean.domain.economics.summary import (
 )
 
 __all__ = [
+    "REQUIRED_ECONOMICS_PARAMETER_KEYS",
     "AnnualFinancialSummaryRow",
     "AnnualScenarioOutput",
     "CostComponent",
