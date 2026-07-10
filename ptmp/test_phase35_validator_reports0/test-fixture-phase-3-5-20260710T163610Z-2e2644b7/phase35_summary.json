@@ -1,0 +1,13 @@
+{
+  "annual_actual_energy_kwh": 27820.688750421545,
+  "annual_clean_energy_kwh": 28042.50025091375,
+  "capacity_factor_percent": 14.605468880684244,
+  "command": "validate-phase-3-5",
+  "event_tape_checksum": "a0048a6d35b3fd8b58cf9240ff4f844c0519735213d32c7562109359c6243493",
+  "farm_equivalence_passed": true,
+  "output_size_mb": 0.07819080352783203,
+  "peak_memory_mb": 0.47169017791748047,
+  "runtime_seconds": 0.15388050000183284,
+  "soiling_loss_percent": 0.7909833235535985,
+  "specific_yield_kwh_per_kwp": 7.010625062728437
+}

@@ -1,0 +1,19 @@
+{
+  "command": "break-even",
+  "crossing_status": "invalid_evaluation",
+  "crossover_found": false,
+  "crossover_value": null,
+  "crossover_values": [],
+  "invalid_evaluation_count": 9,
+  "likely_non_monotonic": false,
+  "message": "Break-even analysis refused because at least one evaluation did not reconcile at coating.useful_life_years=1 years. Failed checks: no_blocking_assumption_warnings, ranking_blocked_until_reconciliation_passes.",
+  "output_artifacts": [
+    "config_resolved.yaml",
+    "breakeven_report.json",
+    "breakeven_coating.useful_life_years.png"
+  ],
+  "parameter_name": "coating.useful_life_years",
+  "run_id": "test-fixture-break-even-20260710T163637Z-c0d65bfe",
+  "scenario_a": "coating",
+  "scenario_b": "baseline"
+}

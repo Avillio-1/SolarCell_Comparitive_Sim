@@ -6,17 +6,23 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from tests.config_factory import (
+    config_from_default,
+    endpoint_calibration_config,
+    fixture_config,
+    full_year_fixture_config,
+    kaust_strong_config,
+    paper_calibration_config,
+)
 
 from solarclean.application.use_cases import RunCoatingSimulation, _coating_summary
-from solarclean.config.loader import load_config
 from solarclean.domain.scenario.contracts import AnnualScenarioResult, DailyScenarioResult
 from solarclean.domain.simulation.baseline import BaselineSimulationResult
 
 
 def test_run_coating_writes_scenario_outputs() -> None:
-    config = load_config(
-        Path("configs/offline_fixture.yaml"),
-        overrides={"output": {"base_directory": Path("outputs/test-t3-coating")}},
+    config = fixture_config(
+        overrides={"output": {"base_directory": Path("outputs/test-t3-coating")}}
     )
 
     result = RunCoatingSimulation(config).run()
@@ -113,19 +119,16 @@ def test_run_coating_writes_scenario_outputs() -> None:
         assert persisted["coating_readiness"]["warnings"] == persisted["coating_warnings"]
 
 
-def test_coating_presets_load() -> None:
-    for path, preset in [
-        ("configs/coating_weak.yaml", "weak"),
-        ("configs/coating_central.yaml", "central"),
-        ("configs/coating_strong.yaml", "strong"),
-        ("configs/coating_paper_calibration.yaml", "paper_calibration"),
-        ("configs/coating_endpoint_calibration.yaml", "paper_endpoint_calibration"),
-        ("configs/coating_kaust_paper_strong.yaml", "kaust_paper_strong"),
+def test_default_and_test_calibration_presets_load() -> None:
+    for config, preset in [
+        (config_from_default(), "weak"),
+        (paper_calibration_config(), "paper_calibration"),
+        (endpoint_calibration_config(), "paper_endpoint_calibration"),
+        (kaust_strong_config(), "kaust_paper_strong"),
     ]:
-        config = load_config(Path(path))
         assert config.coating.preset == preset
         assert config.coating.costs.material_cost_per_m2 > 0.0
-    paper = load_config(Path("configs/coating_paper_calibration.yaml"))
+    paper = paper_calibration_config()
     assert paper.coating.physics.optical_transmittance_multiplier == pytest.approx(1.0)
     assert paper.coating.physics.source_optical_transmittance_absolute_fraction == pytest.approx(
         0.913
@@ -138,9 +141,8 @@ def test_coating_presets_load() -> None:
 
 
 def test_paper_calibration_reproduces_water_target() -> None:
-    config = load_config(
-        Path("configs/coating_paper_calibration.yaml"),
-        overrides={"output": {"base_directory": Path("outputs/test-t3-coating-calibration")}},
+    config = paper_calibration_config(
+        overrides={"output": {"base_directory": Path("outputs/test-t3-coating-calibration")}}
     )
 
     result = RunCoatingSimulation(config).run()
@@ -184,9 +186,8 @@ def test_paper_calibration_reproduces_water_target() -> None:
 
 
 def test_endpoint_calibration_reproduces_six_month_power_loss_targets() -> None:
-    config = load_config(
-        Path("configs/coating_endpoint_calibration.yaml"),
-        overrides={"output": {"base_directory": Path("outputs/test-t3-coating-endpoint")}},
+    config = endpoint_calibration_config(
+        overrides={"output": {"base_directory": Path("outputs/test-t3-coating-endpoint")}}
     )
 
     result = RunCoatingSimulation(config).run()
@@ -203,9 +204,8 @@ def test_endpoint_calibration_reproduces_six_month_power_loss_targets() -> None:
 
 
 def test_kaust_paper_strong_preset_improves_under_favorable_dew() -> None:
-    config = load_config(
-        Path("configs/coating_kaust_paper_strong.yaml"),
-        overrides={"output": {"base_directory": Path("outputs/test-t3-coating-kaust-strong")}},
+    config = kaust_strong_config(
+        overrides={"output": {"base_directory": Path("outputs/test-t3-coating-kaust-strong")}}
     )
 
     result = RunCoatingSimulation(config).run()
@@ -230,8 +230,7 @@ def test_kaust_paper_strong_preset_improves_under_favorable_dew() -> None:
 
 
 def test_kaust_paper_strong_preset_does_not_create_dew_cleaning_in_dry_weather() -> None:
-    config = load_config(
-        Path("configs/coating_kaust_paper_strong.yaml"),
+    config = kaust_strong_config(
         overrides={
             "weather": {"fixture_profile": "riyadh_dry"},
             "output": {"base_directory": Path("outputs/test-t3-coating-kaust-dry")},
@@ -248,15 +247,11 @@ def test_kaust_paper_strong_preset_does_not_create_dew_cleaning_in_dry_weather()
 
 def test_endpoint_calibration_rejects_clipping_soiling_floor() -> None:
     with pytest.raises(ValueError, match="soiling floor clips"):
-        load_config(
-            Path("configs/coating_endpoint_calibration.yaml"),
-            overrides={"soiling": {"minimum_soiling_ratio": 0.80}},
-        )
+        endpoint_calibration_config(overrides={"soiling": {"minimum_soiling_ratio": 0.80}})
 
 
 def test_cleanliness_improvement_vs_baseline_is_positive_in_dusty_case() -> None:
-    config = load_config(
-        Path("configs/offline_fixture.yaml"),
+    config = fixture_config(
         overrides={
             "output": {"base_directory": Path("outputs/test-t3-coating-dusty")},
             "soiling": {
@@ -288,7 +283,7 @@ def test_cleanliness_improvement_vs_baseline_is_positive_in_dusty_case() -> None
 
 
 def test_full_year_summary_reports_annual_period_metadata() -> None:
-    config = load_config(Path("configs/riyadh_2025.yaml"))
+    config = config_from_default()
     start = date(2025, 1, 1)
     dates = [start + timedelta(days=offset) for offset in range(365)]
     daily_results = tuple(
@@ -342,8 +337,7 @@ def test_full_year_summary_reports_annual_period_metadata() -> None:
 
 
 def test_coating_full_year_boundary_excludes_next_year_contamination_update() -> None:
-    config = load_config(
-        Path("configs/coating_central.yaml"),
+    config = full_year_fixture_config(
         overrides={
             "simulation": {
                 "start": "2025-01-01T00:00:00+03:00",

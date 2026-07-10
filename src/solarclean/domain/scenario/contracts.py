@@ -58,8 +58,8 @@ _EVENT_PHASE_ORDER: dict[str, int] = {
 _EVENT_TYPE_PHASES: dict[str, str] = {
     "dust_accumulation": "pre_generation_state",
     "heavy_dust_event": "pre_generation_state",
-    "partial_rain_cleaning": "pre_generation_state",
-    "full_rain_cleaning": "pre_generation_state",
+    "partial_rain_cleaning": "cleaning",
+    "full_rain_cleaning": "cleaning",
     "bird_dropping_event": "pre_generation_state",
     "reactive_inspection": "inspection",
     "reactive_cleaning_dispatch": "dispatch",
@@ -92,10 +92,27 @@ def _default_event_phase(event_type: str) -> str:
 class FrozenWeatherInput:
     _hourly: pd.DataFrame = field(repr=False)
     metadata: Mapping[str, object] = field(default_factory=dict)
+    _hourly_by_date: Mapping[date, pd.DataFrame] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "_hourly", self._hourly.copy(deep=True))
+        hourly = self._hourly.copy(deep=True)
+        object.__setattr__(self, "_hourly", hourly)
         object.__setattr__(self, "metadata", _freeze_mapping(self.metadata))
+        index = pd.DatetimeIndex(hourly.index)
+        object.__setattr__(
+            self,
+            "_hourly_by_date",
+            MappingProxyType(
+                {
+                    raw_day: frame.copy(deep=True)
+                    for raw_day, frame in hourly.groupby(index.date, sort=False)
+                }
+            ),
+        )
 
     @classmethod
     def from_dataset(cls, dataset: WeatherDataset) -> FrozenWeatherInput:
@@ -104,6 +121,12 @@ class FrozenWeatherInput:
     @property
     def hourly(self) -> pd.DataFrame:
         return self._hourly.copy(deep=True)
+
+    def for_day(self, day: date) -> pd.DataFrame:
+        frame = self._hourly_by_date.get(day)
+        if frame is None:
+            raise ValueError(f"missing hourly weather for {day.isoformat()}")
+        return frame.copy(deep=True)
 
     def to_dataset(self) -> WeatherDataset:
         return WeatherDataset(hourly=self.hourly, metadata=dict(self.metadata))
@@ -156,7 +179,10 @@ class ScenarioContext:
     metadata: Mapping[str, object] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "metadata", _freeze_mapping(self.metadata))
+        metadata = dict(self.metadata)
+        if self.event_tape is not None:
+            metadata.setdefault("event_tape_checksum", self.event_tape.checksum())
+        object.__setattr__(self, "metadata", _freeze_mapping(metadata))
 
     @classmethod
     def from_inputs(
@@ -219,7 +245,13 @@ class DomainEvent:
     def __post_init__(self) -> None:
         cohort_id = None if self.cohort_id is None else int(self.cohort_id)
         phase = self.event_phase or _default_event_phase(self.event_type)
-        effective_date = self.effective_for_energy_date or self.date
+        effective_date = self.effective_for_energy_date
+        if effective_date is None:
+            effective_date = (
+                self.date + dt.timedelta(days=1)
+                if phase in {"cleaning", "nighttime_condensation"}
+                else self.date
+            )
         object.__setattr__(self, "cohort_id", cohort_id)
         object.__setattr__(self, "metadata", _freeze_mapping(self.metadata))
         object.__setattr__(self, "event_sequence", int(self.event_sequence))

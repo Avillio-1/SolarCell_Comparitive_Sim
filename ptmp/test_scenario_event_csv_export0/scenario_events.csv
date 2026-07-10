@@ -1,0 +1,4 @@
+date,scenario_name,event_sequence,event_phase,effective_for_energy_date,event_type,magnitude,description,cohort_id,metadata
+2025-01-01,event_export_test,1,nighttime_condensation,2025-01-02,coating_condensation,12.5,Radiative-cooling coating condensed water.,,"{""potentially_collectable_liters"": 4.25}"
+2025-01-02,event_export_test,1,inspection,2025-01-02,reactive_inspection,1.0,Drone CV inspection of cohort.,28,"{""detected_dirty"": true, ""threshold"": 0.8}"
+2025-01-02,event_export_test,2,cleaning,2025-01-03,reactive_cleaning_action,1.0,Targeted cohort cleaning dispatched from CV inspection.,28,"{""cause"": ""inspection"", ""confidence"": 0.95}"

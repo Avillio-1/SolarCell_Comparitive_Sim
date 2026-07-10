@@ -1,0 +1,3 @@
+date,scenario_name,event_sequence,event_phase,effective_for_energy_date,event_type,magnitude,description,cohort_id,metadata
+2025-01-01,mock_future,1,post_day_state_update,2025-01-01,mock_future_marker,1.0,Mock strategy marker proving extension contract.,,"{""source"": ""contract-test""}"
+2025-01-02,mock_future,1,post_day_state_update,2025-01-02,mock_future_marker,1.0,Mock strategy marker proving extension contract.,,"{""source"": ""contract-test""}"

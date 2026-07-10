@@ -21,11 +21,15 @@ class CsvWeatherProvider:
         timestamp_column: str = "timestamp",
         column_mapping: dict[str, str] | None = None,
         unit_mapping: dict[str, str] | None = None,
+        missing_data_policy: str = "error",
     ) -> None:
         self.csv_path = csv_path
         self.timestamp_column = timestamp_column
         self.column_mapping = column_mapping or {}
         self.unit_mapping = unit_mapping or {}
+        if missing_data_policy not in {"error", "drop", "interpolate"}:
+            raise ValueError(f"unknown missing_data_policy: {missing_data_policy}")
+        self.missing_data_policy = missing_data_policy
 
     def load(self, request: WeatherRequest) -> WeatherDataset:
         if not self.csv_path.exists():
@@ -50,7 +54,12 @@ class CsvWeatherProvider:
         start = pd.Timestamp(request.start).tz_convert(request.target_timezone)
         end = pd.Timestamp(request.end).tz_convert(request.target_timezone)
         canonical = canonical.loc[(canonical.index >= start) & (canonical.index <= end)]
-        _validate_hourly_coverage(pd.DatetimeIndex(canonical.index), start, end, "CSV weather")
+        canonical = _apply_missing_data_policy(
+            canonical,
+            start=start,
+            end=end,
+            policy=self.missing_data_policy,
+        )
         metadata: dict[str, object] = {
             "provider": self.provider_name,
             "retrieval_timestamp": datetime.now(UTC).isoformat(),
@@ -69,6 +78,7 @@ class CsvWeatherProvider:
                 "precipitation_mm": "mm/hour",
             },
             "checksum": request.checksum(),
+            "missing_data_policy": self.missing_data_policy,
         }
         return WeatherDataset(hourly=canonical, metadata=metadata)
 
@@ -102,3 +112,30 @@ def _validate_hourly_coverage(
     if len(missing) > 0:
         sample = ", ".join(timestamp.isoformat() for timestamp in missing[:3])
         raise ValueError(f"{label} missing hourly timestamps: {sample}")
+
+
+def _apply_missing_data_policy(
+    frame: pd.DataFrame,
+    *,
+    start: pd.Timestamp,
+    end: pd.Timestamp,
+    policy: str,
+) -> pd.DataFrame:
+    if policy == "error":
+        _validate_hourly_coverage(pd.DatetimeIndex(frame.index), start, end, "CSV weather")
+        if frame.isna().any().any():
+            raise ValueError("CSV weather contains missing or non-numeric values")
+        return frame
+    if policy == "drop":
+        dropped = frame.dropna()
+        if dropped.empty:
+            raise ValueError("CSV weather has no complete rows after dropping missing data")
+        return dropped
+    expected = pd.date_range(start, end, freq="h")
+    interpolated = frame.reindex(expected).interpolate(
+        method="time",
+        limit_direction="both",
+    )
+    if interpolated.isna().any().any():
+        raise ValueError("CSV weather missing data could not be interpolated")
+    return interpolated

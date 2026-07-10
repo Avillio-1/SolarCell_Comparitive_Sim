@@ -38,6 +38,8 @@ NASA_PARAMETER_MAP: dict[str, str] = {
     "relative_humidity_pct": "RH2M",
     "precipitation_mm": "PRECTOTCORR",
 }
+NASA_PRECTOTCORR_SOURCE_UNIT = "mm/day"
+HOURS_PER_DAY = 24.0
 
 
 class NasaPowerWeatherProvider:
@@ -128,6 +130,11 @@ class NasaPowerWeatherProvider:
                         f"malformed NASA timestamp or value for {nasa_name}: {timestamp_text}"
                     ) from exc
             source_columns[canonical] = pd.Series(parsed, dtype=float)
+        _validate_precipitation_source_unit(payload)
+        # POWER's hourly endpoint reports PRECTOTCORR as a daily rate sampled
+        # each hour. Convert that rate to the precipitation accumulated during
+        # the hour before daily simulation inputs sum the hourly values.
+        source_columns["precipitation_mm"] /= HOURS_PER_DAY
         frame = pd.DataFrame(source_columns).sort_index()
         frame.index = pd.DatetimeIndex(frame.index).tz_convert(request.target_timezone)
         start = pd.Timestamp(request.start).tz_convert(request.target_timezone)
@@ -150,7 +157,7 @@ class NasaPowerWeatherProvider:
                 "T2M": "deg C",
                 "WS2M": "m/s",
                 "RH2M": "%",
-                "PRECTOTCORR": "mm/hour",
+                "PRECTOTCORR": NASA_PRECTOTCORR_SOURCE_UNIT,
             },
             "normalized_units": {
                 "ghi_w_m2": "W/m2",
@@ -164,6 +171,23 @@ class NasaPowerWeatherProvider:
             "checksum": request.checksum(),
         }
         return WeatherDataset(hourly=frame, metadata=metadata)
+
+
+def _validate_precipitation_source_unit(payload: dict[str, Any]) -> None:
+    parameter_metadata = payload.get("parameters")
+    if not isinstance(parameter_metadata, dict):
+        return
+    precipitation_metadata = parameter_metadata.get("PRECTOTCORR")
+    if not isinstance(precipitation_metadata, dict):
+        return
+    declared_unit = precipitation_metadata.get("units")
+    if declared_unit is None:
+        return
+    if str(declared_unit).strip().lower() != NASA_PRECTOTCORR_SOURCE_UNIT:
+        raise WeatherProviderError(
+            "NASA POWER PRECTOTCORR unit changed: "
+            f"expected {NASA_PRECTOTCORR_SOURCE_UNIT!r}, got {declared_unit!r}"
+        )
 
 
 def _validate_hourly_coverage(

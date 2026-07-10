@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from tests.config_factory import fixture_config
 
 import solarclean.application.sensitivity as sensitivity_module
 from solarclean.application.comparison import CANONICAL_SCENARIO_IDS
@@ -15,14 +16,10 @@ from solarclean.application.sensitivity import (
     TwoWaySensitivityExperiment,
     VariantResult,
 )
-from solarclean.config.loader import load_config
 
 
 def _fixture_config(output_dir: Path):
-    return load_config(
-        Path("configs/offline_fixture.yaml"),
-        overrides={"output": {"base_directory": output_dir}},
-    )
+    return fixture_config(overrides={"output": {"base_directory": output_dir}})
 
 
 # --- One-way ----------------------------------------------------------------
@@ -79,7 +76,7 @@ def test_oneway_default_parameter_set_uses_full_supported_catalog(tmp_path: Path
     assert len(names) >= 30  # 35 supported at time of writing; loose bound to avoid brittleness
 
 
-def test_oneway_coating_useful_life_years_only_moves_coating_scenario(tmp_path: Path) -> None:
+def test_oneway_partial_period_points_are_reported_invalid(tmp_path: Path) -> None:
     config = _fixture_config(tmp_path)
     outcome = OneWaySensitivityExperiment(
         config,
@@ -88,9 +85,8 @@ def test_oneway_coating_useful_life_years_only_moves_coating_scenario(tmp_path: 
         write_artifacts=False,
     ).run()
     swing = outcome.result.parameter_results[0].swing_sar
-    assert swing["coating"] > 0
-    assert swing["baseline"] == pytest.approx(0.0)
-    assert swing["reactive"] == pytest.approx(0.0)
+    assert swing == {"baseline": 0.0, "reactive": 0.0, "coating": 0.0}
+    assert all(not point.reconciled for point in outcome.result.parameter_results[0].points)
 
 
 def test_oneway_writes_full_artifact_package(tmp_path: Path) -> None:
@@ -203,7 +199,7 @@ def test_twoway_writes_full_artifact_package(tmp_path: Path) -> None:
     )
     assert summary["parameter_a"] == "soiling.base_daily_loss_fraction"
     assert summary["parameter_b"] == "coating.useful_life_years"
-    assert summary["failed_grid_point_count"] == 0
+    assert summary["failed_grid_point_count"] == 9
 
 
 # --- Break-even -----------------------------------------------------------
@@ -336,9 +332,7 @@ def test_breakeven_refuses_unreconciled_evaluations(
     assert result.evaluations[0].failed_reconciliation_checks
 
 
-def test_breakeven_reports_no_crossover_when_one_scenario_dominates(tmp_path: Path) -> None:
-    # On the 2-day offline fixture, coating's capex overwhelms any benefit within the
-    # registry's useful_life_years range, so baseline should dominate throughout.
+def test_breakeven_refuses_partial_period_economics(tmp_path: Path) -> None:
     config = _fixture_config(tmp_path)
     outcome = BreakEvenExperiment(
         config,
@@ -350,8 +344,8 @@ def test_breakeven_reports_no_crossover_when_one_scenario_dominates(tmp_path: Pa
     result = outcome.result
     assert result.crossover_found is False
     assert result.crossover_value is None
-    assert result.crossing_status in {"no_crossing", "no_crossing_non_monotonic"}
-    assert "No crossover" in result.message
+    assert result.crossing_status == "invalid_evaluation"
+    assert "did not reconcile" in result.message
 
 
 def test_breakeven_evaluations_are_bounded_by_max_evaluations(tmp_path: Path) -> None:

@@ -21,17 +21,10 @@ Each parameter record contains:
 - `status`: `validated`, `provisional`, `blocked`, or `unsourced`.
 - `rationale`, `limitations`, and `responsible_module_or_owner`.
 
-## Current Presets
+## Current Configuration
 
-The strict production model currently accepts only existing sections such as `soiling`,
-`rainfall_cleaning`, `bird_droppings`, and `farm`. The accepted overlays are:
-
-- `configs/calibration/low.yaml`
-- `configs/calibration/central.yaml`
-- `configs/calibration/high.yaml`
-
-These overlays are intentionally valid `SolarCleanConfig` overrides. They do not include
-future `reactive_cv`, `coating`, or `economics` sections because those models do not exist yet.
+`configs/default.yaml` is the sole runtime configuration. Low, central, and high values remain
+in the parameter registry for sensitivity experiments; they are not duplicated as YAML overlays.
 
 ## Future Paths
 
@@ -72,10 +65,10 @@ unsourced values. `economics.drone_equipment_cost_sar` is exposed as a traceable
 not converted into a flight-hour rate, because the registry does not define utilization or
 allocation assumptions.
 
-To exercise current presets through production models, run:
+To sweep registered low-to-high ranges through production models, run:
 
 ```powershell
-python scripts/calibration/run_preset_sensitivity.py --base-config configs/offline_fixture.yaml --preset-dir configs/calibration --dry-run
+solarclean sensitivity-oneway --config configs/default.yaml --parameter soiling.base_daily_loss_fraction
 ```
 
-Remove `--dry-run` to call `solarclean.application.phase35.Phase35Validator`.
+Use additional repeatable `--parameter` options or omit them to sweep every supported parameter.

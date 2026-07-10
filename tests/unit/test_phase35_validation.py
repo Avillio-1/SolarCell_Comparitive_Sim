@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.config_factory import fixture_config
 from tests.unit.test_weather import _request
 
 from solarclean.application.phase35 import (
@@ -9,7 +10,6 @@ from solarclean.application.phase35 import (
     validate_farm_equivalence,
     validate_weather_dataset,
 )
-from solarclean.config.loader import load_config
 from solarclean.config.models import FarmConfig
 from solarclean.infrastructure.pvlib_adapter.pvwatts import PVWattsPowerModel
 from solarclean.infrastructure.weather.fixture import FixtureWeatherProvider
@@ -34,9 +34,7 @@ def test_weather_validation_reports_timestamps_units_ranges_and_checksum() -> No
 
 
 def test_phase35_validator_reports_energy_soiling_events_and_outputs(tmp_path: Path) -> None:
-    config = load_config(
-        Path("configs/offline_fixture.yaml"), overrides={"output": {"base_directory": tmp_path}}
-    )
+    config = fixture_config(overrides={"output": {"base_directory": tmp_path}})
 
     result = Phase35Validator(config).run()
 

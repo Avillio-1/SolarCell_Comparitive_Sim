@@ -39,6 +39,8 @@ def test_first_inspection_day_index_shifts_the_cycle() -> None:
         _config(interval_days=4, first_inspection_day_index=2), total_cohorts=8
     )
     # The configured offset day starts group 0 of the rotation.
+    assert scheduler.due_cohorts(0).due_cohort_ids == ()
+    assert scheduler.due_cohorts(1).due_cohort_ids == ()
     assert scheduler.due_cohorts(2).due_cohort_ids == (0, 4)
     # The cycle repeats every interval_days afterwards.
     assert scheduler.due_cohorts(2).due_cohort_ids == scheduler.due_cohorts(6).due_cohort_ids

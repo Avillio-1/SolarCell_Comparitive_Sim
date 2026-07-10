@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import timedelta
 from types import MappingProxyType
-from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -19,7 +19,12 @@ from solarclean.domain.contamination.soiling import (
     KimberStyleSoilingModel,
     SimulationEvent,
 )
-from solarclean.domain.farm.representation import CohortFarm, CohortState, FarmState
+from solarclean.domain.farm.representation import (
+    CohortFarm,
+    CohortState,
+    FarmState,
+    advance_dust_ratio,
+)
 from solarclean.domain.reactive_cv.crew import CleaningCrew
 from solarclean.domain.reactive_cv.dispatch import (
     DispatchSignal,
@@ -100,6 +105,8 @@ class ReactiveCVStrategy:
         self.soiling_model = KimberStyleSoilingModel(soiling, rainfall)
         self.birds = birds
         self.farm_config = farm
+        if farm.representation != "cohort":
+            raise ValueError("reactive CV requires farm.representation='cohort'")
         self.farm = CohortFarm(farm, birds)
         self.perfect_information = perfect_information
         self.name = name or (
@@ -165,7 +172,7 @@ class ReactiveCVStrategy:
             daily_events=tuple(update.events),
             soiling=self.soiling_config,
             rainfall=self.rainfall_config,
-            precipitation_mm=day_input.environment.precipitation_mm,
+            precipitation_mm=0.0,
             variation_fraction=self.farm_config.cohort_soiling_variation_fraction,
             rng=rng,
             cohort_variation_multipliers=dict(day_input.event_inputs.cohort_variation_multipliers)
@@ -174,7 +181,7 @@ class ReactiveCVStrategy:
         )
         advanced = self.farm.advance_day(
             varied,
-            day_input.environment.precipitation_mm,
+            0.0,
             rng,
             dict(day_input.event_inputs.bird_coverage_additions)
             if day_input.event_inputs is not None
@@ -184,12 +191,19 @@ class ReactiveCVStrategy:
             DomainEvent.from_simulation_event(event, scenario_name=self.name)
             for event in advanced.events
         )
-        true_cohorts = {cohort.cohort_id: cohort for cohort in advanced.state.cohorts}
+        energy_cohorts = tuple(advanced.state.cohorts)
+        rain_state = self.farm.apply_rain_cleaning(
+            advanced.state,
+            day_input.environment.precipitation_mm,
+            soiling=self.soiling_config,
+            rainfall=self.rainfall_config,
+        )
+        true_cohorts = {cohort.cohort_id: cohort for cohort in rain_state.cohorts}
 
         # 2. Which cohorts are due for inspection today, and can the drone fly.
         scheduled_due = self.scheduler.due_cohorts(day_input.day_index).due_cohort_ids
         due = _merge_unique(typed_state.inspection_backlog, scheduled_due)
-        hourly = _hourly_for_day(context.weather.hourly, day_input.date)
+        hourly = context.weather.for_day(day_input.date)
         wind_speed = float(hourly["wind_speed_m_s"].max()) if not hourly.empty else 0.0
         flight_plan = self.drone_fleet.plan_flights(
             due,
@@ -262,7 +276,15 @@ class ReactiveCVStrategy:
             )
         )
 
-        # 5. Crew cleans selected cohorts, mutating true state.
+        # 5. Today's generation uses the pre-clean state. Inspections and crew
+        # actions occur after the modeled generation phase and affect tomorrow.
+        farm_energy = self.farm.calculate_daily_energy(
+            FarmState(date=day_input.date, cohorts=list(energy_cohorts)),
+            day_input.clean_energy_per_panel_kwh,
+        )
+        actual_energy = min(day_input.clean_energy_kwh, max(0.0, farm_energy.actual_energy_kwh))
+
+        # 6. Crew cleans selected cohorts, mutating the next-day true state.
         cleaning_pass = _apply_cleaning_pass(
             day=day_input.date,
             to_clean_ids=decision.to_clean_ids,
@@ -278,14 +300,7 @@ class ReactiveCVStrategy:
         true_cohorts = cleaning_pass.true_cohorts
         events.extend(cleaning_pass.events)
 
-        next_cohorts = tuple(true_cohorts[cohort.cohort_id] for cohort in advanced.state.cohorts)
-
-        # 6. Energy from updated true state (same formula as baseline/CohortFarm).
-        farm_energy = self.farm.calculate_daily_energy(
-            FarmState(date=day_input.date, cohorts=list(next_cohorts)),
-            day_input.clean_energy_per_panel_kwh,
-        )
-        actual_energy = min(day_input.clean_energy_kwh, max(0.0, farm_energy.actual_energy_kwh))
+        next_cohorts = tuple(true_cohorts[cohort.cohort_id] for cohort in rain_state.cohorts)
 
         # 7. Confusion-matrix counters for offline detection-performance evaluation
         # (never fed back into dispatch -- see metrics.py).
@@ -327,7 +342,8 @@ class ReactiveCVStrategy:
             ),
             events=tuple(events),
             extensions={
-                "average_dust_soiling_ratio": _average_dust(next_cohorts),
+                "average_dust_soiling_ratio": _average_dust(energy_cohorts),
+                "next_day_average_dust_soiling_ratio": _average_dust(next_cohorts),
                 "queue_length": len(decision.updated_queue),
                 "weather_cancelled_flight": flight_plan.weather_cancelled,
                 "flights_flown": flight_plan.flights_flown,
@@ -379,9 +395,7 @@ class ReactiveCVStrategy:
                 ),
                 "dirty_cleaning_count": cleaning_pass.dirty_cleaning_count,
                 "false_positive_cleaning_count": cleaning_pass.false_positive_cleaning_count,
-                "event_tape_checksum": (
-                    context.event_tape.checksum() if context.event_tape is not None else ""
-                ),
+                "event_tape_checksum": str(context.metadata.get("event_tape_checksum", "")),
             },
         )
         next_state = ReactiveScenarioState(
@@ -628,6 +642,7 @@ def _cleaning_events(
                 cause=cause,
                 queue_age_days=queue_age_days,
             ),
+            effective_for_energy_date=event_day + timedelta(days=1),
         ),
         DomainEvent(
             date=event_day,
@@ -646,6 +661,7 @@ def _cleaning_events(
                 water_liters=water_liters,
                 false_positive_cleaning=false_positive_cleaning,
             ),
+            effective_for_energy_date=event_day + timedelta(days=1),
         ),
     ]
 
@@ -659,8 +675,9 @@ def _dispatch_id(day: object, cohort_id: int) -> str:
 
 
 def _contamination_loss_fraction(cohort: CohortState) -> float:
-    dust_loss = max(0.0, 1.0 - cohort.dust_soiling_ratio)
-    return max(0.0, min(1.0, dust_loss + cohort.bird_drop_loss_fraction))
+    dust_ratio = max(0.0, min(1.0, cohort.dust_soiling_ratio))
+    bird_retained_ratio = 1.0 - max(0.0, min(1.0, cohort.bird_drop_loss_fraction))
+    return max(0.0, min(1.0, 1.0 - dust_ratio * bird_retained_ratio))
 
 
 def _contamination_loss_kwh(
@@ -906,18 +923,22 @@ def _advance_dust_for_farm(
     )
     cohorts: list[CohortState] = []
     for cohort in state.cohorts:
-        ratio = cohort.dust_soiling_ratio - daily_loss - dust_event_loss
-        ratio = max(soiling.minimum_soiling_ratio, min(1.0, ratio))
-        if precipitation_mm >= rainfall.full_rain_cleaning_threshold_mm:
-            ratio += (1.0 - ratio) * rainfall.full_rain_cleaning_efficiency
-        elif precipitation_mm >= rainfall.partial_rain_threshold_mm:
-            ratio += (1.0 - ratio) * rainfall.partial_rain_cleaning_efficiency
-        ratio = max(soiling.minimum_soiling_ratio, min(1.0, ratio))
         if cohort_variation_multipliers is not None:
-            ratio *= cohort_variation_multipliers.get(cohort.cohort_id, 1.0)
+            variation = cohort_variation_multipliers.get(cohort.cohort_id, 1.0)
         elif variation_fraction > 0:
-            ratio *= float(rng.normal(1.0, variation_fraction))
-        cohorts.append(replace(cohort, dust_soiling_ratio=max(0.0, min(1.0, ratio))))
+            variation = max(0.0, float(rng.normal(1.0, variation_fraction)))
+        else:
+            variation = 1.0
+        ratio = advance_dust_ratio(
+            cohort.dust_soiling_ratio,
+            daily_loss_fraction=daily_loss,
+            dust_event_loss_fraction=dust_event_loss,
+            precipitation_mm=precipitation_mm,
+            soiling=soiling,
+            rainfall=rainfall,
+            cohort_variation_multiplier=variation,
+        )
+        cohorts.append(replace(cohort, dust_soiling_ratio=ratio))
     return FarmState(date=state.date, cohorts=cohorts)
 
 
@@ -972,8 +993,3 @@ def _count_actionable_observations(
         else:
             tn += 1
     return tp, fp, fn, tn, missed
-
-
-def _hourly_for_day(hourly: pd.DataFrame, day: object) -> pd.DataFrame:
-    frame = cast(pd.DataFrame, hourly.loc[pd.DatetimeIndex(hourly.index).date == day])
-    return frame

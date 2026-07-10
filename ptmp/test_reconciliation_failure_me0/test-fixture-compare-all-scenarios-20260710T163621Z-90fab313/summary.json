@@ -1,0 +1,39 @@
+{
+  "command": "compare-all-scenarios",
+  "event_tape_checksum": "a0048a6d35b3fd8b58cf9240ff4f844c0519735213d32c7562109359c6243493",
+  "output_artifacts": [
+    "config_resolved.yaml",
+    "weather_hourly.csv",
+    "clean_energy_hourly.csv",
+    "daily_clean_energy.csv",
+    "event_tape.json",
+    "comparison_metadata.json",
+    "metadata.json",
+    "scenario_daily_summary.csv",
+    "scenario_annual_summary.csv",
+    "scenario_cost_summary.csv",
+    "scenario_events.csv",
+    "scenario_ranking.json",
+    "recommendation.json",
+    "reconciliation_report.json",
+    "comparison_daily_energy.png",
+    "comparison_normalized_performance.png",
+    "comparison_daily_loss_percent.png",
+    "comparison_cumulative_energy.png",
+    "comparison_cumulative_loss.png",
+    "comparison_soiling_cleanliness.png",
+    "comparison_coating_diagnostics.png",
+    "comparison_annual_kpi_breakdown.png"
+  ],
+  "ranking_count": 0,
+  "reconciled": false,
+  "run_id": "test-fixture-compare-all-scenarios-20260710T163621Z-90fab313",
+  "scenario_ids": [
+    "baseline",
+    "reactive",
+    "coating"
+  ],
+  "tied_winners": [],
+  "weather_checksum": "2d12ae683afb3a01c63da4dfd8ab54476d2a4a63aae92d2caab864c8f98f709d",
+  "winner": null
+}

@@ -1,0 +1,10 @@
+{
+  "annual_actual_energy_kwh": 27820.688750421545,
+  "annual_clean_energy_kwh": 28042.50025091375,
+  "annual_soiling_loss_kwh": 221.81150049220378,
+  "annual_soiling_loss_percent": 0.7909833235535985,
+  "cohort_daily_rows": 200,
+  "command": "run-baseline",
+  "event_count": 13,
+  "farm_representation": "cohort"
+}

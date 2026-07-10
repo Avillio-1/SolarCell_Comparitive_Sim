@@ -1,0 +1,468 @@
+{
+  "failed_grid_point_count": 9,
+  "grid": [
+    {
+      "baseline_net_annual_benefit_sar": 5022.8667521023135,
+      "coating.useful_life_years_value": 1.0,
+      "coating_net_annual_benefit_sar": -417827.5564146324,
+      "failed_reconciliation_check_messages": [
+        "Comparison has blocking assumption warnings and cannot be ranked.",
+        "Ranking was not produced because reconciliation failed."
+      ],
+      "failed_reconciliation_check_names": [
+        "no_blocking_assumption_warnings",
+        "ranking_blocked_until_reconciliation_passes"
+      ],
+      "failed_reconciliation_checks": [
+        {
+          "details": {
+            "blocking_warning_codes": [
+              "simulation_period_not_full_year"
+            ],
+            "warning_codes": [
+              "non_live_weather_provider",
+              "fixture_weather_test_only",
+              "simulation_period_not_full_year",
+              "coating_costs_not_validated",
+              "coating_field_application_not_demonstrated",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter"
+            ],
+            "warning_count": 13
+          },
+          "message": "Comparison has blocking assumption warnings and cannot be ranked.",
+          "name": "no_blocking_assumption_warnings",
+          "passed": false
+        },
+        {
+          "details": {},
+          "message": "Ranking was not produced because reconciliation failed.",
+          "name": "ranking_blocked_until_reconciliation_passes",
+          "passed": false
+        }
+      ],
+      "reactive_net_annual_benefit_sar": -112609.70358830069,
+      "reconciled": false,
+      "soiling.base_daily_loss_fraction_value": 0.0005,
+      "winner": null
+    },
+    {
+      "baseline_net_annual_benefit_sar": 5022.8667521023135,
+      "coating.useful_life_years_value": 3.0,
+      "coating_net_annual_benefit_sar": -160609.77425593382,
+      "failed_reconciliation_check_messages": [
+        "Comparison has blocking assumption warnings and cannot be ranked.",
+        "Ranking was not produced because reconciliation failed."
+      ],
+      "failed_reconciliation_check_names": [
+        "no_blocking_assumption_warnings",
+        "ranking_blocked_until_reconciliation_passes"
+      ],
+      "failed_reconciliation_checks": [
+        {
+          "details": {
+            "blocking_warning_codes": [
+              "simulation_period_not_full_year"
+            ],
+            "warning_codes": [
+              "non_live_weather_provider",
+              "fixture_weather_test_only",
+              "simulation_period_not_full_year",
+              "coating_costs_not_validated",
+              "coating_field_application_not_demonstrated",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter"
+            ],
+            "warning_count": 13
+          },
+          "message": "Comparison has blocking assumption warnings and cannot be ranked.",
+          "name": "no_blocking_assumption_warnings",
+          "passed": false
+        },
+        {
+          "details": {},
+          "message": "Ranking was not produced because reconciliation failed.",
+          "name": "ranking_blocked_until_reconciliation_passes",
+          "passed": false
+        }
+      ],
+      "reactive_net_annual_benefit_sar": -112609.70358830069,
+      "reconciled": false,
+      "soiling.base_daily_loss_fraction_value": 0.0005,
+      "winner": null
+    },
+    {
+      "baseline_net_annual_benefit_sar": 5022.8667521023135,
+      "coating.useful_life_years_value": 7.0,
+      "coating_net_annual_benefit_sar": -87767.10947360148,
+      "failed_reconciliation_check_messages": [
+        "Comparison has blocking assumption warnings and cannot be ranked.",
+        "Ranking was not produced because reconciliation failed."
+      ],
+      "failed_reconciliation_check_names": [
+        "no_blocking_assumption_warnings",
+        "ranking_blocked_until_reconciliation_passes"
+      ],
+      "failed_reconciliation_checks": [
+        {
+          "details": {
+            "blocking_warning_codes": [
+              "simulation_period_not_full_year"
+            ],
+            "warning_codes": [
+              "non_live_weather_provider",
+              "fixture_weather_test_only",
+              "simulation_period_not_full_year",
+              "coating_costs_not_validated",
+              "coating_field_application_not_demonstrated",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter"
+            ],
+            "warning_count": 13
+          },
+          "message": "Comparison has blocking assumption warnings and cannot be ranked.",
+          "name": "no_blocking_assumption_warnings",
+          "passed": false
+        },
+        {
+          "details": {},
+          "message": "Ranking was not produced because reconciliation failed.",
+          "name": "ranking_blocked_until_reconciliation_passes",
+          "passed": false
+        }
+      ],
+      "reactive_net_annual_benefit_sar": -112609.70358830069,
+      "reconciled": false,
+      "soiling.base_daily_loss_fraction_value": 0.0005,
+      "winner": null
+    },
+    {
+      "baseline_net_annual_benefit_sar": 5019.081057845705,
+      "coating.useful_life_years_value": 1.0,
+      "coating_net_annual_benefit_sar": -417830.2064538254,
+      "failed_reconciliation_check_messages": [
+        "Comparison has blocking assumption warnings and cannot be ranked.",
+        "Ranking was not produced because reconciliation failed."
+      ],
+      "failed_reconciliation_check_names": [
+        "no_blocking_assumption_warnings",
+        "ranking_blocked_until_reconciliation_passes"
+      ],
+      "failed_reconciliation_checks": [
+        {
+          "details": {
+            "blocking_warning_codes": [
+              "simulation_period_not_full_year"
+            ],
+            "warning_codes": [
+              "non_live_weather_provider",
+              "fixture_weather_test_only",
+              "simulation_period_not_full_year",
+              "coating_costs_not_validated",
+              "coating_field_application_not_demonstrated",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter"
+            ],
+            "warning_count": 13
+          },
+          "message": "Comparison has blocking assumption warnings and cannot be ranked.",
+          "name": "no_blocking_assumption_warnings",
+          "passed": false
+        },
+        {
+          "details": {},
+          "message": "Ranking was not produced because reconciliation failed.",
+          "name": "ranking_blocked_until_reconciliation_passes",
+          "passed": false
+        }
+      ],
+      "reactive_net_annual_benefit_sar": -112613.4892825573,
+      "reconciled": false,
+      "soiling.base_daily_loss_fraction_value": 0.001,
+      "winner": null
+    },
+    {
+      "baseline_net_annual_benefit_sar": 5019.081057845705,
+      "coating.useful_life_years_value": 3.0,
+      "coating_net_annual_benefit_sar": -160612.42429512675,
+      "failed_reconciliation_check_messages": [
+        "Comparison has blocking assumption warnings and cannot be ranked.",
+        "Ranking was not produced because reconciliation failed."
+      ],
+      "failed_reconciliation_check_names": [
+        "no_blocking_assumption_warnings",
+        "ranking_blocked_until_reconciliation_passes"
+      ],
+      "failed_reconciliation_checks": [
+        {
+          "details": {
+            "blocking_warning_codes": [
+              "simulation_period_not_full_year"
+            ],
+            "warning_codes": [
+              "non_live_weather_provider",
+              "fixture_weather_test_only",
+              "simulation_period_not_full_year",
+              "coating_costs_not_validated",
+              "coating_field_application_not_demonstrated",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter"
+            ],
+            "warning_count": 13
+          },
+          "message": "Comparison has blocking assumption warnings and cannot be ranked.",
+          "name": "no_blocking_assumption_warnings",
+          "passed": false
+        },
+        {
+          "details": {},
+          "message": "Ranking was not produced because reconciliation failed.",
+          "name": "ranking_blocked_until_reconciliation_passes",
+          "passed": false
+        }
+      ],
+      "reactive_net_annual_benefit_sar": -112613.4892825573,
+      "reconciled": false,
+      "soiling.base_daily_loss_fraction_value": 0.001,
+      "winner": null
+    },
+    {
+      "baseline_net_annual_benefit_sar": 5019.081057845705,
+      "coating.useful_life_years_value": 7.0,
+      "coating_net_annual_benefit_sar": -87769.75951279442,
+      "failed_reconciliation_check_messages": [
+        "Comparison has blocking assumption warnings and cannot be ranked.",
+        "Ranking was not produced because reconciliation failed."
+      ],
+      "failed_reconciliation_check_names": [
+        "no_blocking_assumption_warnings",
+        "ranking_blocked_until_reconciliation_passes"
+      ],
+      "failed_reconciliation_checks": [
+        {
+          "details": {
+            "blocking_warning_codes": [
+              "simulation_period_not_full_year"
+            ],
+            "warning_codes": [
+              "non_live_weather_provider",
+              "fixture_weather_test_only",
+              "simulation_period_not_full_year",
+              "coating_costs_not_validated",
+              "coating_field_application_not_demonstrated",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter"
+            ],
+            "warning_count": 13
+          },
+          "message": "Comparison has blocking assumption warnings and cannot be ranked.",
+          "name": "no_blocking_assumption_warnings",
+          "passed": false
+        },
+        {
+          "details": {},
+          "message": "Ranking was not produced because reconciliation failed.",
+          "name": "ranking_blocked_until_reconciliation_passes",
+          "passed": false
+        }
+      ],
+      "reactive_net_annual_benefit_sar": -112613.4892825573,
+      "reconciled": false,
+      "soiling.base_daily_loss_fraction_value": 0.001,
+      "winner": null
+    },
+    {
+      "baseline_net_annual_benefit_sar": 5009.995391629842,
+      "coating.useful_life_years_value": 1.0,
+      "coating_net_annual_benefit_sar": -417836.56654788845,
+      "failed_reconciliation_check_messages": [
+        "Comparison has blocking assumption warnings and cannot be ranked.",
+        "Ranking was not produced because reconciliation failed."
+      ],
+      "failed_reconciliation_check_names": [
+        "no_blocking_assumption_warnings",
+        "ranking_blocked_until_reconciliation_passes"
+      ],
+      "failed_reconciliation_checks": [
+        {
+          "details": {
+            "blocking_warning_codes": [
+              "simulation_period_not_full_year"
+            ],
+            "warning_codes": [
+              "non_live_weather_provider",
+              "fixture_weather_test_only",
+              "simulation_period_not_full_year",
+              "coating_costs_not_validated",
+              "coating_field_application_not_demonstrated",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter"
+            ],
+            "warning_count": 13
+          },
+          "message": "Comparison has blocking assumption warnings and cannot be ranked.",
+          "name": "no_blocking_assumption_warnings",
+          "passed": false
+        },
+        {
+          "details": {},
+          "message": "Ranking was not produced because reconciliation failed.",
+          "name": "ranking_blocked_until_reconciliation_passes",
+          "passed": false
+        }
+      ],
+      "reactive_net_annual_benefit_sar": -112622.57494877317,
+      "reconciled": false,
+      "soiling.base_daily_loss_fraction_value": 0.0022,
+      "winner": null
+    },
+    {
+      "baseline_net_annual_benefit_sar": 5009.995391629842,
+      "coating.useful_life_years_value": 3.0,
+      "coating_net_annual_benefit_sar": -160618.78438918985,
+      "failed_reconciliation_check_messages": [
+        "Comparison has blocking assumption warnings and cannot be ranked.",
+        "Ranking was not produced because reconciliation failed."
+      ],
+      "failed_reconciliation_check_names": [
+        "no_blocking_assumption_warnings",
+        "ranking_blocked_until_reconciliation_passes"
+      ],
+      "failed_reconciliation_checks": [
+        {
+          "details": {
+            "blocking_warning_codes": [
+              "simulation_period_not_full_year"
+            ],
+            "warning_codes": [
+              "non_live_weather_provider",
+              "fixture_weather_test_only",
+              "simulation_period_not_full_year",
+              "coating_costs_not_validated",
+              "coating_field_application_not_demonstrated",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter"
+            ],
+            "warning_count": 13
+          },
+          "message": "Comparison has blocking assumption warnings and cannot be ranked.",
+          "name": "no_blocking_assumption_warnings",
+          "passed": false
+        },
+        {
+          "details": {},
+          "message": "Ranking was not produced because reconciliation failed.",
+          "name": "ranking_blocked_until_reconciliation_passes",
+          "passed": false
+        }
+      ],
+      "reactive_net_annual_benefit_sar": -112622.57494877317,
+      "reconciled": false,
+      "soiling.base_daily_loss_fraction_value": 0.0022,
+      "winner": null
+    },
+    {
+      "baseline_net_annual_benefit_sar": 5009.995391629842,
+      "coating.useful_life_years_value": 7.0,
+      "coating_net_annual_benefit_sar": -87776.11960685751,
+      "failed_reconciliation_check_messages": [
+        "Comparison has blocking assumption warnings and cannot be ranked.",
+        "Ranking was not produced because reconciliation failed."
+      ],
+      "failed_reconciliation_check_names": [
+        "no_blocking_assumption_warnings",
+        "ranking_blocked_until_reconciliation_passes"
+      ],
+      "failed_reconciliation_checks": [
+        {
+          "details": {
+            "blocking_warning_codes": [
+              "simulation_period_not_full_year"
+            ],
+            "warning_codes": [
+              "non_live_weather_provider",
+              "fixture_weather_test_only",
+              "simulation_period_not_full_year",
+              "coating_costs_not_validated",
+              "coating_field_application_not_demonstrated",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter",
+              "non_validated_economic_parameter"
+            ],
+            "warning_count": 13
+          },
+          "message": "Comparison has blocking assumption warnings and cannot be ranked.",
+          "name": "no_blocking_assumption_warnings",
+          "passed": false
+        },
+        {
+          "details": {},
+          "message": "Ranking was not produced because reconciliation failed.",
+          "name": "ranking_blocked_until_reconciliation_passes",
+          "passed": false
+        }
+      ],
+      "reactive_net_annual_benefit_sar": -112622.57494877317,
+      "reconciled": false,
+      "soiling.base_daily_loss_fraction_value": 0.0022,
+      "winner": null
+    }
+  ],
+  "grid_points": 9,
+  "parameter_a": "soiling.base_daily_loss_fraction",
+  "parameter_b": "coating.useful_life_years",
+  "run_id": "test-fixture-sensitivity-winner-map-20260710T163532Z-6d908896"
+}

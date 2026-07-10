@@ -1,0 +1,3 @@
+date,event_sequence,event_phase,effective_for_energy_date,event_type,magnitude,description,cohort_id,metadata
+2025-01-01,1,pre_generation_state,2025-01-01,dust_accumulation,0.01,Daily provisional dust accumulation applied.,,{}
+2025-01-01,2,pre_generation_state,2025-01-01,bird_dropping_event,0.1,Sparse cohort-level bird-dropping event.,28,{}

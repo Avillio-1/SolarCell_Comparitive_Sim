@@ -1,0 +1,23 @@
+{
+  "central_t6_failed_reconciliation_check_names": [
+    "no_blocking_assumption_warnings",
+    "ranking_blocked_until_reconciliation_passes"
+  ],
+  "central_t6_reconciled": false,
+  "central_t6_winner": null,
+  "command": "monte-carlo",
+  "failed_trial_count": 6,
+  "majority_trial_winner": null,
+  "output_artifacts": [
+    "config_resolved.yaml",
+    "monte_carlo_trials.csv",
+    "monte_carlo_summary.json",
+    "monte_carlo_outcome_distributions.png",
+    "monte_carlo_win_probability.png"
+  ],
+  "reconciled_trial_count": 0,
+  "run_id": "test-fixture-monte-carlo-20260710T163626Z-317abcfd",
+  "sampled_parameter_uncertainty": false,
+  "trial_count": 6,
+  "uncertainty_mode": "stochastic_seed_only"
+}

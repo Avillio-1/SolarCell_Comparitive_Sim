@@ -1,0 +1,3 @@
+date,scenario_name,clean_energy_kwh,actual_energy_kwh,allow_above_clean_reference,energy_loss_kwh,soiling_ratio,operational_inspections_count,operational_cleaning_actions_count,operational_coated_panel_count,operational_crew_hours,operational_drone_flight_hours,operational_water_liters,operational_energy_used_kwh,operational_opex_cost,operational_capex_cost,extension_mock_metric,extension_note
+2025-01-01,mock_future,14014.1881701050,14013.1881701050,False,1.0000000000,0.9999286437,1,0,0,0.0000000000,0.2500000000,0.0000000000,0.0000000000,0.0000000000,0.0000000000,0,kept
+2025-01-02,mock_future,14028.3120808088,14027.3120808088,False,1.0000000000,0.9999287156,1,0,0,0.0000000000,0.2500000000,0.0000000000,0.0000000000,0.0000000000,0.0000000000,1,kept

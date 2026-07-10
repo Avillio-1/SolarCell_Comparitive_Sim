@@ -5,19 +5,31 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from tests.config_factory import fixture_config
 
+from solarclean.application.comparison import CompareAllScenarios
 from solarclean.application.use_cases import (
     FetchWeather,
     RunBaselineSimulation,
     RunCleanPVSimulation,
 )
-from solarclean.config.loader import load_config
+
+
+def test_standalone_baseline_matches_comparison_event_tape_path(tmp_path: Path) -> None:
+    config = fixture_config(overrides={"output": {"base_directory": tmp_path}})
+
+    standalone = RunBaselineSimulation(config).run()
+    comparison = CompareAllScenarios(config, write_artifacts=False).run().comparison
+
+    assert (
+        standalone.summary["annual_actual_energy_kwh"]
+        == comparison.scenario_results["baseline"].annual_actual_energy_kwh
+    )
+    assert (standalone.output_directory / "event_tape.json").exists()
 
 
 def test_offline_fixture_runs_phase_1_and_writes_outputs(tmp_path: Path) -> None:
-    config = load_config(
-        Path("configs/offline_fixture.yaml"), overrides={"output": {"base_directory": tmp_path}}
-    )
+    config = fixture_config(overrides={"output": {"base_directory": tmp_path}})
 
     result = RunCleanPVSimulation(config).run()
 
@@ -31,9 +43,7 @@ def test_offline_fixture_runs_phase_1_and_writes_outputs(tmp_path: Path) -> None
 
 
 def test_offline_fixture_runs_baseline_and_cohort_phase_3(tmp_path: Path) -> None:
-    config = load_config(
-        Path("configs/offline_fixture.yaml"), overrides={"output": {"base_directory": tmp_path}}
-    )
+    config = fixture_config(overrides={"output": {"base_directory": tmp_path}})
     expected = json.loads(
         Path("data/fixtures/regression_expected_offline_summary.json").read_text(encoding="utf-8")
     )
@@ -56,9 +66,7 @@ def test_offline_fixture_runs_baseline_and_cohort_phase_3(tmp_path: Path) -> Non
 
 
 def test_fetch_weather_writes_normalized_fixture(tmp_path: Path) -> None:
-    config = load_config(
-        Path("configs/offline_fixture.yaml"), overrides={"output": {"base_directory": tmp_path}}
-    )
+    config = fixture_config(overrides={"output": {"base_directory": tmp_path}})
 
     result = FetchWeather(config).run()
 

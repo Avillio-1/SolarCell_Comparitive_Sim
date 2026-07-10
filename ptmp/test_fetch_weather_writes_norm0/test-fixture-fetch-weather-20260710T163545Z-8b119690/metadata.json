@@ -1,0 +1,103 @@
+{
+  "calibration": {
+    "assumption_set": "legacy_defaults",
+    "parameter_registry_path": "data\\calibration\\parameter_registry.yaml",
+    "source_note": null
+  },
+  "coating": {
+    "enabled": true,
+    "physics": {
+      "annual_degradation_fraction": 0.05,
+      "bird_removal_efficiency": 0.0,
+      "contact_angle_degrees": 167.0,
+      "daytime_cooling_fraction": 0.0,
+      "dust_accumulation_multiplier": 0.7,
+      "emissivity_atmospheric_window": 0.9,
+      "humidity_cooling_reference_pct": 80.0,
+      "initial_effectiveness_fraction": 1.0,
+      "max_bird_removal_fraction_per_day": 0.0,
+      "max_surface_cooling_c": 0.0,
+      "optical_transmittance_multiplier": 1.0,
+      "passive_cleaning_base_efficiency": 0.0,
+      "passive_cleaning_tilt_reference_degrees": 25.0,
+      "rain_shedding_base_efficiency": 0.0,
+      "rain_shedding_reference_mm": 5.0,
+      "sliding_angle_degrees": 3.0,
+      "source_optical_transmittance_absolute_fraction": null,
+      "wind_cooling_decay_per_m_s": 0.08,
+      "wind_shedding_base_efficiency": 0.0,
+      "wind_shedding_reference_m_s": 12.0,
+      "wind_shedding_threshold_m_s": 999.0
+    },
+    "preset": "central"
+  },
+  "command": "fetch-weather",
+  "created_at_utc": "2026-07-10T16:35:45.396390+00:00",
+  "git_commit": "d45146bbfe0bbb103eba6c7f7ef39e22f3f3d44b",
+  "git_worktree_dirty": true,
+  "project": "SolarClean-DT",
+  "simulation": {
+    "end": "2025-01-02T23:00:00+03:00",
+    "run_id_prefix": "test-fixture",
+    "start": "2025-01-01T00:00:00+03:00",
+    "target_timezone": "Asia/Riyadh"
+  },
+  "site": {
+    "elevation_m": null,
+    "latitude": 24.7136,
+    "longitude": 46.6753,
+    "name": "Riyadh",
+    "timezone": "Asia/Riyadh"
+  },
+  "solarclean_version": "0.1.0",
+  "weather": {
+    "cache_directory": "data\\cache\\weather",
+    "cache_enabled": true,
+    "column_mapping": {},
+    "fixture_profile": "riyadh_synthetic",
+    "local_csv_path": null,
+    "missing_data_policy": "error",
+    "provider": "fixture",
+    "timeout_seconds": 60.0,
+    "timestamp_column": "timestamp",
+    "unit_mapping": {}
+  },
+  "weather_metadata": {
+    "checksum": "96f3889004487aa55282d549fde5d650aab89f62cdff1e49953d266d2dba3fdb",
+    "coordinates": {
+      "latitude": 24.7136,
+      "longitude": 46.6753
+    },
+    "date_range": {
+      "end": "2025-01-02T23:00:00+03:00",
+      "start": "2025-01-01T00:00:00+03:00"
+    },
+    "fixture_profile": "riyadh_synthetic",
+    "normalized_units": {
+      "dhi_w_m2": "W/m2",
+      "dni_w_m2": "W/m2",
+      "ghi_w_m2": "W/m2",
+      "precipitation_mm": "mm/hour",
+      "relative_humidity_pct": "%",
+      "temp_air_c": "deg C",
+      "wind_speed_m_s": "m/s"
+    },
+    "provider": "fixture",
+    "retrieval_timestamp": "2026-07-10T16:35:45.388262+00:00",
+    "source_units": {
+      "irradiance": "synthetic riyadh_synthetic W/m2",
+      "precipitation": "synthetic riyadh_synthetic mm/hour",
+      "temperature": "synthetic riyadh_synthetic deg C"
+    },
+    "test_only": true,
+    "variables": [
+      "ghi_w_m2",
+      "dni_w_m2",
+      "dhi_w_m2",
+      "temp_air_c",
+      "wind_speed_m_s",
+      "relative_humidity_pct",
+      "precipitation_mm"
+    ]
+  }
+}

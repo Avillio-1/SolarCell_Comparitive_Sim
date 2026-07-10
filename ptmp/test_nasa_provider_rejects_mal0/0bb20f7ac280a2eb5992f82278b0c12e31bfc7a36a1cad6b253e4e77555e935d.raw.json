@@ -1,0 +1,9 @@
+{
+  "properties": {
+    "parameter": {
+      "T2M": {
+        "bad-date": 1
+      }
+    }
+  }
+}

@@ -8,9 +8,10 @@ from types import MappingProxyType
 import numpy as np
 import pandas as pd
 import pytest
+from tests.config_factory import fixture_config
 from tests.unit.test_weather import _request
 
-from solarclean.config.loader import load_config
+from solarclean.domain.contamination.soiling import SimulationEvent
 from solarclean.domain.events.tape import generate_event_tape
 from solarclean.domain.scenario.contracts import (
     DailyScenarioInput,
@@ -66,7 +67,7 @@ class MockFutureStrategy:
 def _scenario_context() -> ScenarioContext:
     weather = FixtureWeatherProvider().load(_request())
     clean = PVWattsPowerModel().calculate_hourly(weather, system=None)
-    config = load_config(Path("configs/offline_fixture.yaml"))
+    config = fixture_config()
     dates = [date.fromisoformat(str(day)) for day in clean.daily.index.astype(str)]
     event_tape = generate_event_tape(
         dates=dates,
@@ -100,6 +101,22 @@ def test_mock_future_strategy_runs_through_shared_engine() -> None:
         float(len(result.daily_results))
     )
     assert result.events[0].metadata["source"] == "contract-test"
+
+
+def test_rain_cleaning_event_is_effective_for_next_day_energy() -> None:
+    day = date(2025, 1, 1)
+    event = DomainEvent.from_simulation_event(
+        SimulationEvent(
+            date=day,
+            event_type="full_rain_cleaning",
+            magnitude=0.2,
+            description="End-of-day natural cleaning.",
+        ),
+        scenario_name="baseline",
+    )
+
+    assert event.event_phase == "cleaning"
+    assert event.effective_for_energy_date == date(2025, 1, 2)
 
 
 def test_shared_context_and_extensions_are_immutable_or_copy_protected() -> None:
@@ -172,9 +189,7 @@ def test_scenario_specific_fields_survive_common_result_handling() -> None:
 
 
 def test_output_writer_persists_generic_scenario_result(tmp_path: Path) -> None:
-    config = load_config(
-        Path("configs/offline_fixture.yaml"), overrides={"output": {"base_directory": tmp_path}}
-    )
+    config = fixture_config(overrides={"output": {"base_directory": tmp_path}})
     output_dir = OutputWriter(config).create_run_directory("scenario-contract")
     result = ScenarioSimulationEngine(MockFutureStrategy()).run(_scenario_context(), random_seed=1)
 

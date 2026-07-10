@@ -1,0 +1,37 @@
+command: run-reactive
+scenario_name: reactive_cv
+event_tape_checksum: d224c791e1a00773ac7df6a83179bb9193134dc1a6504349c045f5c6a7044679
+period_start_date: 2025-01-01
+period_end_date: 2025-01-02
+period_day_count: 2
+period_is_full_year: False
+annual_clean_energy_kwh: 28042.50025091375
+annual_baseline_actual_energy_kwh: 23835.419017741508
+annual_reactive_actual_energy_kwh: 23849.447329822313
+reactive_minus_baseline_energy_kwh: 14.028312080805335
+annual_energy_loss_kwh: 4193.052921091436
+annual_energy_loss_percent: 14.952493121417756
+total_inspections: 4.0
+total_cleaning_actions: 2.0
+total_crew_hours: 1.0
+total_drone_flight_hours: 0.6
+total_water_liters: 246.0
+total_operational_energy_used_kwh: 0.74
+weather_cancelled_flight_days: 0
+final_cleaning_queue_length: 0
+detection_performance: {'true_positive_count': 2, 'false_positive_count': 0, 'false_negative_count': 0, 'true_negative_count': 2, 'missed_image_count': 0, 'precision': 1.0, 'recall': 1.0, 'f1': 1.0, 'cv_observation_precision': 1.0, 'cv_observation_recall': 1.0, 'actionable_true_positive_count': 2, 'actionable_false_positive_count': 0, 'actionable_false_negative_count': 2, 'actionable_true_negative_count': 0, 'actionable_missed_image_count': 0, 'actionable_precision': 1.0, 'actionable_recall': 0.5, 'actionable_f1': 0.6666666666666666, 'system_dirty_cohort_count': 200, 'system_detected_dirty_count': 2, 'system_missed_dirty_count': 198, 'missed_contamination_count': 198, 'actionable_missed_contamination_count': 2, 'system_detection_recall': 0.01, 'system_dirty_cohort_recall': 0.01, 'dirty_cleaning_count': 2, 'false_positive_cleaning_count': 0, 'cleaning_precision': 1.0}
+missed_contamination_count_by_severity_bucket: {'low': 100, 'medium': 98, 'high': 0}
+missed_contamination_estimated_energy_impact_kwh: 1512.9721458743336
+missed_contamination_estimated_energy_impact_by_severity_bucket: {'low': 139.5817052040475, 'medium': 1373.3904406702861, 'high': 0.0}
+detected_contamination_estimated_energy_impact_kwh: 28.02837634020995
+detected_contamination_estimated_energy_impact_by_severity_bucket: {'low': 0.0, 'medium': 28.02837634020995, 'high': 0.0}
+recovered_loss_estimated_kwh: 15.417019378185852
+avoided_loss_estimated_kwh: 15.417019378185852
+diagnostic_energy_impact_basis: cohort clean energy times contamination loss fraction; missed impact uses audit true-state loss, detected impact uses controller-visible CV estimate
+cost_basis_available: False
+economics_owner: T4
+perfect_information_scenario_name: reactive_cv_perfect_information
+annual_perfect_information_actual_energy_kwh: 23849.447329822313
+cv_error_energy_cost_kwh: 0.0
+perfect_information_total_inspections: 4.0
+perfect_information_total_cleaning_actions: 2.0

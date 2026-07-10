@@ -1,0 +1,159 @@
+simulation:
+  start: '2025-01-01T00:00:00+03:00'
+  end: '2025-01-02T23:00:00+03:00'
+  target_timezone: Asia/Riyadh
+  run_id_prefix: test-fixture
+site:
+  name: Riyadh
+  latitude: 24.7136
+  longitude: 46.6753
+  timezone: Asia/Riyadh
+  elevation_m: null
+weather:
+  provider: fixture
+  fixture_profile: riyadh_synthetic
+  cache_enabled: true
+  cache_directory: data\cache\weather
+  local_csv_path: null
+  timestamp_column: timestamp
+  column_mapping: {}
+  unit_mapping: {}
+  missing_data_policy: error
+  timeout_seconds: 60.0
+pv_system:
+  panel_count: 10000
+  panel_capacity_w: 400.0
+  tilt_degrees: 25.0
+  azimuth_degrees: 180.0
+  inverter_efficiency: 0.96
+  dc_ac_ratio: 1.15
+  gamma_pdc_per_c: -0.0035
+  module_temperature_model: pvsyst_cell
+farm:
+  representation: cohort
+  total_panels: 10000
+  panel_capacity_w: 400.0
+  cohort_count: 100
+  panels_per_cohort: 100
+  store_cohort_daily_details: true
+  cohort_soiling_variation_fraction: 0.0
+soiling:
+  base_daily_soiling_loss_fraction: 0.0025
+  seasonal_multipliers:
+    '3': 1.1
+    '4': 1.15
+    '5': 1.1
+    '1': 1.0
+  dust_event_probability: 0.2
+  dust_event_loss_min_fraction: 0.005
+  dust_event_loss_max_fraction: 0.01
+  minimum_soiling_ratio: 0.7
+  stochastic_std_fraction: 0.0
+  random_seed: 42
+rainfall_cleaning:
+  partial_rain_threshold_mm: 1.0
+  full_rain_cleaning_threshold_mm: 5.0
+  partial_rain_cleaning_efficiency: 0.45
+  full_rain_cleaning_efficiency: 0.95
+bird_droppings:
+  event_probability_per_cohort_day: 0.02
+  coverage_min_fraction: 0.001
+  coverage_max_fraction: 0.004
+  loss_per_coverage_fraction: 0.8
+  rain_removal_efficiency: 0.3
+coating:
+  enabled: true
+  preset: central
+  physics:
+    optical_transmittance_multiplier: 1.0
+    source_optical_transmittance_absolute_fraction: null
+    emissivity_atmospheric_window: 0.9
+    contact_angle_degrees: 167.0
+    sliding_angle_degrees: 3.0
+    dust_accumulation_multiplier: 0.7
+    initial_effectiveness_fraction: 1.0
+    annual_degradation_fraction: 0.05
+    max_surface_cooling_c: 0.0
+    humidity_cooling_reference_pct: 80.0
+    wind_cooling_decay_per_m_s: 0.08
+    daytime_cooling_fraction: 0.0
+    passive_cleaning_base_efficiency: 0.0
+    passive_cleaning_tilt_reference_degrees: 25.0
+    wind_shedding_threshold_m_s: 999.0
+    wind_shedding_reference_m_s: 12.0
+    wind_shedding_base_efficiency: 0.0
+    rain_shedding_reference_mm: 5.0
+    rain_shedding_base_efficiency: 0.0
+    bird_removal_efficiency: 0.0
+    max_bird_removal_fraction_per_day: 0.0
+  water:
+    condensation_liters_per_m2_per_c_hour: 0.0
+    minimum_relative_humidity_pct: 100.0
+    collectable_water_efficiency_fraction: 0.0
+    actual_collection_efficiency_fraction: 0.0
+  deployment:
+    mode: factory_preinstall
+    area_per_panel_m2: 2.0
+    useful_life_years: 3.0
+    reapplication_supported: false
+    reapplication_interval_years: null
+    thermal_treatment_temperature_c: 400.0
+    thermal_treatment_duration_minutes: 30.0
+    field_application_demonstrated: false
+  costs:
+    material_loading_g_per_m2: 12.5
+    material_cost_per_m2: 15.0
+    surface_preparation_cost_per_m2: 2.0
+    application_labor_hours_per_m2: 0.03
+    process_energy_kwh_per_m2: 0.2
+    fixed_equipment_setup_cost: 10000.0
+    inspection_hours_per_year: 40.0
+    maintenance_cost_per_year: 20000.0
+    useful_life_years: 3.0
+    reapplication_interval_years: null
+    water_collection_infrastructure_cost: 0.0
+    assumption_level: central
+    source_status: provisional
+reactive_cv:
+  enabled: true
+  perfect_information_benchmark: true
+  inspection:
+    interval_days: 15
+    first_inspection_day_index: 0
+    dirty_soiling_ratio_threshold: 0.92
+  drone:
+    cohorts_per_flight: 5
+    flights_per_day: 2
+    flight_duration_minutes: 18.0
+    max_wind_speed_m_s: 12.0
+    max_precipitation_mm: 0.2
+    energy_kwh_per_flight: 0.35
+    compute_energy_kwh_per_image: 0.01
+  observer:
+    recall_fraction: 0.8
+    false_positive_rate: 0.05
+    missed_image_fraction: 0.03
+    base_confidence: 0.8
+    confidence_std_fraction: 0.1
+    severity_error_std_fraction: 0.15
+  dispatch:
+    estimated_loss_threshold_fraction: 0.04
+    confidence_threshold: 0.5
+    max_queue_age_days: 14
+  crew:
+    daily_capacity_cohorts: 6
+    setup_minutes_per_cohort: 8.0
+    cleaning_minutes_per_cohort: 25.0
+    water_liters_per_cohort: 150.0
+    dust_removal_efficiency: 0.92
+    bird_removal_efficiency: 0.95
+output:
+  base_directory: C:\Users\nawaf\OneDrive\Desktop\Projects\SolarCell_Comparitive_Sim\ptmp\test_breakeven_writes_full_art0
+  include_cohort_daily_details: true
+  csv_float_format: '%.10f'
+logging:
+  level: INFO
+calibration:
+  assumption_set: legacy_defaults
+  parameter_registry_path: data\calibration\parameter_registry.yaml
+  source_note: null

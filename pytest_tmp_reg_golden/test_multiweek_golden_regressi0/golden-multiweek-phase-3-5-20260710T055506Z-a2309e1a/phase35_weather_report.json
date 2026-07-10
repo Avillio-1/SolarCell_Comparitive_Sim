@@ -1,0 +1,69 @@
+{
+  "canonical_units": {
+    "dhi_w_m2": "W/m2",
+    "dni_w_m2": "W/m2",
+    "ghi_w_m2": "W/m2",
+    "precipitation_mm": "mm/hour",
+    "relative_humidity_pct": "%",
+    "temp_air_c": "deg C",
+    "wind_speed_m_s": "m/s"
+  },
+  "checksum_sha256": "172002be6b8872eff9e7ad0f6ad5a2f66f077e4e577d99ff8c1118ac21d1fbdb",
+  "duplicate_count": 0,
+  "end_timestamp": "2025-01-21T23:00:00+03:00",
+  "expected_row_count": 504,
+  "gap_count": 0,
+  "metadata_keys": [
+    "checksum",
+    "coordinates",
+    "date_range",
+    "fixture_profile",
+    "normalized_units",
+    "provider",
+    "retrieval_timestamp",
+    "source_units",
+    "test_only",
+    "variables"
+  ],
+  "ranges": {
+    "dhi_w_m2": {
+      "max": 124.35422087870073,
+      "mean": 38.92733284073294,
+      "min": 0.0
+    },
+    "dni_w_m2": {
+      "max": 559.5939939541532,
+      "mean": 175.17299778329823,
+      "min": 0.0
+    },
+    "ghi_w_m2": {
+      "max": 683.948214832854,
+      "mean": 214.10033062403113,
+      "min": 0.0
+    },
+    "precipitation_mm": {
+      "max": 3.0,
+      "mean": 0.011904761904761904,
+      "min": 0.0
+    },
+    "relative_humidity_pct": {
+      "max": 49.901250393947166,
+      "mean": 44.153327703978114,
+      "min": 31.782288956064964
+    },
+    "temp_air_c": {
+      "max": 37.8860694024594,
+      "mean": 28.2745170104301,
+      "min": 23.81171850378302
+    },
+    "wind_speed_m_s": {
+      "max": 3.2,
+      "mean": 2.5999999999999996,
+      "min": 2.0
+    }
+  },
+  "row_count": 504,
+  "start_timestamp": "2025-01-01T00:00:00+03:00",
+  "suspicious_value_count": 0,
+  "timezone": "Asia/Riyadh"
+}

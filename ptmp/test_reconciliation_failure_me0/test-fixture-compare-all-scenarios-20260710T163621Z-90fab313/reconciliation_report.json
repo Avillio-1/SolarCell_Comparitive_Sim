@@ -1,0 +1,407 @@
+{
+  "checks": [
+    {
+      "details": {
+        "baseline": "2d12ae683afb3a01c63da4dfd8ab54476d2a4a63aae92d2caab864c8f98f709d",
+        "coating": "2d12ae683afb3a01c63da4dfd8ab54476d2a4a63aae92d2caab864c8f98f709d",
+        "reactive": "2d12ae683afb3a01c63da4dfd8ab54476d2a4a63aae92d2caab864c8f98f709d"
+      },
+      "message": "OK",
+      "name": "same_weather_checksum",
+      "passed": true
+    },
+    {
+      "details": {
+        "baseline": "a0048a6d35b3fd8b58cf9240ff4f844c0519735213d32c7562109359c6243493",
+        "coating": "a0048a6d35b3fd8b58cf9240ff4f844c0519735213d32c7562109359c6243493",
+        "reactive": "a0048a6d35b3fd8b58cf9240ff4f844c0519735213d32c7562109359c6243493"
+      },
+      "message": "OK",
+      "name": "same_event_tape_checksum",
+      "passed": true
+    },
+    {
+      "details": {
+        "annual_actual_energy_kwh": 27820.688750421545,
+        "annual_clean_energy_kwh": 28042.50025091375,
+        "summed_daily_actual_energy_kwh": 27820.688750421545,
+        "summed_daily_clean_energy_kwh": 28042.50025091375,
+        "tolerance_kwh": 1e-06
+      },
+      "message": "OK",
+      "name": "baseline_annual_energy_reconciles_with_daily",
+      "passed": true
+    },
+    {
+      "details": {
+        "annual_actual_energy_kwh": 27820.688750421545,
+        "annual_clean_energy_kwh": 28042.50025091375,
+        "summed_daily_actual_energy_kwh": 27820.688750421545,
+        "summed_daily_clean_energy_kwh": 28042.50025091375,
+        "tolerance_kwh": 1e-06
+      },
+      "message": "OK",
+      "name": "reactive_annual_energy_reconciles_with_daily",
+      "passed": true
+    },
+    {
+      "details": {
+        "annual_actual_energy_kwh": 27885.79682553027,
+        "annual_clean_energy_kwh": 28042.50025091375,
+        "summed_daily_actual_energy_kwh": 27885.79682553027,
+        "summed_daily_clean_energy_kwh": 28042.50025091375,
+        "tolerance_kwh": 1e-06
+      },
+      "message": "OK",
+      "name": "coating_annual_energy_reconciles_with_daily",
+      "passed": true
+    },
+    {
+      "details": {
+        "expected_from_daily": {
+          "capex_cost": 0.0,
+          "cleaning_actions_count": 0,
+          "coated_panel_count": 0,
+          "crew_hours": 0.0,
+          "drone_flight_hours": 0.0,
+          "energy_used_kwh": 0.0,
+          "inspections_count": 0,
+          "opex_cost": 0.0,
+          "water_liters": 0.0
+        },
+        "recorded_for_economics": {
+          "capex_cost": 0.0,
+          "cleaning_actions_count": 0,
+          "coated_panel_count": 0,
+          "crew_hours": 0.0,
+          "drone_flight_hours": 0.0,
+          "energy_used_kwh": 0.0,
+          "inspections_count": 0,
+          "opex_cost": 0.0,
+          "water_liters": 0.0
+        }
+      },
+      "message": "OK",
+      "name": "baseline_annual_operational_quantities_reconcile_with_daily",
+      "passed": true
+    },
+    {
+      "details": {
+        "expected_from_daily": {
+          "capex_cost": 0.0,
+          "cleaning_actions_count": 0,
+          "coated_panel_count": 0,
+          "crew_hours": 0.0,
+          "drone_flight_hours": 0.6,
+          "energy_used_kwh": 0.77,
+          "inspections_count": 7,
+          "opex_cost": 0.0,
+          "water_liters": 0.0
+        },
+        "recorded_for_economics": {
+          "capex_cost": 0.0,
+          "cleaning_actions_count": 0,
+          "coated_panel_count": 0,
+          "crew_hours": 0.0,
+          "drone_flight_hours": 0.6,
+          "energy_used_kwh": 0.77,
+          "inspections_count": 7,
+          "opex_cost": 0.0,
+          "water_liters": 0.0
+        }
+      },
+      "message": "OK",
+      "name": "reactive_annual_operational_quantities_reconcile_with_daily",
+      "passed": true
+    },
+    {
+      "details": {
+        "expected_from_daily": {
+          "capex_cost": 0.0,
+          "cleaning_actions_count": 0,
+          "coated_panel_count": 10000,
+          "crew_hours": 0.0,
+          "drone_flight_hours": 0.0,
+          "energy_used_kwh": 4000.0,
+          "inspections_count": 0,
+          "opex_cost": 0.0,
+          "water_liters": 0.0
+        },
+        "recorded_for_economics": {
+          "capex_cost": 0.0,
+          "cleaning_actions_count": 0,
+          "coated_panel_count": 10000,
+          "crew_hours": 0.0,
+          "drone_flight_hours": 0.0,
+          "energy_used_kwh": 4000.0,
+          "inspections_count": 0,
+          "opex_cost": 0.0,
+          "water_liters": 0.0
+        }
+      },
+      "message": "OK",
+      "name": "coating_annual_operational_quantities_reconcile_with_daily",
+      "passed": true
+    },
+    {
+      "details": {
+        "event_count": 7,
+        "quantity_name": "inspections_count",
+        "quantity_value": 7.0
+      },
+      "message": "OK",
+      "name": "reactive_inspections_reconcile_with_event_log",
+      "passed": true
+    },
+    {
+      "details": {
+        "event_count": 0,
+        "quantity_name": "cleaning_actions_count",
+        "quantity_value": 0.0
+      },
+      "message": "OK",
+      "name": "reactive_cleaning_actions_reconcile_with_event_log",
+      "passed": true
+    },
+    {
+      "details": {
+        "cost_basis_coated_panel_count": 10000,
+        "operational_coated_panel_count": 10000
+      },
+      "message": "OK",
+      "name": "coating_coated_panel_count_reconciles_with_cost_basis",
+      "passed": true
+    },
+    {
+      "details": {
+        "cost_basis_process_energy_kwh": 4000.0,
+        "operational_process_energy_kwh": 4000.0
+      },
+      "message": "OK",
+      "name": "coating_process_energy_reconciles_with_cost_basis",
+      "passed": true
+    },
+    {
+      "details": {
+        "actual_energy_kwh": 27820.688750421545,
+        "annual_revenue_sar": 5007.723975075878,
+        "economic_scenario_name": "baseline",
+        "scenario_name": "baseline"
+      },
+      "message": "OK",
+      "name": "baseline_economic_result_reconciles_with_physical_output",
+      "passed": true
+    },
+    {
+      "details": {
+        "annual_opex_sar": 0,
+        "capex_component_sum_sar": 0,
+        "cost_tolerance_sar": 1e-06,
+        "net_annual_benefit_sar": 5007.723975075878,
+        "opex_component_sum_sar": 0,
+        "total_annual_cost_sar": 0.0,
+        "total_capex_sar": 0
+      },
+      "message": "OK",
+      "name": "baseline_economic_totals_reconcile",
+      "passed": true
+    },
+    {
+      "details": {
+        "actual_energy_kwh": 27820.688750421545,
+        "annual_revenue_sar": 5007.723975075878,
+        "economic_scenario_name": "reactive",
+        "scenario_name": "reactive"
+      },
+      "message": "OK",
+      "name": "reactive_economic_result_reconciles_with_physical_output",
+      "passed": true
+    },
+    {
+      "details": {
+        "annual_opex_sar": 100108.1386,
+        "capex_component_sum_sar": 150000.0,
+        "cost_tolerance_sar": 1e-06,
+        "net_annual_benefit_sar": -112624.84636532713,
+        "opex_component_sum_sar": 100108.1386,
+        "total_annual_cost_sar": 117632.570340403,
+        "total_capex_sar": 150000.0
+      },
+      "message": "OK",
+      "name": "reactive_economic_totals_reconcile",
+      "passed": true
+    },
+    {
+      "details": {
+        "cost_component_name": "reactive crew labour",
+        "difference_sar": 0.0,
+        "expected_amount_sar": 0.0,
+        "message": "OK",
+        "passed": true,
+        "quantity_name": "crew_hours",
+        "quantity_value": 0.0,
+        "rate_sar_per_unit": 35.0,
+        "recorded_amount_sar": 0.0
+      },
+      "message": "OK",
+      "name": "reactive_cost_crew_hours_reconciles",
+      "passed": true
+    },
+    {
+      "details": {
+        "cost_component_name": "reactive drone flight operations",
+        "difference_sar": 0.0,
+        "expected_amount_sar": 108.0,
+        "message": "OK",
+        "passed": true,
+        "quantity_name": "drone_flight_hours",
+        "quantity_value": 0.6,
+        "rate_sar_per_unit": 180.0,
+        "recorded_amount_sar": 108.0
+      },
+      "message": "OK",
+      "name": "reactive_cost_drone_flight_hours_reconciles",
+      "passed": true
+    },
+    {
+      "details": {
+        "cost_component_name": "reactive water use",
+        "difference_sar": 0.0,
+        "expected_amount_sar": 0.0,
+        "message": "OK",
+        "passed": true,
+        "quantity_name": "water_liters",
+        "quantity_value": 0.0,
+        "rate_sar_per_unit": 0.006,
+        "recorded_amount_sar": 0.0
+      },
+      "message": "OK",
+      "name": "reactive_cost_water_liters_reconciles",
+      "passed": true
+    },
+    {
+      "details": {
+        "cost_component_name": "reactive energy use",
+        "difference_sar": 0.0,
+        "expected_amount_sar": 0.1386,
+        "message": "OK",
+        "passed": true,
+        "quantity_name": "energy_used_kwh",
+        "quantity_value": 0.77,
+        "rate_sar_per_unit": 0.18,
+        "recorded_amount_sar": 0.1386
+      },
+      "message": "OK",
+      "name": "reactive_cost_energy_used_kwh_reconciles",
+      "passed": true
+    },
+    {
+      "details": {
+        "actual_energy_kwh": 27885.79682553027,
+        "annual_revenue_sar": 5019.4434285954485,
+        "economic_scenario_name": "coating",
+        "scenario_name": "coating"
+      },
+      "message": "OK",
+      "name": "coating_economic_result_reconciles_with_physical_output",
+      "passed": true
+    },
+    {
+      "details": {
+        "annual_opex_sar": 21400.0,
+        "capex_component_sum_sar": 371720.0,
+        "cost_tolerance_sar": 1e-06,
+        "net_annual_benefit_sar": -160620.3744127056,
+        "opex_component_sum_sar": 21400.0,
+        "total_annual_cost_sar": 165639.81784130106,
+        "total_capex_sar": 371720.0
+      },
+      "message": "OK",
+      "name": "coating_economic_totals_reconcile",
+      "passed": true
+    },
+    {
+      "details": {
+        "missing_components": [],
+        "required_components": [
+          "coating application labour capex",
+          "coating fixed equipment capex",
+          "coating inspection labour opex",
+          "coating maintenance opex",
+          "coating material capex",
+          "coating process energy capex",
+          "coating surface preparation capex"
+        ]
+      },
+      "message": "OK",
+      "name": "coating_cost_basis_is_fully_priced",
+      "passed": true
+    },
+    {
+      "details": {
+        "baseline_annual_actual_energy_kwh": 27820.688750421545,
+        "basis": "annual_actual_energy_kwh",
+        "expected_energy_gain_vs_baseline_kwh": 0.0,
+        "recorded_energy_gain_vs_baseline_kwh": 0.0
+      },
+      "message": "OK",
+      "name": "baseline_baseline_relative_energy_gain_uses_annual_ac_energy",
+      "passed": true
+    },
+    {
+      "details": {
+        "baseline_annual_actual_energy_kwh": 27820.688750421545,
+        "basis": "annual_actual_energy_kwh",
+        "expected_energy_gain_vs_baseline_kwh": 0.0,
+        "recorded_energy_gain_vs_baseline_kwh": 0.0
+      },
+      "message": "OK",
+      "name": "reactive_baseline_relative_energy_gain_uses_annual_ac_energy",
+      "passed": true
+    },
+    {
+      "details": {
+        "baseline_annual_actual_energy_kwh": 27820.688750421545,
+        "basis": "annual_actual_energy_kwh",
+        "expected_energy_gain_vs_baseline_kwh": 65.10807510872473,
+        "recorded_energy_gain_vs_baseline_kwh": 65.10807510872473
+      },
+      "message": "OK",
+      "name": "coating_baseline_relative_energy_gain_uses_annual_ac_energy",
+      "passed": true
+    },
+    {
+      "details": {
+        "blocking_warning_codes": [
+          "simulation_period_not_full_year"
+        ],
+        "warning_codes": [
+          "non_live_weather_provider",
+          "fixture_weather_test_only",
+          "simulation_period_not_full_year",
+          "coating_costs_not_validated",
+          "coating_field_application_not_demonstrated",
+          "non_validated_economic_parameter",
+          "non_validated_economic_parameter",
+          "non_validated_economic_parameter",
+          "non_validated_economic_parameter",
+          "non_validated_economic_parameter",
+          "non_validated_economic_parameter",
+          "non_validated_economic_parameter",
+          "non_validated_economic_parameter"
+        ],
+        "warning_count": 13
+      },
+      "message": "Comparison has blocking assumption warnings and cannot be ranked.",
+      "name": "no_blocking_assumption_warnings",
+      "passed": false
+    },
+    {
+      "details": {},
+      "message": "Ranking was not produced because reconciliation failed.",
+      "name": "ranking_blocked_until_reconciliation_passes",
+      "passed": false
+    }
+  ],
+  "passed": false
+}

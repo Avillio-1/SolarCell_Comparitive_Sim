@@ -1,0 +1,41 @@
+{
+  "checksum": "96f3889004487aa55282d549fde5d650aab89f62cdff1e49953d266d2dba3fdb",
+  "coordinates": {
+    "latitude": 24.7136,
+    "longitude": 46.6753
+  },
+  "date_range": {
+    "end": "2025-01-02T23:00:00+03:00",
+    "start": "2025-01-01T00:00:00+03:00"
+  },
+  "fixture_profile": "riyadh_synthetic",
+  "index_freq": "h",
+  "index_name": null,
+  "index_timezone": "Asia/Riyadh",
+  "normalized_units": {
+    "dhi_w_m2": "W/m2",
+    "dni_w_m2": "W/m2",
+    "ghi_w_m2": "W/m2",
+    "precipitation_mm": "mm/hour",
+    "relative_humidity_pct": "%",
+    "temp_air_c": "deg C",
+    "wind_speed_m_s": "m/s"
+  },
+  "provider": "fixture",
+  "retrieval_timestamp": "2026-07-10T16:36:38.092397+00:00",
+  "source_units": {
+    "irradiance": "synthetic riyadh_synthetic W/m2",
+    "precipitation": "synthetic riyadh_synthetic mm/hour",
+    "temperature": "synthetic riyadh_synthetic deg C"
+  },
+  "test_only": true,
+  "variables": [
+    "ghi_w_m2",
+    "dni_w_m2",
+    "dhi_w_m2",
+    "temp_air_c",
+    "wind_speed_m_s",
+    "relative_humidity_pct",
+    "precipitation_mm"
+  ]
+}

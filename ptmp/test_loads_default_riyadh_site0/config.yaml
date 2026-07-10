@@ -1,0 +1,20 @@
+
+simulation:
+  start: "2025-01-01T00:00:00+03:00"
+  end: "2025-01-03T23:00:00+03:00"
+  target_timezone: Asia/Riyadh
+site:
+  name: Riyadh
+  latitude: 24.7136
+  longitude: 46.6753
+  timezone: Asia/Riyadh
+weather:
+  provider: fixture
+pv_system:
+  panel_count: 10000
+  panel_capacity_w: 400
+farm:
+  representation: cohort
+  total_panels: 10000
+  panel_capacity_w: 400
+  cohort_count: 100

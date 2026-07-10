@@ -1,0 +1,9 @@
+command: sensitivity-oneway
+run_id: test-fixture-sensitivity-oneway-20260710T163634Z-31f3a0c1
+base_winner: None
+base_reconciled: False
+base_failed_reconciliation_check_names: ['no_blocking_assumption_warnings', 'ranking_blocked_until_reconciliation_passes']
+parameters_swept: 2
+parameters_that_flip_the_winner: []
+skipped_parameters: []
+output_artifacts: ['config_resolved.yaml', 'sensitivity_oneway.csv', 'sensitivity_oneway_summary.json', 'sensitivity_tornado.png']

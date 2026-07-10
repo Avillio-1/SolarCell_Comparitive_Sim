@@ -1,0 +1,10 @@
+{
+  "annual_actual_energy_kwh": 18.0,
+  "annual_clean_energy_kwh": 20.0,
+  "annual_energy_loss_kwh": 2.0,
+  "annual_energy_loss_percent": 10.0,
+  "daily_result_count": 2,
+  "event_count": 3,
+  "extension_keys": [],
+  "scenario_name": "event_export_test"
+}

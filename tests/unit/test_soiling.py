@@ -73,6 +73,10 @@ def test_partial_and_strong_rain_restore_ratio_within_bounds() -> None:
 
     assert 0.8 < partial.state.dust_soiling_ratio < 1.0
     assert full.state.dust_soiling_ratio == pytest.approx(1.0)
+    assert partial.energy_state.dust_soiling_ratio < dirty.dust_soiling_ratio
+    assert full.energy_state.dust_soiling_ratio == pytest.approx(
+        partial.energy_state.dust_soiling_ratio
+    )
 
 
 def test_baseline_actual_energy_never_exceeds_clean_energy() -> None:

@@ -1,0 +1,12 @@
+command: monte-carlo
+run_id: test-fixture-monte-carlo-20260710T163626Z-317abcfd
+uncertainty_mode: stochastic_seed_only
+sampled_parameter_uncertainty: False
+trial_count: 6
+reconciled_trial_count: 0
+failed_trial_count: 6
+central_t6_winner: None
+central_t6_reconciled: False
+central_t6_failed_reconciliation_check_names: ['no_blocking_assumption_warnings', 'ranking_blocked_until_reconciliation_passes']
+majority_trial_winner: None
+output_artifacts: ['config_resolved.yaml', 'monte_carlo_trials.csv', 'monte_carlo_summary.json', 'monte_carlo_outcome_distributions.png', 'monte_carlo_win_probability.png']

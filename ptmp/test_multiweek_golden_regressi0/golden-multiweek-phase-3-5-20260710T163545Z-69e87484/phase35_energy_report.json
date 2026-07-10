@@ -1,0 +1,18 @@
+{
+  "annual_actual_energy_kwh": 282365.28561875335,
+  "annual_clean_energy_kwh": 298643.00218400103,
+  "annual_soiling_loss_kwh": 16277.716565247683,
+  "annual_soiling_loss_percent": 5.450560182628554,
+  "capacity_factor_percent": 14.813640981349257,
+  "clipping_energy_kwh": 12830.525421956303,
+  "clipping_percent_of_dc_energy": 4.1192988439736995,
+  "contamination_event_count": 79,
+  "monthly_actual_energy_kwh": {
+    "2025-01": 282365.28561875335
+  },
+  "monthly_clean_energy_kwh": {
+    "2025-01": 298643.00218400103
+  },
+  "rain_event_count": 1,
+  "specific_yield_kwh_per_kwp": 74.66075054600026
+}

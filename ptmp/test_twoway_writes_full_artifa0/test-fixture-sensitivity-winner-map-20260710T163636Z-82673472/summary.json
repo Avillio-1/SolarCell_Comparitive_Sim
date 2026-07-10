@@ -1,0 +1,14 @@
+{
+  "command": "sensitivity-winner-map",
+  "failed_grid_point_count": 9,
+  "grid_points": 9,
+  "output_artifacts": [
+    "config_resolved.yaml",
+    "sensitivity_twoway.csv",
+    "sensitivity_twoway_summary.json",
+    "sensitivity_winner_map_base_daily_loss_fraction_useful_life_years_c52a32a039.png"
+  ],
+  "parameter_a": "soiling.base_daily_loss_fraction",
+  "parameter_b": "coating.useful_life_years",
+  "run_id": "test-fixture-sensitivity-winner-map-20260710T163636Z-82673472"
+}

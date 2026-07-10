@@ -6,8 +6,8 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
+from tests.config_factory import fixture_config
 
-from solarclean.config.loader import load_config
 from solarclean.domain.contamination.soiling import SimulationEvent
 from solarclean.domain.scenario.contracts import (
     AnnualScenarioResult,
@@ -19,10 +19,7 @@ from solarclean.infrastructure.persistence.outputs import OutputWriter
 
 
 def _writer(tmp_path: Path) -> OutputWriter:
-    config = load_config(
-        Path("configs/offline_fixture.yaml"),
-        overrides={"output": {"base_directory": tmp_path}},
-    )
+    config = fixture_config(overrides={"output": {"base_directory": tmp_path}})
     return OutputWriter(config)
 
 
@@ -98,7 +95,7 @@ def test_scenario_event_csv_exports_json_metadata_integer_cohorts_and_order(
     assert rows[2]["cohort_id"] == "28"
     assert all(json.loads(row["metadata"]) is not None for row in rows)
     assert rows[0]["event_phase"] == "nighttime_condensation"
-    assert rows[0]["effective_for_energy_date"] == "2025-01-01"
+    assert rows[0]["effective_for_energy_date"] == "2025-01-02"
 
     inspection_row = next(row for row in rows if row["event_type"] == "reactive_inspection")
     cleaning_row = next(row for row in rows if row["event_type"] == "reactive_cleaning_action")
@@ -147,3 +144,30 @@ def test_baseline_event_csv_uses_same_export_hygiene(tmp_path: Path) -> None:
     assert rows[1]["cohort_id"] == "28"
     assert rows[0]["metadata"] == "{}"
     assert all(json.loads(row["metadata"]) == {} for row in rows)
+
+
+def test_output_include_cohort_daily_details_flag_is_honored(tmp_path: Path) -> None:
+    writer = _writer(tmp_path)
+    config = writer.config.model_copy(
+        update={
+            "output": writer.config.output.model_copy(
+                update={"include_cohort_daily_details": False}
+            )
+        }
+    )
+    baseline = BaselineSimulationResult(
+        daily=pd.DataFrame(
+            {"clean_energy_kwh": [10.0], "actual_energy_kwh": [9.0]},
+            index=["2025-01-01"],
+        ),
+        events=[],
+        annual_clean_energy_kwh=10.0,
+        annual_actual_energy_kwh=9.0,
+        annual_soiling_loss_kwh=1.0,
+        annual_soiling_loss_percent=10.0,
+        cohort_daily=pd.DataFrame({"cohort_id": [0]}),
+    )
+
+    OutputWriter(config).write_baseline(tmp_path, baseline, config)
+
+    assert not (tmp_path / "cohort_daily_results.csv").exists()

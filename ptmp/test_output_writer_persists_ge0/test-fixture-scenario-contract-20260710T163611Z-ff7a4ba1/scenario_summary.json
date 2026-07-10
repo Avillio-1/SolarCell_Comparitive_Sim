@@ -1,0 +1,13 @@
+{
+  "annual_actual_energy_kwh": 28040.50025091375,
+  "annual_clean_energy_kwh": 28042.50025091375,
+  "annual_energy_loss_kwh": 2.0,
+  "annual_energy_loss_percent": 0.0071320316737264935,
+  "daily_result_count": 2,
+  "event_count": 2,
+  "extension_keys": [
+    "mock_metric",
+    "note"
+  ],
+  "scenario_name": "mock_future"
+}
