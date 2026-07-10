@@ -167,6 +167,26 @@ def test_csv_provider_rejects_missing_hourly_timestamps(tmp_path: Path) -> None:
         provider.load(_request_for_hours(3))
 
 
+def test_csv_provider_interpolates_missing_rows_when_configured(tmp_path: Path) -> None:
+    csv_path = tmp_path / "weather.csv"
+    csv_path.write_text(
+        "timestamp,ghi_w_m2,dni_w_m2,dhi_w_m2,temp_air_c,wind_speed_m_s,"
+        "relative_humidity_pct,precipitation_mm\n"
+        "2025-01-01T00:00:00+03:00,0,0,0,20,2,50,0\n"
+        "2025-01-01T02:00:00+03:00,0,0,0,22,2,52,0\n",
+        encoding="utf-8",
+    )
+    provider = CsvWeatherProvider(
+        csv_path=csv_path,
+        missing_data_policy="interpolate",
+    )
+
+    dataset = provider.load(_request_for_hours(3))
+
+    assert len(dataset.hourly) == 3
+    assert dataset.hourly.iloc[1]["temp_air_c"] == pytest.approx(21.0)
+
+
 def test_weather_cache_round_trips_dataset(tmp_path: Path) -> None:
     dataset = FixtureWeatherProvider().load(_request())
     cache = WeatherCache(tmp_path)

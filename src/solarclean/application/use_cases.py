@@ -22,12 +22,14 @@ from solarclean.domain.reactive_cv.metrics import SEVERITY_BUCKETS, summarize_de
 from solarclean.domain.reactive_cv.strategy import ReactiveCVStrategy
 from solarclean.domain.scenario.contracts import (
     AnnualScenarioResult,
+    MitigationStrategy,
     ScenarioContext,
     ScenarioOutputBundle,
 )
 from solarclean.domain.simulation.baseline import BaselineSimulationEngine, BaselineSimulationResult
+from solarclean.domain.simulation.baseline_strategy import BaselineStrategy
 from solarclean.domain.simulation.scenario_engine import ScenarioSimulationEngine
-from solarclean.infrastructure.persistence.outputs import OutputWriter
+from solarclean.infrastructure.persistence.outputs import OutputWriter, code_version_metadata
 from solarclean.infrastructure.persistence.plots import (
     write_baseline_diagnostic_plot,
     write_coating_diagnostic_plots,
@@ -103,6 +105,15 @@ class RunBaselineSimulation:
         request = _weather_request(self.config)
         weather = _weather_provider(self.config).load(request)
         profile = PVWattsPowerModel().calculate_hourly(weather, self.config.pv_system)
+        dates = [pd.Timestamp(str(day)).date() for day in profile.daily.index]
+        event_tape = generate_event_tape(
+            dates=dates,
+            seed=self.config.soiling.random_seed,
+            soiling=self.config.soiling,
+            rainfall=self.config.rainfall_cleaning,
+            farm=self.config.farm,
+            birds=self.config.bird_droppings,
+        )
         farm = (
             CohortFarm(self.config.farm, self.config.bird_droppings)
             if self.config.farm.representation == "cohort"
@@ -113,17 +124,24 @@ class RunBaselineSimulation:
             farm=farm,
             farm_config=self.config.farm,
         )
-        baseline = engine.run(profile, weather, self.config.soiling.random_seed)
+        baseline = engine.run(
+            profile,
+            weather,
+            self.config.soiling.random_seed,
+            event_tape=event_tape,
+        )
         writer = OutputWriter(self.config)
         output_dir = writer.create_run_directory("run-baseline")
         writer.write_config(output_dir)
         writer.write_weather(output_dir, weather)
         writer.write_clean_energy(output_dir, profile)
         writer.write_baseline(output_dir, baseline, self.config)
+        (output_dir / "event_tape.json").write_text(event_tape.to_json(), encoding="utf-8")
         write_baseline_diagnostic_plot(output_dir / "diagnostic_plot.png", baseline)
         metadata = _base_metadata(self.config, "run-baseline")
         metadata["weather_metadata"] = weather.metadata
         metadata["pv_metadata"] = profile.metadata
+        metadata["event_tape_checksum"] = event_tape.checksum()
         writer.write_metadata(output_dir, metadata)
         summary = _baseline_summary(baseline, self.config)
         writer.write_summary(output_dir, summary)
@@ -155,14 +173,27 @@ class RunCoatingSimulation:
             farm_config=self.config.farm,
             metadata={"event_tape_checksum": event_tape.checksum()},
         )
-        strategy = CoatingStrategy(
-            coating=self.config.coating,
-            soiling=self.config.soiling,
-            rainfall=self.config.rainfall_cleaning,
-            birds=self.config.bird_droppings,
-            farm=self.config.farm,
-            pv_system=self.config.pv_system,
-        )
+        strategy: MitigationStrategy
+        if self.config.coating.enabled:
+            strategy = CoatingStrategy(
+                coating=self.config.coating,
+                soiling=self.config.soiling,
+                rainfall=self.config.rainfall_cleaning,
+                birds=self.config.bird_droppings,
+                farm=self.config.farm,
+                pv_system=self.config.pv_system,
+            )
+        else:
+            strategy = BaselineStrategy(
+                KimberStyleSoilingModel(self.config.soiling, self.config.rainfall_cleaning),
+                farm=(
+                    CohortFarm(self.config.farm, self.config.bird_droppings)
+                    if self.config.farm.representation == "cohort"
+                    else None
+                ),
+                farm_config=self.config.farm,
+                name="coating",
+            )
         coating = ScenarioSimulationEngine(strategy).run(
             context,
             random_seed=self.config.soiling.random_seed,
@@ -182,12 +213,20 @@ class RunCoatingSimulation:
             random_seed=self.config.soiling.random_seed,
             event_tape=event_tape,
         )
-        summary = _coating_summary(
-            coating,
-            baseline,
-            config=self.config,
-            event_tape_checksum=event_tape.checksum(),
-        )
+        if self.config.coating.enabled:
+            summary = _coating_summary(
+                coating,
+                baseline,
+                config=self.config,
+                event_tape_checksum=event_tape.checksum(),
+            )
+        else:
+            summary = _disabled_scenario_summary(
+                command="run-coating",
+                result=coating,
+                baseline=baseline,
+                event_tape_checksum=event_tape.checksum(),
+            )
         writer = OutputWriter(self.config)
         output_dir = writer.create_run_directory("run-coating")
         writer.write_config(output_dir)
@@ -209,11 +248,12 @@ class RunCoatingSimulation:
         writer.write_summary(output_dir, summary)
         writer.write_text_summary(output_dir, summary)
         write_json_report(output_dir / "coating_comparison_summary.json", summary)
-        write_coating_diagnostic_plots(
-            output_dir=output_dir,
-            coating_daily=coating.to_daily_frame(),
-            baseline_daily=baseline.daily,
-        )
+        if self.config.coating.enabled:
+            write_coating_diagnostic_plots(
+                output_dir=output_dir,
+                coating_daily=coating.to_daily_frame(),
+                baseline_daily=baseline.daily,
+            )
         return UseCaseResult(output_directory=output_dir, summary=summary)
 
 
@@ -241,19 +281,35 @@ class RunReactiveSimulation:
             farm_config=self.config.farm,
             metadata={"event_tape_checksum": event_tape.checksum()},
         )
-        strategy = ReactiveCVStrategy(
-            reactive=self.config.reactive_cv,
-            soiling=self.config.soiling,
-            rainfall=self.config.rainfall_cleaning,
-            birds=self.config.bird_droppings,
-            farm=self.config.farm,
-        )
+        strategy: MitigationStrategy
+        if self.config.reactive_cv.enabled:
+            strategy = ReactiveCVStrategy(
+                reactive=self.config.reactive_cv,
+                soiling=self.config.soiling,
+                rainfall=self.config.rainfall_cleaning,
+                birds=self.config.bird_droppings,
+                farm=self.config.farm,
+            )
+        else:
+            strategy = BaselineStrategy(
+                KimberStyleSoilingModel(self.config.soiling, self.config.rainfall_cleaning),
+                farm=(
+                    CohortFarm(self.config.farm, self.config.bird_droppings)
+                    if self.config.farm.representation == "cohort"
+                    else None
+                ),
+                farm_config=self.config.farm,
+                name="reactive_cv",
+            )
         reactive = ScenarioSimulationEngine(strategy).run(
             context,
             random_seed=self.config.soiling.random_seed,
         )
         perfect_info: AnnualScenarioResult | None = None
-        if self.config.reactive_cv.perfect_information_benchmark:
+        if (
+            self.config.reactive_cv.enabled
+            and self.config.reactive_cv.perfect_information_benchmark
+        ):
             benchmark_strategy = ReactiveCVStrategy(
                 reactive=self.config.reactive_cv,
                 soiling=self.config.soiling,
@@ -292,12 +348,20 @@ class RunReactiveSimulation:
         metadata["pv_metadata"] = profile.metadata
         metadata["event_tape_checksum"] = event_tape.checksum()
         writer.write_metadata(output_dir, metadata)
-        summary = _reactive_summary(
-            reactive,
-            baseline,
-            perfect_info=perfect_info,
-            event_tape_checksum=event_tape.checksum(),
-        )
+        if self.config.reactive_cv.enabled:
+            summary = _reactive_summary(
+                reactive,
+                baseline,
+                perfect_info=perfect_info,
+                event_tape_checksum=event_tape.checksum(),
+            )
+        else:
+            summary = _disabled_scenario_summary(
+                command="run-reactive",
+                result=reactive,
+                baseline=baseline,
+                event_tape_checksum=event_tape.checksum(),
+            )
         writer.write_summary(output_dir, summary)
         writer.write_text_summary(output_dir, summary)
         write_json_report(output_dir / "reactive_comparison_summary.json", summary)
@@ -327,6 +391,7 @@ def _weather_provider(config: SolarCleanConfig) -> WeatherProvider:
             timestamp_column=config.weather.timestamp_column,
             column_mapping=config.weather.column_mapping,
             unit_mapping=config.weather.unit_mapping,
+            missing_data_policy=config.weather.missing_data_policy,
         )
     return NasaPowerWeatherProvider(
         cache_directory=config.weather.cache_directory,
@@ -340,6 +405,7 @@ def _base_metadata(config: SolarCleanConfig, command: str) -> dict[str, object]:
         "project": "SolarClean-DT",
         "command": command,
         "created_at_utc": datetime.now(UTC).isoformat(),
+        **code_version_metadata(),
         "site": config.site.model_dump(mode="json"),
         "simulation": config.simulation.model_dump(mode="json"),
         "weather": config.weather.model_dump(mode="json"),
@@ -365,6 +431,28 @@ def _baseline_summary(
         "annual_soiling_loss_percent": baseline.annual_soiling_loss_percent,
         "event_count": len(baseline.events),
         "cohort_daily_rows": 0 if baseline.cohort_daily is None else len(baseline.cohort_daily),
+    }
+
+
+def _disabled_scenario_summary(
+    *,
+    command: str,
+    result: AnnualScenarioResult,
+    baseline: BaselineSimulationResult,
+    event_tape_checksum: str,
+) -> dict[str, object]:
+    return {
+        "command": command,
+        "scenario_name": result.scenario_name,
+        "enabled": False,
+        "event_tape_checksum": event_tape_checksum,
+        "annual_clean_energy_kwh": result.annual_clean_energy_kwh,
+        "annual_actual_energy_kwh": result.annual_actual_energy_kwh,
+        "annual_baseline_actual_energy_kwh": baseline.annual_actual_energy_kwh,
+        "energy_gain_vs_baseline_kwh": (
+            result.annual_actual_energy_kwh - baseline.annual_actual_energy_kwh
+        ),
+        "total_operations": 0,
     }
 
 

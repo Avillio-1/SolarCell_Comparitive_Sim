@@ -53,6 +53,23 @@ def test_rng_streams_are_independent_and_reproducible() -> None:
     assert dust_after == second.generator(RngStream.DUST_EVENT).random(3).tolist()
 
 
+def test_cohort_variation_multipliers_are_never_negative() -> None:
+    tape = generate_event_tape(
+        dates=[date(2025, 1, day) for day in range(1, 11)],
+        seed=42,
+        soiling=SoilingConfig(),
+        rainfall=RainfallCleaningConfig(),
+        farm=FarmConfig(cohort_soiling_variation_fraction=1.0),
+        birds=BirdDroppingConfig(event_probability_per_cohort_day=0.0),
+    )
+
+    values = [
+        event.value for event in tape.events if event.event_type == "cohort_variation_multiplier"
+    ]
+    assert values
+    assert min(values) >= 0.0
+
+
 def test_baseline_event_tape_is_unaffected_by_future_scenario_rng_use() -> None:
     weather = FixtureWeatherProvider().load(_request())
     clean = PVWattsPowerModel().calculate_hourly(weather, system=None)

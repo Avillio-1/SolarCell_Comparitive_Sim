@@ -32,7 +32,10 @@ Each run writes `outputs/<run_id>/` with:
 - `comparison_metadata.json` and `metadata.json`
 - `weather_hourly.csv`, `clean_energy_hourly.csv`, `daily_clean_energy.csv`
 - `event_tape.json`
-- `scenario_daily_summary.csv`
+- `scenario_daily_summary.csv` (per-scenario daily records; includes
+  `cumulative_energy_gain_vs_baseline_kwh`, a running total of daily AC energy
+  minus the baseline's whose final value equals the scenario's annual
+  `energy_gain_vs_baseline_kwh`)
 - `scenario_annual_summary.csv`
 - `scenario_cost_summary.csv`
 - `scenario_events.csv`

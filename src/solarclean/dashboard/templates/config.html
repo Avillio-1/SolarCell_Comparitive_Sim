@@ -3,23 +3,66 @@
 {% block content %}
 
 <div class="run-head">
-  <h1 class="mono">configs/{{ name }}</h1>
+  <h1 class="mono">{% if is_default %}{{ default_config_label }} configuration
+    <span class="hint-inline">(configs/{{ name }})</span>{% else %}configs/{{ name }}{% endif %}</h1>
   <a class="quiet-link" href="/">back to runs</a>
 </div>
 
 <section class="panel">
   <p class="hint">Edits are checked with the same loader the simulator uses, so anything that
-  validates here will load for a run. Saving never overwrites the original file — pick a new
-  name and it lands in <code>configs/</code>.</p>
+  validates here will load for a run.
+  {% if is_default %}<strong>Save</strong> updates the {{ default_config_label }} configuration
+  that every run uses; "Save a copy as" keeps the original and writes a separate file for
+  CLI use.{% else %}Saving under a new name writes a separate file to <code>configs/</code>
+  for CLI use; the dashboard only runs the {{ default_config_label }} configuration.{% endif %}</p>
   <textarea id="config-editor" class="mono" spellcheck="false"
-            data-name="{{ name }}">{{ content }}</textarea>
+            data-name="{{ name }}" data-is-default="{{ 'true' if is_default else 'false' }}">{{ content }}</textarea>
   <div class="field-row">
     <button class="primary" id="validate-btn" type="button">Validate</button>
-    <label class="wide"><span>Save as</span>
+    {% if is_default %}
+    <button class="primary" id="save-default-btn" type="button">Validate and save</button>
+    {% endif %}
+    <label class="wide"><span>Save a copy as</span>
       <input id="save-as" type="text" placeholder="my_variant.yaml"></label>
-    <button id="save-btn" type="button">Validate and save</button>
+    <button id="save-btn" type="button">Validate and save copy</button>
   </div>
   <p id="config-status" role="status"></p>
 </section>
 
+<section class="panel">
+  <h2>Site location (latitude / longitude)</h2>
+  <div class="map-wrap">
+    <svg id="site-map" viewBox="-180 -90 360 180" preserveAspectRatio="xMidYMid meet"
+         role="img" aria-label="World map. Click to pick the site location.">
+      <rect class="map-sea" x="-180" y="-90" width="360" height="180"></rect>
+      <path id="site-map-land" class="map-land" d=""></path>
+      <circle id="site-map-marker" class="map-marker" r="2.2" hidden></circle>
+    </svg>
+  </div>
+  <div class="field-row">
+    <label><span>Latitude (°N)</span>
+      <input id="site-lat" type="number" step="0.0001" min="-90" max="90" autocomplete="off"></label>
+    <label><span>Longitude (°E)</span>
+      <input id="site-lon" type="number" step="0.0001" min="-180" max="180" autocomplete="off"></label>
+    <button id="apply-location" type="button">Apply to config above</button>
+    <span id="location-status" class="hint" role="status"></span>
+  </div>
+  <p class="hint" id="provider-note">Click the map (or type coordinates) and press
+  "Apply to config above" to update <code>site.latitude</code> / <code>site.longitude</code>
+  in the editor — then validate and save as usual. The Default configuration uses the
+  <code>nasa_power</code> weather provider, so the chosen location changes the real weather
+  the simulation runs on: hourly irradiance (GHI/DNI/DHI), air temperature, wind speed,
+  relative humidity, and precipitation are fetched from NASA POWER for those coordinates
+  (once per location and period, then cached under <code>data/cache/weather</code>).
+  Two things do <strong>not</strong> follow the map: soiling/dust-event and cost calibration
+  parameters remain the Riyadh central-v2 assumption set wherever the site is placed, and
+  with the <code>fixture</code> or <code>csv</code> providers the weather data is fixed, so
+  coordinates are recorded as metadata only.</p>
+  <p class="hint" id="provider-warning" role="note" hidden></p>
+</section>
+
+{% endblock %}
+{% block scripts %}
+<script src="/static/world_land.js"></script>
+<script>initSiteMap();</script>
 {% endblock %}

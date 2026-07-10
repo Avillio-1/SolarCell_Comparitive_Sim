@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -10,8 +10,13 @@ from tests.unit.test_weather import _request
 
 from solarclean.application.use_cases import _weather_request
 from solarclean.config.loader import load_config
-from solarclean.config.models import SolarCleanConfig
-from solarclean.domain.coating.strategy import CoatingStrategy
+from solarclean.config.models import CoatingConfig, CoatingPhysicsConfig, SolarCleanConfig
+from solarclean.domain.coating.state import CoatingCohortState
+from solarclean.domain.coating.strategy import (
+    CoatingStrategy,
+    _effective_multiplier,
+    _effectiveness_after_degradation,
+)
 from solarclean.domain.events.tape import generate_event_tape
 from solarclean.domain.scenario.contracts import ScenarioContext
 from solarclean.domain.simulation.scenario_engine import ScenarioSimulationEngine
@@ -163,6 +168,45 @@ def test_coating_passive_cleaning_events_include_dew_and_dust_metadata() -> None
     assert json.loads(event.to_record()["metadata"])["dust_removed"] == pytest.approx(
         metadata["dust_removed"]
     )
+    assert event.effective_for_energy_date == event.date + timedelta(days=1)
+    assert result.daily_results[0].extensions["cleanliness_ratio"] == pytest.approx(
+        metadata["dust_soiling_ratio_before"]
+    )
+
+
+def test_coating_process_energy_is_recorded_once_at_deployment() -> None:
+    config = load_config(Path("configs/offline_fixture.yaml"))
+    result = ScenarioSimulationEngine(_strategy(config)).run(_context(config), random_seed=42)
+    expected = result.daily_results[0].extensions["coating_cost_basis"]["process_energy_kwh"]
+
+    assert result.daily_results[0].operational.energy_used_kwh == pytest.approx(expected)
+    assert all(day.operational.energy_used_kwh == 0.0 for day in result.daily_results[1:])
+
+
+def test_degradation_scales_dust_optical_and_cooling_mechanisms_to_neutral() -> None:
+    coating = CoatingConfig(
+        physics=CoatingPhysicsConfig(
+            initial_effectiveness_fraction=1.0,
+            annual_degradation_fraction=1.0,
+        )
+    )
+    cohort = CoatingCohortState(
+        cohort_id=0,
+        panel_count=1,
+        applied=True,
+        age_days=365,
+        effectiveness_fraction=1.0,
+        degradation_fraction=0.0,
+        dust_soiling_ratio=1.0,
+        bird_drop_coverage_fraction=0.0,
+        bird_drop_loss_fraction=0.0,
+    )
+
+    effectiveness = _effectiveness_after_degradation(cohort, coating)
+
+    assert effectiveness == 0.0
+    assert _effective_multiplier(effectiveness, 0.2) == pytest.approx(1.0)
+    assert _effective_multiplier(effectiveness, 1.1) == pytest.approx(1.0)
 
 
 def test_coating_bird_removal_events_include_bounded_metadata() -> None:
