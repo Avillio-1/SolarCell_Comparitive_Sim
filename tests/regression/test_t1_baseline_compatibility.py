@@ -4,9 +4,9 @@ import json
 from pathlib import Path
 
 import pytest
+from tests.config_factory import fixture_config
 from tests.unit.test_weather import _request
 
-from solarclean.config.loader import load_config
 from solarclean.domain.contamination.soiling import KimberStyleSoilingModel
 from solarclean.domain.events.tape import generate_event_tape
 from solarclean.domain.farm.representation import CohortFarm
@@ -16,7 +16,7 @@ from solarclean.infrastructure.weather.fixture import FixtureWeatherProvider
 
 
 def test_t1_shared_engine_preserves_offline_baseline_results() -> None:
-    config = load_config(Path("configs/offline_fixture.yaml"))
+    config = fixture_config()
     expected = json.loads(
         Path("data/fixtures/regression_expected_offline_summary.json").read_text(encoding="utf-8")
     )

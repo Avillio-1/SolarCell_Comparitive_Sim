@@ -172,6 +172,50 @@ def daily_energy_series(run_dir: Path) -> dict[str, object] | None:
     return daily_series(run_dir, "actual_energy_kwh")
 
 
+def daily_cleanliness_series(run_dir: Path) -> dict[str, object] | None:
+    """Read the contamination ratio actually used for each day's generation."""
+
+    path = run_dir / "scenario_daily_summary.csv"
+    if not path.is_file():
+        return None
+    header, rows = read_csv_rows(path)
+    try:
+        date_col = header.index("date")
+        scenario_col = header.index("scenario_name")
+    except ValueError:
+        return None
+    preferred_columns = {
+        "baseline": "extension_dust_soiling_ratio",
+        "reactive": "extension_average_dust_soiling_ratio",
+        "coating": "extension_cleanliness_ratio",
+    }
+    fallback_col = header.index("soiling_ratio") if "soiling_ratio" in header else None
+    dates: list[str] = []
+    series: dict[str, dict[str, float | None]] = {}
+    for row in rows:
+        date, scenario = row[date_col], row[scenario_col]
+        if date not in dates:
+            dates.append(date)
+        column_name = preferred_columns.get(scenario)
+        value_col = header.index(column_name) if column_name in header else fallback_col
+        raw = row[value_col] if value_col is not None else ""
+        try:
+            value: float | None = float(raw)
+        except ValueError:
+            value = None
+        series.setdefault(scenario, {})[date] = value
+    return {
+        "dates": dates,
+        "series": {
+            scenario: [values.get(date) for date in dates] for scenario, values in series.items()
+        },
+    }
+
+
+def daily_energy_series(run_dir: Path) -> dict[str, object] | None:
+    return daily_series(run_dir, "actual_energy_kwh")
+
+
 def text_preview(path: Path) -> str | None:
     try:
         if path.stat().st_size > _TEXT_PREVIEW_LIMIT_BYTES:

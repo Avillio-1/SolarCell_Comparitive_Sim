@@ -1,7 +1,0 @@
-{
-  "absolute_difference_kwh": 7.275957614183426e-12,
-  "cohort_energy_kwh": 28042.50025091374,
-  "passed": true,
-  "representative_energy_kwh": 28042.50025091375,
-  "tolerance_kwh": 1e-06
-}

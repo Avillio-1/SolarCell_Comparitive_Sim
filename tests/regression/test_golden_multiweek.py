@@ -4,17 +4,16 @@ import json
 from pathlib import Path
 
 import pytest
+from tests.config_factory import fixture_config
 
 from solarclean.application.phase35 import Phase35Validator
-from solarclean.config.loader import load_config
 
 
 def test_multiweek_golden_regression_fixture(tmp_path: Path) -> None:
     expected = json.loads(
         Path("data/fixtures/golden_multiweek_expected.json").read_text(encoding="utf-8")
     )
-    config = load_config(
-        Path("configs/offline_fixture.yaml"),
+    config = fixture_config(
         overrides={
             "simulation": {
                 "start": "2025-01-01T00:00:00+03:00",

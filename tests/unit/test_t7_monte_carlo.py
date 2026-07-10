@@ -6,6 +6,7 @@ from types import MappingProxyType
 
 import pandas as pd
 import pytest
+from tests.config_factory import fixture_config
 
 from solarclean.application.comparison import CANONICAL_SCENARIO_IDS
 from solarclean.application.monte_carlo import (
@@ -13,14 +14,10 @@ from solarclean.application.monte_carlo import (
     MonteCarloTrialRecord,
     _majority_winner,
 )
-from solarclean.config.loader import load_config
 
 
 def _fixture_config(output_dir: Path):
-    return load_config(
-        Path("configs/offline_fixture.yaml"),
-        overrides={"output": {"base_directory": output_dir}},
-    )
+    return fixture_config(overrides={"output": {"base_directory": output_dir}})
 
 
 def test_monte_carlo_requires_at_least_two_trials(tmp_path: Path) -> None:

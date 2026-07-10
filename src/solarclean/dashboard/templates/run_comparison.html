@@ -146,10 +146,10 @@ run. Failure messages are in <code>reconciliation_report.json</code>.</p>
 
 {% if daily_soiling %}
 <section class="panel">
-  <h2>Daily soiling ratio by scenario</h2>
+  <h2>Daily contamination cleanliness by scenario</h2>
   <canvas id="daily-soiling-chart" height="110"></canvas>
-  <p class="hint">1.0 = perfectly clean panels. Values are the stored <code>soiling_ratio</code>
-    column of the daily summary.</p>
+  <p class="hint">1.0 = perfectly clean panels. Each scenario uses its stored dust or
+    contamination-cleanliness field from the state that produced that day's energy.</p>
 </section>
 {% endif %}
 

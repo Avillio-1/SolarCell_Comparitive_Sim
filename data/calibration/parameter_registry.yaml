@@ -5,15 +5,12 @@ metadata:
   retrieval_date: "2026-06-30"
   climate_context: Hot arid Gulf interior site using Asia/Riyadh daily aggregation.
   current_config_presets:
-    low: configs/calibration/low.yaml
-    central: configs/calibration/central.yaml
-    central_v2_t6: configs/offline_fixture_full_year.yaml
-    high: configs/calibration/high.yaml
+    default: configs/default.yaml
   corrected_assumption_set: riyadh_central_v2
   scope_note: >
-    Current production presets only include sections accepted by SolarCleanConfig.
-    Future T2, T3, and T4 paths are registered here and documented as interface
-    requests until their modules publish strict config models.
+    The sole runtime configuration is configs/default.yaml. Low and high registry
+    values are consumed programmatically by sensitivity analysis rather than
+    duplicated as YAML overlays.
 parameters:
   - name: soiling.base_daily_loss_fraction
     configuration_path: soiling.base_daily_soiling_loss_fraction

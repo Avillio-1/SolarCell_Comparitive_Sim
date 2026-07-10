@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -16,6 +18,7 @@ from solarclean.infrastructure.weather.cache import WeatherCache
 from solarclean.infrastructure.weather.csv_provider import CsvWeatherProvider
 from solarclean.infrastructure.weather.fixture import FixtureWeatherProvider
 from solarclean.infrastructure.weather.nasa_power import (
+    NASA_PARAMETER_MAP,
     NasaPowerWeatherProvider,
     WeatherProviderError,
 )
@@ -200,6 +203,17 @@ def test_weather_cache_round_trips_dataset(tmp_path: Path) -> None:
     assert cached.metadata["provider"] == "fixture"
 
 
+def test_weather_cache_schema_invalidates_legacy_normalized_files(tmp_path: Path) -> None:
+    request = _request()
+    cache = WeatherCache(tmp_path)
+    legacy_payload = {"provider": "nasa_power", "request": request.cache_identity()}
+    legacy_key = hashlib.sha256(
+        json.dumps(legacy_payload, sort_keys=True).encode("utf-8")
+    ).hexdigest()
+
+    assert cache.key_for(request, "nasa_power") != legacy_key
+
+
 class _MalformedClient:
     def get(self, *_args: object, **_kwargs: object) -> object:
         class Response:
@@ -220,3 +234,26 @@ def test_nasa_provider_rejects_malformed_response(tmp_path: Path) -> None:
 
     with pytest.raises(WeatherProviderError, match="missing NASA parameter"):
         provider.load(_request())
+
+
+def test_nasa_provider_converts_declared_daily_precipitation_rate_to_hourly_mm(
+    tmp_path: Path,
+) -> None:
+    request = _request_for_hours(3)
+    timestamps = ("2024123121", "2024123122", "2024123123")
+    parameters = {
+        nasa_name: {timestamp: 0.0 for timestamp in timestamps}
+        for nasa_name in NASA_PARAMETER_MAP.values()
+    }
+    parameters["PRECTOTCORR"] = {timestamp: 24.0 for timestamp in timestamps}
+    payload = {
+        "parameters": {"PRECTOTCORR": {"units": "mm/day"}},
+        "properties": {"parameter": parameters},
+    }
+    provider = NasaPowerWeatherProvider(cache_directory=tmp_path, cache_enabled=False)
+
+    dataset = provider._normalize(payload, request)
+
+    assert dataset.hourly["precipitation_mm"].tolist() == pytest.approx([1.0, 1.0, 1.0])
+    assert dataset.metadata["source_units"]["PRECTOTCORR"] == "mm/day"
+    assert dataset.metadata["normalized_units"]["precipitation_mm"] == "mm/hour"

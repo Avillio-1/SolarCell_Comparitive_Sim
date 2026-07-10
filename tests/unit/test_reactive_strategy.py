@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
+from tests.config_factory import fixture_config
 from tests.unit.test_weather import _request
 
-from solarclean.config.loader import load_config
 from solarclean.domain.contamination.soiling import DailyEnvironment
 from solarclean.domain.events.tape import generate_event_tape
 from solarclean.domain.reactive_cv.metrics import summarize_detection_performance
@@ -22,7 +21,7 @@ from solarclean.infrastructure.weather.fixture import FixtureWeatherProvider
 
 def _context(config=None):
     if config is None:
-        config = load_config(Path("configs/offline_fixture.yaml"))
+        config = fixture_config()
     weather = FixtureWeatherProvider().load(_request())
     clean = PVWattsPowerModel().calculate_hourly(weather, config.pv_system)
     dates = [date.fromisoformat(str(day)) for day in clean.daily.index.astype(str)]
@@ -76,7 +75,7 @@ def _day_input(context: ScenarioContext, day_index: int) -> DailyScenarioInput:
 
 
 def _targeted_cleaning_config():
-    config = load_config(Path("configs/offline_fixture.yaml"))
+    config = fixture_config()
     reactive = config.reactive_cv.model_copy(
         update={
             "inspection": config.reactive_cv.inspection.model_copy(
@@ -217,7 +216,7 @@ def test_post_generation_cleaning_does_not_retroactively_increase_daily_energy()
 
 
 def test_capacity_skipped_inspections_are_backlogged_and_prioritized() -> None:
-    config = load_config(Path("configs/offline_fixture.yaml"))
+    config = fixture_config()
     reactive = config.reactive_cv.model_copy(
         update={
             "inspection": config.reactive_cv.inspection.model_copy(

@@ -12,7 +12,7 @@
 - `src/solarclean/infrastructure`: adapters for NASA POWER, CSV/fixture weather, pvlib PVWatts, output persistence, and plotting.
 - `src/solarclean/cli`: Typer command wrappers only.
 - `src/solarclean/config`: YAML loading and validated configuration models.
-- `configs`: runnable YAML examples.
+- `configs/default.yaml`: the sole runtime configuration.
 - `data/fixtures`: deterministic test-only weather and regression fixtures.
 - `data/local_weather`: example measured-weather CSV import files.
 - `outputs`: generated run directories; do not commit generated outputs if git is later initialized.
@@ -64,23 +64,15 @@ Type check:
 python -m mypy src
 ```
 
-Run the offline commands:
+Run the default Riyadh NASA POWER configuration when internet access is available:
 
 ```powershell
-solarclean fetch-weather --config configs/offline_fixture.yaml
-solarclean run-clean --config configs/offline_fixture.yaml
-solarclean run-baseline --config configs/offline_fixture.yaml
-```
-
-Run the Riyadh NASA POWER configuration when internet access is available:
-
-```powershell
-solarclean fetch-weather --config configs/riyadh_2025.yaml
-solarclean run-clean --config configs/riyadh_2025.yaml
-solarclean run-baseline --config configs/riyadh_2025.yaml
-solarclean validate-weather --config configs/riyadh_2025.yaml
-solarclean validate-phase-3-5 --config configs/riyadh_2025.yaml
-solarclean profile-full-year --config configs/riyadh_2025.yaml
+solarclean fetch-weather --config configs/default.yaml
+solarclean run-clean --config configs/default.yaml
+solarclean run-baseline --config configs/default.yaml
+solarclean validate-weather --config configs/default.yaml
+solarclean validate-phase-3-5 --config configs/default.yaml
+solarclean profile-full-year --config configs/default.yaml
 ```
 
 ## Architectural Boundaries

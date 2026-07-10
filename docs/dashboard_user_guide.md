@@ -79,8 +79,8 @@ drive the simulation — see "Map location picker" below. The first run for a
 given location fetches the weather from NASA POWER (internet required) and
 caches it under `data/cache/weather`; later runs reuse the cache. There is
 intentionally no config picker; "view / edit config" opens the Default in the
-editor, where it can be validated and saved. Other YAML files in `configs/`
-(including the offline fixture configs) remain usable from the CLI.
+editor, where it can be validated and saved. It is the only runtime YAML in
+`configs/`; deterministic test variants are created in Python.
 
 **Analyses.** The launch panel offers the same five analyses as the CLI:
 
@@ -217,8 +217,7 @@ artifact list):
 "view / edit config" opens the Default configuration. **Validate** round-trips
 the text through `load_config`, so schema errors are the same Pydantic
 messages a CLI run would raise. **Validate and save** overwrites the Default —
-the next dashboard run uses it. "Save a copy as" writes a separate file into
-`configs/` for CLI use without touching the Default.
+the next dashboard or CLI run uses it.
 
 ### Map location picker
 

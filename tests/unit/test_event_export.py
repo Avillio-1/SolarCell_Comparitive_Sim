@@ -6,8 +6,8 @@ from datetime import date
 from pathlib import Path
 
 import pandas as pd
+from tests.config_factory import fixture_config
 
-from solarclean.config.loader import load_config
 from solarclean.domain.contamination.soiling import SimulationEvent
 from solarclean.domain.scenario.contracts import (
     AnnualScenarioResult,
@@ -19,10 +19,7 @@ from solarclean.infrastructure.persistence.outputs import OutputWriter
 
 
 def _writer(tmp_path: Path) -> OutputWriter:
-    config = load_config(
-        Path("configs/offline_fixture.yaml"),
-        overrides={"output": {"base_directory": tmp_path}},
-    )
+    config = fixture_config(overrides={"output": {"base_directory": tmp_path}})
     return OutputWriter(config)
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from types import MappingProxyType
 from typing import Any
@@ -70,6 +70,11 @@ class ExogenousEventTape:
     seed: int
     events: tuple[ExogenousEvent, ...]
     metadata: MappingProxyType[str, object] = MappingProxyType({})
+    _events_by_date: MappingProxyType[date, tuple[ExogenousEvent, ...]] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         sorted_events = tuple(
@@ -85,6 +90,16 @@ class ExogenousEventTape:
         )
         object.__setattr__(self, "events", sorted_events)
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+        events_by_date: dict[date, list[ExogenousEvent]] = {}
+        for event in sorted_events:
+            events_by_date.setdefault(event.date, []).append(event)
+        object.__setattr__(
+            self,
+            "_events_by_date",
+            MappingProxyType(
+                {event_date: tuple(events) for event_date, events in events_by_date.items()}
+            ),
+        )
 
     def to_records(self) -> list[dict[str, object]]:
         return [event.to_record() for event in self.events]
@@ -122,9 +137,7 @@ class ExogenousEventTape:
         dust_event_loss: float | None = None
         cohort_variation: dict[int, float] = {}
         bird_coverage: dict[int, float] = {}
-        for event in self.events:
-            if event.date != day:
-                continue
+        for event in self._events_by_date.get(day, ()):
             if event.event_type == "dust_stochastic_multiplier":
                 dust_multiplier = event.value
             elif event.event_type == "heavy_dust_event_loss":

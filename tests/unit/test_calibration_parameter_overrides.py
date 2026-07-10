@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from tests.config_factory import config_from_default
 
-from solarclean.config.loader import load_config
 from solarclean.domain.calibration.parameter_overrides import (
     apply_config_override,
     apply_economics_override,
@@ -24,7 +24,7 @@ def registry() -> ParameterRegistry:
 
 @pytest.fixture(scope="module")
 def base_config():
-    return load_config(ROOT / "configs" / "offline_fixture_full_year.yaml")
+    return config_from_default()
 
 
 def test_catalog_accounts_for_every_registry_parameter_exactly_once(registry) -> None:

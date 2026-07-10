@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import timedelta
 from types import MappingProxyType
-from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -173,7 +172,7 @@ class ReactiveCVStrategy:
             daily_events=tuple(update.events),
             soiling=self.soiling_config,
             rainfall=self.rainfall_config,
-            precipitation_mm=day_input.environment.precipitation_mm,
+            precipitation_mm=0.0,
             variation_fraction=self.farm_config.cohort_soiling_variation_fraction,
             rng=rng,
             cohort_variation_multipliers=dict(day_input.event_inputs.cohort_variation_multipliers)
@@ -182,7 +181,7 @@ class ReactiveCVStrategy:
         )
         advanced = self.farm.advance_day(
             varied,
-            day_input.environment.precipitation_mm,
+            0.0,
             rng,
             dict(day_input.event_inputs.bird_coverage_additions)
             if day_input.event_inputs is not None
@@ -192,12 +191,19 @@ class ReactiveCVStrategy:
             DomainEvent.from_simulation_event(event, scenario_name=self.name)
             for event in advanced.events
         )
-        true_cohorts = {cohort.cohort_id: cohort for cohort in advanced.state.cohorts}
+        energy_cohorts = tuple(advanced.state.cohorts)
+        rain_state = self.farm.apply_rain_cleaning(
+            advanced.state,
+            day_input.environment.precipitation_mm,
+            soiling=self.soiling_config,
+            rainfall=self.rainfall_config,
+        )
+        true_cohorts = {cohort.cohort_id: cohort for cohort in rain_state.cohorts}
 
         # 2. Which cohorts are due for inspection today, and can the drone fly.
         scheduled_due = self.scheduler.due_cohorts(day_input.day_index).due_cohort_ids
         due = _merge_unique(typed_state.inspection_backlog, scheduled_due)
-        hourly = _hourly_for_day(context.weather.hourly, day_input.date)
+        hourly = context.weather.for_day(day_input.date)
         wind_speed = float(hourly["wind_speed_m_s"].max()) if not hourly.empty else 0.0
         flight_plan = self.drone_fleet.plan_flights(
             due,
@@ -272,11 +278,8 @@ class ReactiveCVStrategy:
 
         # 5. Today's generation uses the pre-clean state. Inspections and crew
         # actions occur after the modeled generation phase and affect tomorrow.
-        pre_clean_cohorts = tuple(
-            true_cohorts[cohort.cohort_id] for cohort in advanced.state.cohorts
-        )
         farm_energy = self.farm.calculate_daily_energy(
-            FarmState(date=day_input.date, cohorts=list(pre_clean_cohorts)),
+            FarmState(date=day_input.date, cohorts=list(energy_cohorts)),
             day_input.clean_energy_per_panel_kwh,
         )
         actual_energy = min(day_input.clean_energy_kwh, max(0.0, farm_energy.actual_energy_kwh))
@@ -297,7 +300,7 @@ class ReactiveCVStrategy:
         true_cohorts = cleaning_pass.true_cohorts
         events.extend(cleaning_pass.events)
 
-        next_cohorts = tuple(true_cohorts[cohort.cohort_id] for cohort in advanced.state.cohorts)
+        next_cohorts = tuple(true_cohorts[cohort.cohort_id] for cohort in rain_state.cohorts)
 
         # 7. Confusion-matrix counters for offline detection-performance evaluation
         # (never fed back into dispatch -- see metrics.py).
@@ -339,7 +342,8 @@ class ReactiveCVStrategy:
             ),
             events=tuple(events),
             extensions={
-                "average_dust_soiling_ratio": _average_dust(next_cohorts),
+                "average_dust_soiling_ratio": _average_dust(energy_cohorts),
+                "next_day_average_dust_soiling_ratio": _average_dust(next_cohorts),
                 "queue_length": len(decision.updated_queue),
                 "weather_cancelled_flight": flight_plan.weather_cancelled,
                 "flights_flown": flight_plan.flights_flown,
@@ -391,9 +395,7 @@ class ReactiveCVStrategy:
                 ),
                 "dirty_cleaning_count": cleaning_pass.dirty_cleaning_count,
                 "false_positive_cleaning_count": cleaning_pass.false_positive_cleaning_count,
-                "event_tape_checksum": (
-                    context.event_tape.checksum() if context.event_tape is not None else ""
-                ),
+                "event_tape_checksum": str(context.metadata.get("event_tape_checksum", "")),
             },
         )
         next_state = ReactiveScenarioState(
@@ -991,8 +993,3 @@ def _count_actionable_observations(
         else:
             tn += 1
     return tp, fp, fn, tn, missed
-
-
-def _hourly_for_day(hourly: pd.DataFrame, day: object) -> pd.DataFrame:
-    frame = cast(pd.DataFrame, hourly.loc[pd.DatetimeIndex(hourly.index).date == day])
-    return frame

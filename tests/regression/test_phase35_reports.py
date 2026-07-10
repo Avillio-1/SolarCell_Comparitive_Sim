@@ -3,14 +3,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from tests.config_factory import fixture_config
+
 from solarclean.application.phase35 import Phase35Validator
-from solarclean.config.loader import load_config
 
 
 def test_phase35_fixture_report_files_are_serializable(tmp_path: Path) -> None:
-    config = load_config(
-        Path("configs/offline_fixture.yaml"), overrides={"output": {"base_directory": tmp_path}}
-    )
+    config = fixture_config(overrides={"output": {"base_directory": tmp_path}})
 
     result = Phase35Validator(config).run()
 

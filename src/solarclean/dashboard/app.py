@@ -50,8 +50,8 @@ _PACKAGE_DIR = Path(__file__).parent
 # The one config the launch form runs, presented as "Default" in the UI.
 # It uses the nasa_power weather provider, so the site coordinates (editable
 # via the map picker on the config page) genuinely change the weather the
-# simulation runs on. Other YAML files in configs/ remain editable and
-# CLI-runnable, but the dashboard intentionally offers no config picker.
+# simulation runs on. The project intentionally has no config picker or
+# alternate runtime YAMLs.
 DEFAULT_CONFIG_NAME = "default.yaml"
 DEFAULT_CONFIG_LABEL = "Default"
 
@@ -159,6 +159,8 @@ templates.env.filters["sar"] = _format_sar
 def _config_path(name: str) -> Path:
     if not _CONFIG_NAME_PATTERN.match(name):
         raise HTTPException(status_code=400, detail="Config name must be <letters-digits-_->.yaml")
+    if name != DEFAULT_CONFIG_NAME:
+        raise HTTPException(status_code=404, detail=f"Only {DEFAULT_CONFIG_NAME} is supported")
     path = _CONFIGS_DIR / name
     if not path.is_file():
         raise HTTPException(status_code=404, detail=f"No config named {name} in configs/")
@@ -644,7 +646,7 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
                 "headline": _headline_cards(recommendation),
                 "daily_energy": artifacts.daily_energy_series(run_dir),
                 "daily_loss": artifacts.daily_series(run_dir, "energy_loss_kwh"),
-                "daily_soiling": artifacts.daily_series(run_dir, "soiling_ratio"),
+                "daily_soiling": artifacts.daily_cleanliness_series(run_dir),
                 "daily_cumgain": artifacts.daily_series(
                     run_dir, "cumulative_energy_gain_vs_baseline_kwh"
                 ),
@@ -1055,6 +1057,14 @@ def validate_config(name: str, body: ConfigBody) -> JSONResponse:
         tmp_path.unlink(missing_ok=True)
 
     if body.save_as:
+        if body.save_as != DEFAULT_CONFIG_NAME:
+            return JSONResponse(
+                {
+                    "valid": True,
+                    "saved": False,
+                    "error": f"Only {DEFAULT_CONFIG_NAME} may be saved",
+                }
+            )
         if not _CONFIG_NAME_PATTERN.match(body.save_as):
             return JSONResponse(
                 {
@@ -1063,6 +1073,6 @@ def validate_config(name: str, body: ConfigBody) -> JSONResponse:
                     "error": "Save name must be <letters-digits-_->.yaml",
                 }
             )
-        (_CONFIGS_DIR / body.save_as).write_text(body.content, encoding="utf-8")
-        return JSONResponse({"valid": True, "saved": True, "saved_as": body.save_as})
+        (_CONFIGS_DIR / DEFAULT_CONFIG_NAME).write_text(body.content, encoding="utf-8")
+        return JSONResponse({"valid": True, "saved": True, "saved_as": DEFAULT_CONFIG_NAME})
     return JSONResponse({"valid": True, "saved": False})

@@ -317,10 +317,7 @@
           statusEl.textContent = result.error;
         } else if (result.saved) {
           statusEl.className = "ok";
-          statusEl.textContent =
-            result.saved_as === editor.dataset.name
-              ? "Valid. Saved — the next run uses this configuration."
-              : "Valid. Saved as configs/" + result.saved_as + " (CLI-runnable copy).";
+          statusEl.textContent = "Valid. Saved — the next run uses this configuration.";
         } else if (result.error) {
           statusEl.className = "bad";
           statusEl.textContent = result.error;
@@ -344,17 +341,113 @@
         validateConfig(document.getElementById("config-editor").dataset.name);
       });
     }
-    document.getElementById("save-btn").addEventListener("click", function () {
-      var name = document.getElementById("save-as").value.trim();
-      var statusEl = document.getElementById("config-status");
-      if (!name) {
-        statusEl.className = "bad";
-        statusEl.textContent = "Pick a file name to save the copy as.";
+  }
+
+  // --- site location picker --------------------------------------------
+  // Presentation-only helper: it edits the site.latitude / site.longitude
+  // lines of the YAML in the editor textarea. Whether those coordinates
+  // matter is stated honestly from weather.provider — only nasa_power
+  // fetches weather by location; fixture/csv weather ignores it.
+
+  function parseYamlScalar(content, key) {
+    var match = content.match(new RegExp("^\\s*" + key + ":\\s*([^\\s#]+)", "m"));
+    return match ? match[1] : null;
+  }
+
+  function updateProviderNote(content) {
+    var warning = document.getElementById("provider-warning");
+    if (!warning) return;
+    var provider = parseYamlScalar(content, "provider");
+    if (provider === "nasa_power") {
+      warning.hidden = false;
+      warning.textContent =
+        "weather.provider is nasa_power: runs fetch live NASA POWER weather for these " +
+        "coordinates — hourly irradiance, temperature, wind, humidity, and precipitation " +
+        "all change with the location. Soiling/dust and cost calibration stay on the " +
+        "Riyadh central-v2 assumption set.";
+    } else if (provider) {
+      warning.hidden = false;
+      warning.textContent =
+        "weather.provider is \"" + provider + "\": weather data is fixed, so the coordinates " +
+        "below are recorded as metadata only and will NOT change simulation results.";
+    } else {
+      warning.hidden = true;
+    }
+  }
+
+  window.initSiteMap = function () {
+    var svg = document.getElementById("site-map");
+    var land = document.getElementById("site-map-land");
+    var editor = document.getElementById("config-editor");
+    if (!svg || !land || !editor) return;
+    if (typeof window.SOLARCLEAN_WORLD_LAND === "string") {
+      land.setAttribute("d", window.SOLARCLEAN_WORLD_LAND);
+    }
+
+    var marker = document.getElementById("site-map-marker");
+    var latInput = document.getElementById("site-lat");
+    var lonInput = document.getElementById("site-lon");
+    var statusEl = document.getElementById("location-status");
+
+    function placeMarker(lat, lon) {
+      if (isNaN(lat) || isNaN(lon)) return;
+      marker.setAttribute("cx", lon);
+      marker.setAttribute("cy", -lat); // SVG y grows downward; viewBox is -90..90
+      marker.hidden = false;
+    }
+
+    // Seed inputs and marker from the YAML currently in the editor.
+    var initialLat = parseFloat(parseYamlScalar(editor.value, "latitude"));
+    var initialLon = parseFloat(parseYamlScalar(editor.value, "longitude"));
+    if (!isNaN(initialLat)) latInput.value = initialLat;
+    if (!isNaN(initialLon)) lonInput.value = initialLon;
+    placeMarker(initialLat, initialLon);
+    updateProviderNote(editor.value);
+    editor.addEventListener("input", function () { updateProviderNote(editor.value); });
+
+    svg.addEventListener("click", function (event) {
+      var point = new DOMPoint(event.clientX, event.clientY).matrixTransform(
+        svg.getScreenCTM().inverse()
+      );
+      var lon = Math.min(180, Math.max(-180, point.x));
+      var lat = Math.min(90, Math.max(-90, -point.y));
+      latInput.value = lat.toFixed(4);
+      lonInput.value = lon.toFixed(4);
+      placeMarker(lat, lon);
+      statusEl.textContent = "Picked " + lat.toFixed(4) + ", " + lon.toFixed(4) +
+        " — press \"Apply to config above\" to write it into the YAML.";
+    });
+
+    [latInput, lonInput].forEach(function (input) {
+      input.addEventListener("input", function () {
+        placeMarker(parseFloat(latInput.value), parseFloat(lonInput.value));
+      });
+    });
+
+    document.getElementById("apply-location").addEventListener("click", function () {
+      var lat = parseFloat(latInput.value);
+      var lon = parseFloat(lonInput.value);
+      if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+        statusEl.textContent = "Latitude must be -90..90 and longitude -180..180.";
         return;
       }
-      validateConfig(name);
+      var content = editor.value;
+      var latPattern = /^(\s*latitude:\s*).*$/m;
+      var lonPattern = /^(\s*longitude:\s*).*$/m;
+      if (!latPattern.test(content) || !lonPattern.test(content)) {
+        statusEl.textContent =
+          "Could not find latitude:/longitude: lines in the YAML — edit them manually.";
+        return;
+      }
+      editor.value = content
+        .replace(latPattern, "$1" + lat)
+        .replace(lonPattern, "$1" + lon);
+      placeMarker(lat, lon);
+      updateProviderNote(editor.value);
+      statusEl.textContent = "Updated site.latitude / site.longitude in the editor — " +
+        "validate and save to keep it.";
     });
-  }
+  };
 
   // --- site location picker --------------------------------------------
   // Presentation-only helper: it edits the site.latitude / site.longitude
@@ -555,7 +648,9 @@
     var payload = window.solarcleanCharts || {};
     drawScenarioLines("daily-energy-chart", payload.dailyEnergy, "AC energy (kWh/day)");
     drawScenarioLines("daily-loss-chart", payload.dailyLoss, "Energy loss (kWh/day)");
-    drawScenarioLines("daily-soiling-chart", payload.dailySoiling, "Soiling ratio (1 = clean)");
+    drawScenarioLines(
+      "daily-soiling-chart", payload.dailySoiling, "Dust / contamination cleanliness (1 = clean)"
+    );
     drawScenarioLines(
       "daily-cumgain-chart", payload.dailyCumGain, "Cumulative gain vs baseline (kWh)"
     );

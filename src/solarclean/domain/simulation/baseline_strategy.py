@@ -83,8 +83,9 @@ class BaselineStrategy:
         cohort_count = 1
         cohort_records: tuple[dict[str, object], ...] = ()
         farm_state = typed_state.farm_state
+        energy_dust_ratio = update.energy_state.dust_soiling_ratio
         if self.farm is None:
-            actual_energy = day_input.clean_energy_kwh * update.state.dust_soiling_ratio
+            actual_energy = day_input.clean_energy_kwh * energy_dust_ratio
         else:
             if farm_state is None:
                 raise ValueError("baseline cohort farm requires an initialized farm state")
@@ -100,7 +101,7 @@ class BaselineStrategy:
                     for event in update.events
                     if event.event_type == "heavy_dust_event"
                 ),
-                precipitation_mm=day_input.environment.precipitation_mm,
+                precipitation_mm=0.0,
                 soiling_model=self.soiling_model,
                 variation_fraction=(
                     self.farm_config.cohort_soiling_variation_fraction if self.farm_config else 0.0
@@ -114,23 +115,24 @@ class BaselineStrategy:
             )
             advanced = self.farm.advance_day(
                 varied_state,
-                day_input.environment.precipitation_mm,
+                0.0,
                 rng,
                 dict(day_input.event_inputs.bird_coverage_additions)
                 if day_input.event_inputs is not None
                 else None,
             )
-            farm_state = advanced.state
+            energy_farm_state = advanced.state
             events.extend(
                 DomainEvent.from_simulation_event(event, scenario_name=self.name)
                 for event in advanced.events
             )
             farm_energy = self.farm.calculate_daily_energy(
-                farm_state,
+                energy_farm_state,
                 day_input.clean_energy_per_panel_kwh,
             )
             actual_energy = min(day_input.clean_energy_kwh, farm_energy.actual_energy_kwh)
-            cohort_count = len(farm_state.cohorts)
+            energy_dust_ratio = energy_farm_state.aggregate_dust_soiling_ratio
+            cohort_count = len(energy_farm_state.cohorts)
             cohort_records = tuple(
                 {
                     "date": day_input.date.isoformat(),
@@ -144,7 +146,13 @@ class BaselineStrategy:
                     * cohort.dust_soiling_ratio
                     * (1.0 - cohort.bird_drop_loss_fraction),
                 }
-                for cohort in farm_state.cohorts
+                for cohort in energy_farm_state.cohorts
+            )
+            farm_state = self.farm.apply_rain_cleaning(
+                energy_farm_state,
+                day_input.environment.precipitation_mm,
+                soiling=self.soiling_model.config,
+                rainfall=self.soiling_model.rainfall,
             )
         actual_energy = min(day_input.clean_energy_kwh, max(0.0, actual_energy))
         result = DailyScenarioResult(
@@ -154,7 +162,7 @@ class BaselineStrategy:
             actual_energy_kwh=actual_energy,
             events=tuple(events),
             extensions={
-                "dust_soiling_ratio": update.state.dust_soiling_ratio,
+                "dust_soiling_ratio": energy_dust_ratio,
                 "precipitation_mm": day_input.environment.precipitation_mm,
                 "mean_relative_humidity_pct": day_input.environment.mean_relative_humidity_pct,
                 "cohort_count": cohort_count,

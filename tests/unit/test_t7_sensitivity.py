@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
+from tests.config_factory import fixture_config
 
 import solarclean.application.sensitivity as sensitivity_module
 from solarclean.application.comparison import CANONICAL_SCENARIO_IDS
@@ -15,14 +16,10 @@ from solarclean.application.sensitivity import (
     TwoWaySensitivityExperiment,
     VariantResult,
 )
-from solarclean.config.loader import load_config
 
 
 def _fixture_config(output_dir: Path):
-    return load_config(
-        Path("configs/offline_fixture.yaml"),
-        overrides={"output": {"base_directory": output_dir}},
-    )
+    return fixture_config(overrides={"output": {"base_directory": output_dir}})
 
 
 # --- One-way ----------------------------------------------------------------

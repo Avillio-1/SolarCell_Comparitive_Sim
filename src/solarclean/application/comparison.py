@@ -605,6 +605,7 @@ def _build_strategy(scenario_id: str, config: SolarCleanConfig) -> MitigationStr
             rainfall=config.rainfall_cleaning,
             birds=config.bird_droppings,
             farm=config.farm,
+            perfect_information=config.reactive_cv.perfect_information_benchmark,
             name="reactive",
         )
     if scenario_id == "coating":

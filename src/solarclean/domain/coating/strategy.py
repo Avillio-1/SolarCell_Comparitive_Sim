@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import date, timedelta
-from typing import cast
+from datetime import timedelta
 
 import numpy as np
 import pandas as pd
@@ -30,7 +29,10 @@ from solarclean.domain.contamination.soiling import (
     KimberStyleSoilingModel,
     SimulationEvent,
 )
-from solarclean.domain.farm.representation import advance_dust_ratio
+from solarclean.domain.farm.representation import (
+    advance_dust_ratio,
+    restore_dust_ratio_after_rain,
+)
 from solarclean.domain.scenario.contracts import (
     DailyScenarioInput,
     DailyScenarioResult,
@@ -103,7 +105,7 @@ class CoatingStrategy:
     ) -> StrategyStep:
         if not isinstance(state, CoatingScenarioState):
             raise TypeError("coating strategy state has the wrong type")
-        hourly = _hourly_for_day(context.weather.hourly, day_input.date)
+        hourly = context.weather.for_day(day_input.date)
         day_water = _daily_water(hourly, self.coating, self.cost_basis.total_coated_area_m2)
         condensed_per_m2 = (
             day_water.condensed_liters / self.cost_basis.total_coated_area_m2
@@ -141,7 +143,7 @@ class CoatingStrategy:
                 cohort.dust_soiling_ratio,
                 daily_loss_fraction=daily_loss,
                 dust_event_loss_fraction=dust_event_loss,
-                precipitation_mm=day_input.environment.precipitation_mm,
+                precipitation_mm=0.0,
                 soiling=self.soiling_model.config,
                 rainfall=self.soiling_model.rainfall,
                 cohort_variation_multiplier=variation,
@@ -151,8 +153,6 @@ class CoatingStrategy:
                 ),
             )
             coverage = cohort.bird_drop_coverage_fraction
-            if day_input.environment.precipitation_mm > 0.0:
-                coverage *= 1.0 - self.birds.rain_removal_efficiency
             coverage_addition = (
                 day_input.event_inputs.bird_coverage_additions.get(cohort.cohort_id, 0.0)
                 if day_input.event_inputs is not None
@@ -189,6 +189,14 @@ class CoatingStrategy:
                         cohort_id=cohort.cohort_id,
                     )
                 )
+            dust_ratio, coverage = _apply_natural_rain_cleaning(
+                dust_ratio=dust_ratio,
+                coverage=coverage,
+                precipitation_mm=day_input.environment.precipitation_mm,
+                soiling=self.soiling_model.config,
+                rainfall=self.soiling_model.rainfall,
+                bird_rain_removal_efficiency=self.birds.rain_removal_efficiency,
+            )
             restored = calculate_passive_dust_cleaning(
                 current_dust_soiling_ratio=dust_ratio,
                 condensed_liters_per_m2=condensed_per_m2,
@@ -332,7 +340,8 @@ class CoatingStrategy:
         total_bird_removed: float,
     ) -> DailyScenarioResult:
         cleanliness_ratio = _average_cleanliness(energy_cohorts)
-        average_dust_soiling_ratio = _average_dust(cohorts)
+        average_dust_soiling_ratio = _average_dust(energy_cohorts)
+        next_day_average_dust_soiling_ratio = _average_dust(cohorts)
         average_bird_loss_fraction = _average_bird_loss(cohorts)
         average_restored = total_restored / self.farm.total_panels
         average_bird_removed = total_bird_removed / self.farm.total_panels
@@ -349,7 +358,7 @@ class CoatingStrategy:
             cooling_delta_c=cooling_delta,
             gamma_pdc_per_c=self.pv_system.gamma_pdc_per_c,
         )
-        checksum = context.event_tape.checksum() if context.event_tape is not None else ""
+        checksum = str(context.metadata.get("event_tape_checksum", ""))
         extensions = {
             "clean_reference_energy_kwh": energy.clean_reference_energy_kwh,
             "optical_effect_kwh": energy.optical_effect_kwh,
@@ -377,6 +386,7 @@ class CoatingStrategy:
             "coating_age_days": max(cohort.age_days for cohort in cohorts),
             "coating_effectiveness_fraction": _average_effectiveness(cohorts),
             "average_dust_soiling_ratio": average_dust_soiling_ratio,
+            "next_day_average_dust_soiling_ratio": next_day_average_dust_soiling_ratio,
             "retained_dust_fraction": max(0.0, 1.0 - average_dust_soiling_ratio),
             "average_bird_loss_fraction": average_bird_loss_fraction,
             "bird_loss_fraction": average_bird_loss_fraction,
@@ -411,6 +421,27 @@ def _dust_event_losses(events: list[SimulationEvent]) -> tuple[float, float]:
     return daily_loss, dust_event_loss
 
 
+def _apply_natural_rain_cleaning(
+    *,
+    dust_ratio: float,
+    coverage: float,
+    precipitation_mm: float,
+    soiling: SoilingConfig,
+    rainfall: RainfallCleaningConfig,
+    bird_rain_removal_efficiency: float,
+) -> tuple[float, float]:
+    next_dust_ratio = restore_dust_ratio_after_rain(
+        dust_ratio,
+        precipitation_mm=precipitation_mm,
+        soiling=soiling,
+        rainfall=rainfall,
+    )
+    next_coverage = coverage
+    if precipitation_mm > 0.0:
+        next_coverage *= 1.0 - bird_rain_removal_efficiency
+    return next_dust_ratio, next_coverage
+
+
 @dataclass(frozen=True)
 class DailyWaterDiagnostics:
     dew_point_c: float
@@ -423,13 +454,6 @@ class DailyWaterDiagnostics:
     coated_surface_temperature_c: float
     relative_humidity_pct: float
     max_wind_speed_m_s: float
-
-
-def _hourly_for_day(hourly: pd.DataFrame, day: date) -> pd.DataFrame:
-    frame = cast(pd.DataFrame, hourly.loc[pd.DatetimeIndex(hourly.index).date == day])
-    if frame.empty:
-        raise ValueError(f"missing hourly weather for coating day {day.isoformat()}")
-    return frame
 
 
 def _daily_water(

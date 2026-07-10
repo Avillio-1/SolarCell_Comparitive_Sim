@@ -11,20 +11,12 @@
 <section class="panel">
   <p class="hint">Edits are checked with the same loader the simulator uses, so anything that
   validates here will load for a run.
-  {% if is_default %}<strong>Save</strong> updates the {{ default_config_label }} configuration
-  that every run uses; "Save a copy as" keeps the original and writes a separate file for
-  CLI use.{% else %}Saving under a new name writes a separate file to <code>configs/</code>
-  for CLI use; the dashboard only runs the {{ default_config_label }} configuration.{% endif %}</p>
+  <strong>Save</strong> updates the {{ default_config_label }} configuration that every run uses.</p>
   <textarea id="config-editor" class="mono" spellcheck="false"
             data-name="{{ name }}" data-is-default="{{ 'true' if is_default else 'false' }}">{{ content }}</textarea>
   <div class="field-row">
     <button class="primary" id="validate-btn" type="button">Validate</button>
-    {% if is_default %}
     <button class="primary" id="save-default-btn" type="button">Validate and save</button>
-    {% endif %}
-    <label class="wide"><span>Save a copy as</span>
-      <input id="save-as" type="text" placeholder="my_variant.yaml"></label>
-    <button id="save-btn" type="button">Validate and save copy</button>
   </div>
   <p id="config-status" role="status"></p>
 </section>

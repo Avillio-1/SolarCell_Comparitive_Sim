@@ -2,14 +2,13 @@ from __future__ import annotations
 
 import json
 from datetime import date, timedelta
-from pathlib import Path
 
 import pandas as pd
 import pytest
+from tests.config_factory import fixture_config, paper_calibration_config
 from tests.unit.test_weather import _request
 
 from solarclean.application.use_cases import _weather_request
-from solarclean.config.loader import load_config
 from solarclean.config.models import CoatingConfig, CoatingPhysicsConfig, SolarCleanConfig
 from solarclean.domain.coating.state import CoatingCohortState
 from solarclean.domain.coating.strategy import (
@@ -26,7 +25,7 @@ from solarclean.infrastructure.weather.fixture import FixtureWeatherProvider
 
 
 def _context(config: SolarCleanConfig | None = None) -> ScenarioContext:
-    config = config or load_config(Path("configs/offline_fixture.yaml"))
+    config = config or fixture_config()
     if config.weather.provider == "csv":
         assert config.weather.local_csv_path is not None
         weather = CsvWeatherProvider(
@@ -57,7 +56,7 @@ def _context(config: SolarCleanConfig | None = None) -> ScenarioContext:
 
 
 def _strategy(config: SolarCleanConfig | None = None) -> CoatingStrategy:
-    config = config or load_config(Path("configs/offline_fixture.yaml"))
+    config = config or fixture_config()
     return CoatingStrategy(
         coating=config.coating,
         soiling=config.soiling,
@@ -128,8 +127,7 @@ def test_coating_outputs_water_and_cost_quantities_separately() -> None:
 
 
 def test_coating_passive_cleaning_events_include_dew_and_dust_metadata() -> None:
-    config = load_config(
-        Path("configs/coating_paper_calibration.yaml"),
+    config = paper_calibration_config(
         overrides={
             "bird_droppings": {
                 "event_probability_per_cohort_day": 0.0,
@@ -175,7 +173,7 @@ def test_coating_passive_cleaning_events_include_dew_and_dust_metadata() -> None
 
 
 def test_coating_process_energy_is_recorded_once_at_deployment() -> None:
-    config = load_config(Path("configs/offline_fixture.yaml"))
+    config = fixture_config()
     result = ScenarioSimulationEngine(_strategy(config)).run(_context(config), random_seed=42)
     expected = result.daily_results[0].extensions["coating_cost_basis"]["process_energy_kwh"]
 
@@ -210,8 +208,7 @@ def test_degradation_scales_dust_optical_and_cooling_mechanisms_to_neutral() -> 
 
 
 def test_coating_bird_removal_events_include_bounded_metadata() -> None:
-    config = load_config(
-        Path("configs/coating_paper_calibration.yaml"),
+    config = paper_calibration_config(
         overrides={
             "bird_droppings": {
                 "event_probability_per_cohort_day": 1.0,

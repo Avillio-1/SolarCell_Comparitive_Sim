@@ -53,57 +53,48 @@ python3 -m pip install -e ".[dev]"
 Fetch and normalize weather:
 
 ```powershell
-solarclean fetch-weather --config configs/riyadh_2025.yaml
+solarclean fetch-weather --config configs/default.yaml
 ```
 
 Run clean PV production:
 
 ```powershell
-solarclean run-clean --config configs/riyadh_2025.yaml
+solarclean run-clean --config configs/default.yaml
 ```
 
 Run the no-intervention baseline with cohort farm output:
 
 ```powershell
-solarclean run-baseline --config configs/riyadh_2025.yaml
+solarclean run-baseline --config configs/default.yaml
 ```
 
 Run the reconciled baseline/reactive/coating comparison:
 
 ```powershell
-solarclean compare-all-scenarios --config configs/offline_fixture_full_year.yaml
+solarclean compare-all-scenarios --config configs/default.yaml
 ```
 
 Validate weather only:
 
 ```powershell
-solarclean validate-weather --config configs/riyadh_2025.yaml
+solarclean validate-weather --config configs/default.yaml
 ```
 
 Run Phase 3.5 validation and reports:
 
 ```powershell
-solarclean validate-phase-3-5 --config configs/riyadh_2025.yaml
+solarclean validate-phase-3-5 --config configs/default.yaml
 ```
 
 Profile a full-year run:
 
 ```powershell
-solarclean profile-full-year --config configs/riyadh_2025.yaml
-```
-
-Run fully offline with the deterministic fixture:
-
-```powershell
-solarclean fetch-weather --config configs/offline_fixture.yaml
-solarclean run-clean --config configs/offline_fixture.yaml
-solarclean run-baseline --config configs/offline_fixture.yaml
-solarclean compare-all-scenarios --config configs/offline_fixture_full_year.yaml
+solarclean profile-full-year --config configs/default.yaml
 ```
 
 ## NASA POWER Weather
 
-`configs/riyadh_2025.yaml` uses NASA POWER by default for Riyadh:
+`configs/default.yaml` is the sole runtime configuration and uses NASA POWER by default for Riyadh:
 
 ```yaml
 weather:
@@ -112,21 +103,19 @@ weather:
   cache_directory: data/cache/weather
 ```
 
-The adapter requests UTC hourly data and converts timestamps to `Asia/Riyadh`. It caches raw JSON and normalized canonical CSV/metadata files under `data/cache/weather`, so repeated runs can use cached data without additional API calls.
+The adapter requests UTC hourly data and converts timestamps to `Asia/Riyadh`. It caches raw JSON and normalized canonical CSV/metadata files under `data/cache/weather`, so repeated runs can use cached data without additional API calls. The cache key includes a normalization-schema version so unit-conversion fixes cannot reuse stale normalized data.
 
 ## Cached Data Runs
 
 After a successful NASA fetch, keep `weather.cache_enabled: true` and rerun any CLI command. The provider checks the request checksum and loads the normalized cache when it matches the requested site, time range, variables, and provider.
 
-## Offline Fixture Runs
+## Offline Tests
 
-`configs/offline_fixture.yaml` uses a two-day deterministic generated fixture for fast tests. It is test-only and is not scientifically representative Riyadh data.
-
-`configs/offline_fixture_full_year.yaml` uses the same deterministic fixture weather provider over January 1, 2025 through December 31, 2025 for offline T6 comparison-package checks.
+Tests derive deterministic fixture configurations programmatically from `configs/default.yaml` through `tests/config_factory.py`. These fixtures are test-only and are not scientifically representative Riyadh data.
 
 ## Local Riyadh CSV Replacement
 
-`configs/local_riyadh_csv_example.yaml` shows how to replace NASA POWER with measured station data:
+To replace NASA POWER with measured station data, edit the `weather` section in `configs/default.yaml`:
 
 ```yaml
 weather:

@@ -1,3 +1,0 @@
-command: run-clean
-annual_clean_energy_kwh: 28042.50025091375
-weather_provider: fixture

@@ -22,9 +22,11 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+import yaml
 
 fastapi = pytest.importorskip("fastapi", reason="dashboard extra not installed")
 from fastapi.testclient import TestClient  # noqa: E402
+from tests.config_factory import DEFAULT_CONFIG_PATH, fixture_config  # noqa: E402
 
 from solarclean.application import sensitivity  # noqa: E402
 from solarclean.application.comparison import CompareAllScenarios  # noqa: E402
@@ -47,12 +49,10 @@ from solarclean.dashboard.app import (  # noqa: E402
 )
 from solarclean.dashboard.jobs import Job, JobCancelled, JobRegistry  # noqa: E402
 
-OFFLINE_CONFIG = Path("configs/offline_fixture.yaml")
-
 
 @pytest.fixture(scope="module")
 def comparison_run() -> Path:
-    result = CompareAllScenarios(load_config(OFFLINE_CONFIG)).run()
+    result = CompareAllScenarios(fixture_config()).run()
     return result.output_directory
 
 
@@ -84,15 +84,21 @@ def test_launch_rejects_unknown_kind(client: TestClient) -> None:
 
 
 def test_launch_runs_default_config_and_reports_progress(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # Point "Default" at the fast 2-day fixture so the test finishes quickly;
     # the route logic is identical for the real full-year default.
-    monkeypatch.setattr(dashboard_app, "DEFAULT_CONFIG_NAME", OFFLINE_CONFIG.name)
+    sandbox = tmp_path / "configs"
+    sandbox.mkdir()
+    (sandbox / DEFAULT_CONFIG_NAME).write_text(
+        yaml.safe_dump(fixture_config().model_dump(mode="json"), sort_keys=False),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(dashboard_app, "_CONFIGS_DIR", sandbox)
     launched = client.post("/api/runs", json={"kind": "compare"})
     assert launched.status_code == 202
     record = launched.json()
-    assert record["config_name"] == OFFLINE_CONFIG.name
+    assert record["config_name"] == DEFAULT_CONFIG_NAME
 
     deadline = time.time() + 120
     while time.time() < deadline:
@@ -211,7 +217,7 @@ def test_registry_delete_semantics() -> None:
 def test_compare_progress_callback_counts_scenarios() -> None:
     calls: list[tuple[int, int, str]] = []
     CompareAllScenarios(
-        load_config(OFFLINE_CONFIG),
+        fixture_config(),
         progress_callback=lambda done, total, stage: calls.append((done, total, stage)),
         write_artifacts=False,
     ).run()
@@ -225,7 +231,7 @@ def test_compare_progress_callback_counts_scenarios() -> None:
 def test_monte_carlo_progress_callback_counts_trials() -> None:
     calls: list[tuple[int, int, str]] = []
     MonteCarloExperiment(
-        load_config(OFFLINE_CONFIG),
+        fixture_config(),
         trial_count=2,
         progress_callback=lambda done, total, stage: calls.append((done, total, stage)),
         write_artifacts=False,
@@ -261,7 +267,7 @@ def stub_run_variant(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_oneway_progress_callback_counts_sweep_points(stub_run_variant: None) -> None:
     calls: list[tuple[int, int, str]] = []
     outcome = OneWaySensitivityExperiment(
-        load_config(OFFLINE_CONFIG),
+        fixture_config(),
         parameter_names=["economics.electricity_tariff_sar_per_kwh"],
         steps=3,
         write_artifacts=False,
@@ -279,7 +285,7 @@ def test_oneway_progress_callback_counts_sweep_points(stub_run_variant: None) ->
 def test_winner_map_progress_callback_counts_grid_points(stub_run_variant: None) -> None:
     calls: list[tuple[int, int, str]] = []
     outcome = TwoWaySensitivityExperiment(
-        load_config(OFFLINE_CONFIG),
+        fixture_config(),
         parameter_name_a="economics.electricity_tariff_sar_per_kwh",
         parameter_name_b="economics.labour_cost_sar_per_hour",
         grid_steps=3,
@@ -296,7 +302,7 @@ def test_winner_map_progress_callback_counts_grid_points(stub_run_variant: None)
 def test_break_even_progress_reports_against_declared_budget(stub_run_variant: None) -> None:
     calls: list[tuple[int, int, str]] = []
     outcome = BreakEvenExperiment(
-        load_config(OFFLINE_CONFIG),
+        fixture_config(),
         parameter_name="economics.electricity_tariff_sar_per_kwh",
         scenario_a="coating",
         scenario_b="baseline",
@@ -359,6 +365,10 @@ def test_charts_replace_static_plot_grid(client: TestClient, comparison_run: Pat
     assert "daily-energy-chart" in page
     assert "daily-loss-chart" in page
     assert "daily-soiling-chart" in page
+    assert "Daily contamination cleanliness by scenario" in page
+    cleanliness = artifacts_module.daily_cleanliness_series(comparison_run)
+    assert cleanliness is not None
+    assert set(cleanliness["series"]) == {"baseline", "reactive", "coating"}
     assert "annual-cost-chart" in page
     # ... and no inline <img> plot grid on the comparison page. PNGs stay
     # downloadable from the artifact list.
@@ -509,18 +519,18 @@ def test_theme_toggle_present_and_persisted(client: TestClient) -> None:
 
 def test_config_validation_paths(client: TestClient) -> None:
     bad_yaml = client.post(
-        f"/api/configs/{OFFLINE_CONFIG.name}/validate", json={"content": "not: [valid"}
+        f"/api/configs/{DEFAULT_CONFIG_NAME}/validate", json={"content": "not: [valid"}
     )
     assert bad_yaml.json()["valid"] is False
 
     bad_schema = client.post(
-        f"/api/configs/{OFFLINE_CONFIG.name}/validate", json={"content": "site: {}"}
+        f"/api/configs/{DEFAULT_CONFIG_NAME}/validate", json={"content": "site: {}"}
     )
     assert bad_schema.json()["valid"] is False
 
     good = client.post(
-        f"/api/configs/{OFFLINE_CONFIG.name}/validate",
-        json={"content": OFFLINE_CONFIG.read_text(encoding="utf-8")},
+        f"/api/configs/{DEFAULT_CONFIG_NAME}/validate",
+        json={"content": DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")},
     )
     assert good.json()["valid"] is True
 
@@ -528,7 +538,7 @@ def test_config_validation_paths(client: TestClient) -> None:
 def test_config_save_updates_default(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    content = OFFLINE_CONFIG.read_text(encoding="utf-8")
+    content = DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")
     sandbox = tmp_path / "configs"
     sandbox.mkdir()
     (sandbox / DEFAULT_CONFIG_NAME).write_text(content, encoding="utf-8")
@@ -677,7 +687,7 @@ def _delete_run(client: TestClient, run_dir: Path) -> None:
 
 def test_oneway_page_renders_tornado(client: TestClient, stub_run_variant: None) -> None:
     outcome = OneWaySensitivityExperiment(
-        load_config(OFFLINE_CONFIG),
+        fixture_config(),
         parameter_names=["economics.electricity_tariff_sar_per_kwh"],
         steps=3,
     ).run()
@@ -689,7 +699,7 @@ def test_oneway_page_renders_tornado(client: TestClient, stub_run_variant: None)
 
 def test_winner_map_page_renders_heatmap(client: TestClient, stub_run_variant: None) -> None:
     outcome = TwoWaySensitivityExperiment(
-        load_config(OFFLINE_CONFIG),
+        fixture_config(),
         parameter_name_a="economics.electricity_tariff_sar_per_kwh",
         parameter_name_b="economics.labour_cost_sar_per_hour",
         grid_steps=3,
@@ -701,11 +711,9 @@ def test_winner_map_page_renders_heatmap(client: TestClient, stub_run_variant: N
     _delete_run(client, outcome.output_directory)
 
 
-def test_breakeven_page_renders_crossing_chart(
-    client: TestClient, stub_run_variant: None
-) -> None:
+def test_breakeven_page_renders_crossing_chart(client: TestClient, stub_run_variant: None) -> None:
     outcome = BreakEvenExperiment(
-        load_config(OFFLINE_CONFIG),
+        fixture_config(),
         parameter_name="economics.electricity_tariff_sar_per_kwh",
         scenario_a="coating",
         scenario_b="baseline",
@@ -900,9 +908,7 @@ def test_rerun_unknown_run_is_404(client: TestClient) -> None:
 # --------------------------------------------------------------------------
 
 
-def test_auth_token_gates_every_route(
-    client: TestClient, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_auth_token_gates_every_route(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("SOLARCLEAN_DASHBOARD_TOKEN", "s3cret")
     assert client.get("/").status_code == 401
     assert client.get("/static/dashboard.js").status_code == 401
