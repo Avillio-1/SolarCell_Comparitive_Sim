@@ -43,6 +43,7 @@ class SimulationEvent:
 
 @dataclass(frozen=True)
 class SoilingUpdate:
+    energy_state: ContaminationState
     state: ContaminationState
     events: list[SimulationEvent]
 
@@ -107,6 +108,7 @@ class KimberStyleSoilingModel:
                 )
             )
         ratio = max(self.config.minimum_soiling_ratio, min(1.0, ratio))
+        energy_state = replace(previous_state, dust_soiling_ratio=ratio)
         effective_rain = False
         if environment.precipitation_mm >= self.rainfall.full_rain_cleaning_threshold_mm:
             restored = (1.0 - ratio) * self.rainfall.full_rain_cleaning_efficiency
@@ -141,4 +143,4 @@ class KimberStyleSoilingModel:
             else previous_state.days_since_effective_rain + 1,
             days_since_manual_cleaning=previous_state.days_since_manual_cleaning + 1,
         )
-        return SoilingUpdate(state=state, events=events)
+        return SoilingUpdate(energy_state=energy_state, state=state, events=events)

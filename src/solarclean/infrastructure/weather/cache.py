@@ -8,6 +8,8 @@ import pandas as pd
 
 from solarclean.domain.environment.weather import WeatherDataset, WeatherRequest
 
+NORMALIZED_WEATHER_CACHE_SCHEMA_VERSION = 2
+
 
 class WeatherCache:
     def __init__(self, directory: Path) -> None:
@@ -15,7 +17,11 @@ class WeatherCache:
         self.directory.mkdir(parents=True, exist_ok=True)
 
     def key_for(self, request: WeatherRequest, provider_name: str) -> str:
-        payload = {"provider": provider_name, "request": request.cache_identity()}
+        payload = {
+            "schema_version": NORMALIZED_WEATHER_CACHE_SCHEMA_VERSION,
+            "provider": provider_name,
+            "request": request.cache_identity(),
+        }
         text = json.dumps(payload, sort_keys=True)
         return hashlib.sha256(text.encode("utf-8")).hexdigest()
 

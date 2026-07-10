@@ -2,25 +2,47 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import MappingProxyType
 
 import pandas as pd
 import pytest
+from tests.config_factory import fixture_config
 
 from solarclean.application.comparison import CANONICAL_SCENARIO_IDS
-from solarclean.application.monte_carlo import MonteCarloExperiment
-from solarclean.config.loader import load_config
+from solarclean.application.monte_carlo import (
+    MonteCarloExperiment,
+    MonteCarloTrialRecord,
+    _majority_winner,
+)
 
 
 def _fixture_config(output_dir: Path):
-    return load_config(
-        Path("configs/offline_fixture.yaml"),
-        overrides={"output": {"base_directory": output_dir}},
-    )
+    return fixture_config(overrides={"output": {"base_directory": output_dir}})
 
 
 def test_monte_carlo_requires_at_least_two_trials(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="at least 2"):
         MonteCarloExperiment(_fixture_config(tmp_path), trial_count=1)
+
+
+def test_majority_winner_requires_a_unique_absolute_majority() -> None:
+    def trial(index: int, winner: str | None) -> MonteCarloTrialRecord:
+        return MonteCarloTrialRecord(
+            trial_index=index,
+            seed=index + 1,
+            reconciled=True,
+            winner=winner,
+            net_annual_benefit_sar=MappingProxyType({}),
+            annual_actual_energy_kwh=MappingProxyType({}),
+            energy_gain_vs_baseline_kwh=MappingProxyType({}),
+        )
+
+    assert _majority_winner((trial(0, None), trial(1, None))) is None
+    assert _majority_winner((trial(0, "reactive"), trial(1, "coating"))) is None
+    assert (
+        _majority_winner((trial(0, "reactive"), trial(1, "reactive"), trial(2, "coating")))
+        == "reactive"
+    )
 
 
 def test_monte_carlo_is_reproducible_for_a_fixed_base_seed(tmp_path: Path) -> None:

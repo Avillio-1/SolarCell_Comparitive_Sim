@@ -18,7 +18,7 @@ The current strict model accepts the following calibrated sections:
 - `farm`
 
 The low, central, and high overlays are internally consistent and should validate against
-`configs/riyadh_2025.yaml`. They do not introduce future-owner sections.
+`configs/default.yaml`. They do not introduce future-owner sections.
 
 ## Soiling And Dust
 

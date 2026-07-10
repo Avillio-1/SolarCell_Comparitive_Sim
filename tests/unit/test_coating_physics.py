@@ -151,6 +151,33 @@ def test_passive_cleaning_and_bird_removal_are_bounded() -> None:
     assert bird.remaining_coverage_fraction == pytest.approx(0.08)
 
 
+def test_contact_and_sliding_angles_reduce_passive_cleaning_when_less_favorable() -> None:
+    favorable = calculate_passive_dust_cleaning(
+        current_dust_soiling_ratio=0.8,
+        condensed_liters_per_m2=0.128,
+        tilt_degrees=25.0,
+        coating_effectiveness=1.0,
+        physics=CoatingPhysicsConfig(
+            passive_cleaning_base_efficiency=0.5,
+            contact_angle_degrees=167.0,
+            sliding_angle_degrees=3.0,
+        ),
+    )
+    unfavorable = calculate_passive_dust_cleaning(
+        current_dust_soiling_ratio=0.8,
+        condensed_liters_per_m2=0.128,
+        tilt_degrees=25.0,
+        coating_effectiveness=1.0,
+        physics=CoatingPhysicsConfig(
+            passive_cleaning_base_efficiency=0.5,
+            contact_angle_degrees=120.0,
+            sliding_angle_degrees=12.0,
+        ),
+    )
+
+    assert 0.0 < unfavorable < favorable
+
+
 def test_passive_cleaning_combines_dew_wind_and_rain_without_overcleaning() -> None:
     physics = CoatingPhysicsConfig(
         passive_cleaning_base_efficiency=0.10,

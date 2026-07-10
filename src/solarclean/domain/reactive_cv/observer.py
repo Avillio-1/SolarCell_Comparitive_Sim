@@ -53,9 +53,7 @@ class StatisticalCVObserver:
             detected = rng.random() < self.observer.recall_fraction
         else:
             detected = rng.random() < self.observer.false_positive_rate
-        true_loss_fraction = _bounded_fraction(
-            max(0.0, 1.0 - cohort.dust_soiling_ratio) + cohort.bird_drop_loss_fraction
-        )
+        true_loss_fraction = _combined_contamination_loss_fraction(cohort)
         noise = float(rng.normal(0.0, self.observer.severity_error_std_fraction))
         estimated_loss = _bounded_fraction(true_loss_fraction + noise) if detected else 0.0
         confidence = float(
@@ -84,9 +82,7 @@ class PerfectInformationObserver:
     def observe(self, cohort: CohortState, rng: np.random.Generator) -> CVObservation:
         del rng
         ground_truth_dirty = _is_dirty(cohort, self.inspection)
-        true_loss_fraction = _bounded_fraction(
-            max(0.0, 1.0 - cohort.dust_soiling_ratio) + cohort.bird_drop_loss_fraction
-        )
+        true_loss_fraction = _combined_contamination_loss_fraction(cohort)
         return CVObservation(
             cohort_id=cohort.cohort_id,
             image_captured=True,
@@ -106,3 +102,9 @@ def _is_dirty(cohort: CohortState, inspection: ReactiveInspectionConfig) -> bool
 
 def _bounded_fraction(value: float) -> float:
     return float(np.clip(value, 0.0, 1.0))
+
+
+def _combined_contamination_loss_fraction(cohort: CohortState) -> float:
+    dust_ratio = _bounded_fraction(cohort.dust_soiling_ratio)
+    bird_retained_ratio = 1.0 - _bounded_fraction(cohort.bird_drop_loss_fraction)
+    return _bounded_fraction(1.0 - dust_ratio * bird_retained_ratio)

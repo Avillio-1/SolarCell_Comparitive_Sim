@@ -118,8 +118,20 @@ def calculate_passive_dust_cleaning(
         1.0,
         max(0.0, tilt_degrees / physics.passive_cleaning_tilt_reference_degrees),
     )
+    # Normalize surface mobility to the central characterized coating. Lower
+    # contact angles or higher sliding angles reduce passive shedding; the
+    # factor is capped at one so these descriptors cannot create energy from
+    # an uncalibrated super-performance extrapolation.
+    contact_factor = min(1.0, max(0.0, physics.contact_angle_degrees / 167.0))
+    sliding_factor = min(1.0, 3.0 / max(1e-9, physics.sliding_angle_degrees))
+    surface_mobility_factor = contact_factor * sliding_factor
     water_factor = min(1.0, condensed_liters_per_m2 / 0.128)
-    dew_efficiency = physics.passive_cleaning_base_efficiency * tilt_factor * water_factor
+    dew_efficiency = (
+        physics.passive_cleaning_base_efficiency
+        * tilt_factor
+        * water_factor
+        * surface_mobility_factor
+    )
     wind_efficiency = 0.0
     if wind_speed_m_s > physics.wind_shedding_threshold_m_s:
         denominator = max(

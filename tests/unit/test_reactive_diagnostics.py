@@ -5,15 +5,14 @@ import json
 from pathlib import Path
 
 import pytest
+from tests.config_factory import fixture_config
 
 from solarclean.application.use_cases import RunReactiveSimulation
-from solarclean.config.loader import load_config
 from solarclean.domain.reactive_cv.metrics import SEVERITY_BUCKETS
 
 
 def _diagnostic_config(tmp_path: Path):
-    return load_config(
-        Path("configs/offline_fixture.yaml"),
+    return fixture_config(
         overrides={
             "output": {"base_directory": tmp_path},
             "soiling": {
@@ -62,8 +61,7 @@ def _diagnostic_config(tmp_path: Path):
 
 
 def _actionable_mismatch_config(tmp_path: Path):
-    return load_config(
-        Path("configs/offline_fixture.yaml"),
+    return fixture_config(
         overrides={
             "output": {"base_directory": tmp_path},
             "soiling": {

@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+from tests.config_factory import config_from_default, fixture_config, full_year_fixture_config
 
 import solarclean.application.comparison as comparison_module
 from solarclean.application.comparison import (
@@ -13,36 +14,34 @@ from solarclean.application.comparison import (
     CompareAllScenarios,
     build_reconciliation_report,
 )
-from solarclean.config.loader import load_config
+from solarclean.domain.calibration.registry import ParameterRegistry
 from solarclean.domain.economics import evaluate_annual_scenario_outputs
+from solarclean.domain.environment.weather import WeatherDataset
+from solarclean.domain.reactive_cv.strategy import ReactiveCVStrategy
 from solarclean.domain.scenario.contracts import ScenarioContext
 from solarclean.infrastructure.pvlib_adapter.pvwatts import PVWattsPowerModel
 from solarclean.infrastructure.weather.fixture import FixtureWeatherProvider
 
 
 def _fixture_config(output_dir: Path):
-    return load_config(
-        Path("configs/offline_fixture.yaml"),
-        overrides={"output": {"base_directory": output_dir}},
-    )
+    return fixture_config(overrides={"output": {"base_directory": output_dir}})
 
 
-def test_compare_all_scenarios_writes_one_reconciled_ranked_package(tmp_path: Path) -> None:
+def test_partial_period_comparison_writes_package_but_blocks_ranking(tmp_path: Path) -> None:
     result = CompareAllScenarios(_fixture_config(tmp_path)).run()
     comparison = result.comparison
 
     assert set(comparison.scenario_results) == set(CANONICAL_SCENARIO_IDS)
-    assert comparison.reconciliation_report.passed
-    assert len(comparison.ranking) == 3
-    assert comparison.recommendation.valid
-    assert result.summary["reconciled"] is True
+    assert not comparison.reconciliation_report.passed
+    assert comparison.ranking == ()
+    assert not comparison.recommendation.valid
+    assert result.summary["reconciled"] is False
 
     check_by_name = {check.name: check for check in comparison.reconciliation_report.checks}
     assert check_by_name["same_weather_checksum"].passed
     assert check_by_name["same_event_tape_checksum"].passed
-    assert check_by_name["exactly_one_ranking_produced_for_valid_run"].passed
-    assert check_by_name["ranking_sorted_by_net_annual_benefit"].passed
-    assert check_by_name["assumption_warnings_present"].passed
+    assert not check_by_name["ranking_blocked_until_reconciliation_passes"].passed
+    assert not check_by_name["no_blocking_assumption_warnings"].passed
 
     annual = pd.read_csv(result.output_directory / "scenario_annual_summary.csv")
     daily = pd.read_csv(result.output_directory / "scenario_daily_summary.csv")
@@ -60,13 +59,17 @@ def test_compare_all_scenarios_writes_one_reconciled_ranked_package(tmp_path: Pa
     assert set(annual["scenario_id"]) == set(CANONICAL_SCENARIO_IDS)
     assert set(daily["scenario_id"]) == set(CANONICAL_SCENARIO_IDS)
     assert set(cost["scenario_id"]) == set(CANONICAL_SCENARIO_IDS)
-    assert len(ranking["ranking"]) == 3
-    assert recommendation["valid"] is True
-    assert reconciliation["passed"] is True
+    assert ranking["ranking"] == []
+    assert recommendation["valid"] is False
+    assert reconciliation["passed"] is False
     assert annual["weather_checksum"].nunique() == 1
     assert annual["event_tape_checksum"].nunique() == 1
     assert "net_annual_benefit_sar" in annual.columns
     assert "cost_reconciliation_messages" in cost.columns
+    assert comparison.traceability["parameter_registry_checksum"]
+    assert comparison.traceability["parameter_registry_parameters"]
+    assert "git_commit" in comparison.traceability
+    assert "git_worktree_dirty" in comparison.traceability
 
     expected_artifacts = {
         "config_resolved.yaml",
@@ -97,8 +100,8 @@ def test_compare_all_scenarios_writes_one_reconciled_ranked_package(tmp_path: Pa
     )
 
 
-def test_full_year_offline_comparison_config_covers_2025() -> None:
-    config = load_config(Path("configs/offline_fixture_full_year.yaml"))
+def test_default_derived_full_year_fixture_covers_2025() -> None:
+    config = full_year_fixture_config()
 
     assert config.weather.provider == "fixture"
     assert config.simulation.start.isoformat() == "2025-01-01T00:00:00+03:00"
@@ -112,12 +115,134 @@ def test_full_year_offline_comparison_config_covers_2025() -> None:
     assert config.reactive_cv.observer.false_positive_rate == pytest.approx(0.08)
     assert 0.0 <= config.reactive_cv.dispatch.estimated_loss_threshold_fraction <= 1.0
     assert config.reactive_cv.crew.water_liters_per_cohort >= 0.0
-    assert config.coating.preset == "central"
-    assert 0.0 <= config.coating.physics.dust_accumulation_multiplier <= 1.0
+    assert config.coating.preset == "weak"
+    assert config.coating.physics.dust_accumulation_multiplier == pytest.approx(0.60)
     assert config.coating.costs.maintenance_cost_per_year >= 0.0
     assert config.coating.costs.useful_life_years > 0.0
     assert 0.0 <= config.coating.water.actual_collection_efficiency_fraction <= 1.0
     assert comparison_module._simulation_period_is_full_year(config)
+
+
+def test_default_config_uses_runnable_explicit_weak_coating_multiplier() -> None:
+    config = config_from_default()
+    registry = ParameterRegistry.from_yaml(config.calibration.parameter_registry_path)
+
+    assert config.coating.preset == "weak"
+    assert config.coating.physics.dust_accumulation_multiplier == pytest.approx(0.60)
+    comparison_module._validate_comparison_config(config, registry)
+
+
+def test_named_central_assumption_set_rejects_registry_drift() -> None:
+    config = full_year_fixture_config()
+    config = config.model_copy(
+        update={"coating": config.coating.model_copy(update={"preset": "central"})}
+    )
+    physics = config.coating.physics.model_copy(update={"dust_accumulation_multiplier": 0.05})
+    config = config.model_copy(
+        update={"coating": config.coating.model_copy(update={"physics": physics})}
+    )
+
+    with pytest.raises(ValueError, match="must match the active parameter registry"):
+        CompareAllScenarios(config, write_artifacts=False).run()
+
+
+def test_disabled_mitigation_scenarios_are_zero_operation_baseline_pass_throughs(
+    tmp_path: Path,
+) -> None:
+    config = _fixture_config(tmp_path)
+    config = config.model_copy(
+        update={
+            "reactive_cv": config.reactive_cv.model_copy(update={"enabled": False}),
+            "coating": config.coating.model_copy(update={"enabled": False}),
+        }
+    )
+
+    comparison = CompareAllScenarios(config, write_artifacts=False).run().comparison
+    baseline = comparison.scenario_results["baseline"]
+
+    for scenario_id in ("reactive", "coating"):
+        result = comparison.scenario_results[scenario_id]
+        assert result.annual_actual_energy_kwh == pytest.approx(baseline.annual_actual_energy_kwh)
+        assert all(day.operational == day.operational.__class__() for day in result.daily_results)
+        assert comparison.economic_results[scenario_id].total_annual_cost_sar == 0.0
+
+
+def test_inert_reactive_scenario_matches_baseline_with_cohort_variation(tmp_path: Path) -> None:
+    config = _fixture_config(tmp_path)
+    crew = config.reactive_cv.crew.model_copy(
+        update={"dust_removal_efficiency": 0.0, "bird_removal_efficiency": 0.0}
+    )
+    reactive = config.reactive_cv.model_copy(update={"crew": crew})
+    farm = config.farm.model_copy(update={"cohort_soiling_variation_fraction": 0.2})
+    birds = config.bird_droppings.model_copy(update={"event_probability_per_cohort_day": 0.0})
+    config = config.model_copy(
+        update={"reactive_cv": reactive, "farm": farm, "bird_droppings": birds}
+    )
+
+    comparison = CompareAllScenarios(config, write_artifacts=False).run().comparison
+
+    assert comparison.scenario_results["reactive"].annual_actual_energy_kwh == pytest.approx(
+        comparison.scenario_results["baseline"].annual_actual_energy_kwh
+    )
+
+
+@pytest.mark.parametrize("perfect_information", [True, False])
+def test_comparison_reactive_strategy_honors_perfect_information_benchmark(
+    tmp_path: Path,
+    perfect_information: bool,
+) -> None:
+    config = _fixture_config(tmp_path)
+    config = config.model_copy(
+        update={
+            "reactive_cv": config.reactive_cv.model_copy(
+                update={"perfect_information_benchmark": perfect_information}
+            )
+        }
+    )
+
+    strategy = comparison_module._build_strategy("reactive", config)
+
+    assert isinstance(strategy, ReactiveCVStrategy)
+    assert strategy.perfect_information is perfect_information
+    assert strategy.name == "reactive"
+
+
+def test_shared_bird_events_are_complete_and_use_each_daily_result_date(tmp_path: Path) -> None:
+    runner = CompareAllScenarios(_fixture_config(tmp_path), write_artifacts=False)
+    comparison = runner.run().comparison
+    bird_counts = {}
+    for scenario_id, result in comparison.scenario_results.items():
+        bird_counts[scenario_id] = sum(
+            event.event_type == "bird_dropping_event" for event in result.events
+        )
+        assert all(
+            event.date == daily.date for daily in result.daily_results for event in daily.events
+        )
+
+    assert len(set(bird_counts.values())) == 1
+
+
+def test_enabled_mitigation_comparison_rejects_representative_farm(tmp_path: Path) -> None:
+    config = _fixture_config(tmp_path)
+    config = config.model_copy(
+        update={"farm": config.farm.model_copy(update={"representation": "representative"})}
+    )
+
+    with pytest.raises(ValueError, match="requires farm.representation='cohort'"):
+        CompareAllScenarios(config, write_artifacts=False).run()
+
+
+def test_weather_checksum_hashes_normalized_content_not_provider_request() -> None:
+    first = FixtureWeatherProvider().load(
+        comparison_module._weather_request(_fixture_config(Path("outputs")))
+    )
+    changed_frame = first.hourly.copy()
+    changed_frame.iloc[0, 0] += 1.0
+    changed = WeatherDataset(hourly=changed_frame, metadata=dict(first.metadata))
+
+    assert comparison_module._weather_checksum(first) != comparison_module._weather_checksum(
+        changed
+    )
 
 
 def test_reactive_annual_summary_splits_survey_units_and_dispatch_counts(
@@ -157,9 +282,14 @@ def test_corrected_t6_economics_include_reactive_overhead_and_coating_life(
     assert "reactive drone flight operations" in reactive_components
     assert "reactive energy use" in reactive_components
 
+    coating_components = set(cost.loc[cost["scenario_id"] == "coating", "component_name"])
+    assert "coating application labour capex" in coating_components
+    assert "coating process energy capex" in coating_components
+    assert "coating inspection labour opex" in coating_components
+
     coating = annual.loc["coating"]
-    assert coating["total_capex_sar"] == pytest.approx(350_000.0)
-    assert coating["annual_opex_sar"] == pytest.approx(20_000.0)
+    assert coating["total_capex_sar"] == pytest.approx(371_720.0)
+    assert coating["annual_opex_sar"] == pytest.approx(21_400.0)
     assert coating["capital_recovery_life_years"] == pytest.approx(3.0)
     assert coating["roi_payback_basis"] == "incremental_vs_baseline"
     assert "incremental_roi_vs_baseline" in annual.columns
@@ -248,6 +378,7 @@ def test_reconciliation_failure_message_identifies_mismatched_weather_checksum(
         for scenario_id in CANONICAL_SCENARIO_IDS
     }
     annual_outputs = comparison_module._build_annual_economic_outputs(
+        config=_fixture_config(tmp_path),
         scenario_results=result.scenario_results,
         operational_by_scenario=operational,
         economics=economics,

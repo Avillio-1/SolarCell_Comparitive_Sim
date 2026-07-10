@@ -1,0 +1,18 @@
+{# Weather/site provenance strip — every value comes from the run's stored
+   metadata.json traceability block. #}
+{% if provenance %}
+<section class="panel provenance-strip">
+  <dl class="fact-strip small-facts">
+    <div><dt>Weather provider</dt><dd class="mono">{{ provenance.provider or "–" }}</dd></div>
+    <div><dt>Site</dt><dd>{{ provenance.site_name or "–" }}
+      {% if provenance.latitude is not none and provenance.longitude is not none %}
+      <span class="mono">({{ provenance.latitude }}, {{ provenance.longitude }})</span>
+      {% endif %}</dd></div>
+    <div><dt>Weather checksum</dt><dd class="mono">{{ provenance.weather_checksum_short or "–" }}</dd></div>
+    <div><dt>Created (UTC)</dt><dd class="mono">{{ provenance.created_at_utc or "–" }}</dd></div>
+    {% if provenance.assumption_set %}
+    <div><dt>Assumption set</dt><dd class="mono">{{ provenance.assumption_set }}</dd></div>
+    {% endif %}
+  </dl>
+</section>
+{% endif %}

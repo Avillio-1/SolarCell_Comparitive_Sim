@@ -4,6 +4,10 @@
 
 <section class="panel">
   <h2>Start a run</h2>
+  {% if not default_config_exists %}
+  <p class="warn-note">The Default configuration
+    (<code>configs/{{ default_config_name }}</code>) is missing, so runs cannot start.</p>
+  {% endif %}
   <form id="launch-form" onsubmit="return false;">
     <div class="field-row">
       <label>
@@ -18,11 +22,9 @@
       </label>
       <label>
         <span>Configuration</span>
-        <select id="config" name="config">
-          {% for c in configs %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
-        </select>
+        <span class="config-fixed mono" title="configs/{{ default_config_name }}">{{ default_config_label }}</span>
       </label>
-      <a class="quiet-link" href="#" id="edit-config-link">view / edit config</a>
+      <a class="quiet-link" href="/config/{{ default_config_name }}">view / edit config</a>
     </div>
 
     <div class="field-row kind-opts" data-kind="monte-carlo" hidden>
@@ -31,16 +33,36 @@
     </div>
     <div class="field-row kind-opts" data-kind="sensitivity-oneway" hidden>
       <label><span>Steps per parameter</span><input id="steps" type="number" min="3" max="21" value="5"></label>
-      <label class="wide"><span>Parameters (comma separated, blank = all supported)</span>
-        <input id="parameters" type="text" placeholder="economics.coating_material_cost_per_m2, soiling.base_daily_loss_fraction"></label>
+      <label class="wide"><span>Parameters (Ctrl-click to select several; none selected = all supported)</span>
+        <select id="parameters" multiple size="6">
+          {% for p in parameters %}
+          <option value="{{ p.name }}" title="registry range {{ p.low }} – {{ p.central }} – {{ p.high }} {{ p.unit }}">{{ p.name }} ({{ p.unit }})</option>
+          {% endfor %}
+        </select></label>
     </div>
     <div class="field-row kind-opts" data-kind="winner-map" hidden>
-      <label class="wide"><span>Parameter A</span><input id="parameter-a" type="text"></label>
-      <label class="wide"><span>Parameter B</span><input id="parameter-b" type="text"></label>
+      <label class="wide"><span>Parameter A</span>
+        <select id="parameter-a">
+          {% for p in parameters %}
+          <option value="{{ p.name }}" title="registry range {{ p.low }} – {{ p.central }} – {{ p.high }} {{ p.unit }}">{{ p.name }} ({{ p.unit }})</option>
+          {% endfor %}
+        </select></label>
+      <label class="wide"><span>Parameter B</span>
+        <select id="parameter-b">
+          {% for p in parameters %}
+          <option value="{{ p.name }}" title="registry range {{ p.low }} – {{ p.central }} – {{ p.high }} {{ p.unit }}"
+                  {% if loop.index == 2 %}selected{% endif %}>{{ p.name }} ({{ p.unit }})</option>
+          {% endfor %}
+        </select></label>
       <label><span>Grid steps</span><input id="grid-steps" type="number" min="3" max="15" value="5"></label>
     </div>
     <div class="field-row kind-opts" data-kind="break-even" hidden>
-      <label class="wide"><span>Registry parameter</span><input id="be-parameter" type="text"></label>
+      <label class="wide"><span>Registry parameter</span>
+        <select id="be-parameter">
+          {% for p in parameters %}
+          <option value="{{ p.name }}" title="registry range {{ p.low }} – {{ p.central }} – {{ p.high }} {{ p.unit }}">{{ p.name }} ({{ p.unit }})</option>
+          {% endfor %}
+        </select></label>
       <label><span>Scenario A</span>
         <select id="scenario-a"><option>coating</option><option>reactive</option><option>baseline</option></select></label>
       <label><span>Scenario B</span>
@@ -48,41 +70,64 @@
     </div>
 
     <div class="field-row">
-      <button id="launch" class="primary" type="button">Start run</button>
+      <button id="launch" class="primary" type="button" {% if not default_config_exists %}disabled{% endif %}>Start run</button>
       <span id="launch-error" class="error-text" role="alert"></span>
     </div>
   </form>
-  <p class="hint">Full-year comparisons take a few minutes; Monte Carlo scales with trial count.
-     Parameter names come from <code>data/calibration/parameter_registry.yaml</code>.</p>
+  <p class="hint">Every run uses the Default configuration; edit it (including the site
+     location on the map) via "view / edit config". The Default fetches live NASA POWER
+     weather for the configured site — the first run per location needs internet, after
+     which the weather is cached. One run executes at a time. Parameter ranges come from
+     <code>data/calibration/parameter_registry.yaml</code> (hover an option to see them).</p>
 </section>
 
 <section class="panel" id="jobs-panel" {% if not jobs %}hidden{% endif %}>
-  <h2>Jobs this session</h2>
+  <h2>Run sessions</h2>
   <table class="data-table" id="jobs-table">
-    <thead><tr><th>Started</th><th>Analysis</th><th>Configuration</th><th>Status</th><th>Result</th></tr></thead>
+    <thead><tr><th>Started</th><th>Analysis</th><th>Status</th><th>Progress</th>
+      <th>Elapsed</th><th>ETA</th><th>Result</th><th></th></tr></thead>
     <tbody>
       {% for j in jobs %}
       <tr data-job="{{ j.job_id }}">
         <td class="mono">{{ j.created_at[:19] }}</td>
         <td>{{ j.kind }}</td>
-        <td class="mono">{{ j.config_name }}</td>
-        <td><span class="status status-{{ j.status }}">{{ j.status }}</span></td>
-        <td>{% if j.run_id %}<a href="/run/{{ j.run_id }}">{{ j.run_id }}</a>{% endif %}</td>
+        <td class="job-status"><span class="status status-{{ j.status }}">{{ j.status }}</span></td>
+        <td class="job-progress">
+          {% if j.progress_percent is not none %}
+          <div class="progress-track"><div class="progress-fill" style="width: {{ '%.0f'|format(j.progress_percent) }}%"></div></div>
+          <span class="progress-label mono">{{ '%.0f'|format(j.progress_percent) }}%</span>
+          {% else %}<span class="progress-label mono">–</span>{% endif %}
+        </td>
+        <td class="job-elapsed mono">{% if j.elapsed_seconds is not none %}{{ '%d'|format(j.elapsed_seconds) }}s{% else %}–{% endif %}</td>
+        <td class="job-eta mono">{% if j.eta_seconds is not none %}~{{ '%d'|format(j.eta_seconds) }}s{% else %}–{% endif %}</td>
+        <td class="job-result">{% if j.run_id and j.status == "done" %}<a href="/run/{{ j.run_id }}">{{ j.run_id }}</a>
+          {% elif j.status == "failed" %}<span class="error-text">{{ j.error }}</span>{% endif %}</td>
+        <td class="job-actions"><button type="button" class="danger-quiet job-delete" data-job-id="{{ j.job_id }}">
+          {% if j.status in ("queued", "running") %}Cancel &amp; remove{% else %}Delete{% endif %}</button></td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+  <p class="hint">Finished sessions are kept across server restarts. Deleting a running session asks
+     it to stop at its next checkpoint; deleting a finished one only removes the row — run
+     directories under <code>outputs/</code> stay until deleted from the list below.</p>
 </section>
 
 <section class="panel">
   <h2>Completed runs</h2>
   {% if runs %}
-  <table class="data-table">
-    <thead><tr><th>Run</th><th>Analysis</th><th>Winner</th><th>Reconciled</th><th></th></tr></thead>
+  <div class="field-row runs-toolbar">
+    <button type="button" id="delete-selected-runs" class="danger-quiet" disabled>Delete selected</button>
+    <span id="runs-delete-error" class="error-text" role="alert"></span>
+  </div>
+  <table class="data-table" id="runs-table">
+    <thead><tr><th></th><th>Run</th><th>Created (UTC)</th><th>Analysis</th><th>Winner</th><th>Reconciled</th><th></th></tr></thead>
     <tbody>
       {% for r in runs %}
-      <tr>
+      <tr data-run="{{ r.run_id }}">
+        <td><input type="checkbox" class="run-select" value="{{ r.run_id }}" aria-label="select {{ r.run_id }}"></td>
         <td class="mono"><a href="/run/{{ r.run_id }}">{{ r.run_id }}</a></td>
+        <td class="mono">{{ r.created[:19] or "–" }}</td>
         <td>{{ r.kind }}</td>
         <td>{{ r.winner or "–" }}</td>
         <td>
@@ -90,14 +135,18 @@
           {% elif r.valid %}<span class="chip chip-pass">valid</span>
           {% else %}<span class="chip chip-fail">failed</span>{% endif %}
         </td>
-        <td><a class="quiet-link" href="/api/runs/{{ r.run_id }}/download">download .zip</a></td>
+        <td class="run-actions">
+          <a class="quiet-link" href="/api/runs/{{ r.run_id }}/download">download .zip</a>
+          <button type="button" class="danger-quiet run-delete" data-run-id="{{ r.run_id }}">Delete</button>
+        </td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+  <p class="hint">Deleting a run permanently removes its directory under <code>outputs/</code> —
+     download the .zip first if you need the exports.</p>
   {% else %}
-  <p class="empty">No runs yet. Start one above; the offline fixture configs finish quickly and are
-     good for checking the pipeline before a full Riyadh year.</p>
+  <p class="empty">No runs yet. Start one above with the Default configuration.</p>
   {% endif %}
 </section>
 

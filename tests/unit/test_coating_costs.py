@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import get_type_hints
 
 import pytest
+from tests.config_factory import fixture_config
 
-from solarclean.config.loader import load_config
 from solarclean.config.models import (
     AssumptionLevel,
     CoatingConfig,
@@ -19,7 +18,7 @@ from solarclean.domain.coating.costs import CoatingCostBasis, build_coating_cost
 
 
 def test_coating_config_loads_default_offline_fixture() -> None:
-    config = load_config(Path("configs/offline_fixture.yaml"))
+    config = fixture_config()
 
     assert config.coating.preset == "central"
     assert config.coating.physics.optical_transmittance_multiplier == pytest.approx(1.0)

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from datetime import date
-from pathlib import Path
+from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
+import pytest
+from tests.config_factory import fixture_config
 from tests.unit.test_weather import _request
 
-from solarclean.config.loader import load_config
 from solarclean.domain.contamination.soiling import DailyEnvironment
 from solarclean.domain.events.tape import generate_event_tape
 from solarclean.domain.reactive_cv.metrics import summarize_detection_performance
@@ -21,7 +21,7 @@ from solarclean.infrastructure.weather.fixture import FixtureWeatherProvider
 
 def _context(config=None):
     if config is None:
-        config = load_config(Path("configs/offline_fixture.yaml"))
+        config = fixture_config()
     weather = FixtureWeatherProvider().load(_request())
     clean = PVWattsPowerModel().calculate_hourly(weather, config.pv_system)
     dates = [date.fromisoformat(str(day)) for day in clean.daily.index.astype(str)]
@@ -75,7 +75,7 @@ def _day_input(context: ScenarioContext, day_index: int) -> DailyScenarioInput:
 
 
 def _targeted_cleaning_config():
-    config = load_config(Path("configs/offline_fixture.yaml"))
+    config = fixture_config()
     reactive = config.reactive_cv.model_copy(
         update={
             "inspection": config.reactive_cv.inspection.model_copy(
@@ -200,8 +200,23 @@ def test_targeted_cleaning_dust_benefit_stays_on_cleaned_cohort() -> None:
     )
 
 
+def test_post_generation_cleaning_does_not_retroactively_increase_daily_energy() -> None:
+    config, context = _context(_targeted_cleaning_config())
+    strategy = _strategy(config, perfect_information=True)
+    rng = np.random.default_rng(42)
+    state = strategy.initial_state(context, rng)
+
+    step = strategy.simulate_day(_day_input(context, 0), state, context, rng)
+    cleaning_event = next(
+        event for event in step.result.events if event.event_type == "reactive_cleaning_action"
+    )
+
+    assert step.result.actual_energy_kwh == pytest.approx(step.result.clean_energy_kwh * 0.99)
+    assert cleaning_event.effective_for_energy_date == step.result.date + timedelta(days=1)
+
+
 def test_capacity_skipped_inspections_are_backlogged_and_prioritized() -> None:
-    config = load_config(Path("configs/offline_fixture.yaml"))
+    config = fixture_config()
     reactive = config.reactive_cv.model_copy(
         update={
             "inspection": config.reactive_cv.inspection.model_copy(

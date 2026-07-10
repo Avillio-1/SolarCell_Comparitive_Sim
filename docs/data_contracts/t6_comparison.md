@@ -8,13 +8,12 @@ second annual simulation loop.
 ## Run
 
 ```powershell
-solarclean compare-all-scenarios --config configs/offline_fixture_full_year.yaml
+solarclean compare-all-scenarios --config configs/default.yaml
 ```
 
-`configs/offline_fixture.yaml` is intentionally only January 1-2, 2025 for
-fast tests. Use `configs/offline_fixture_full_year.yaml` for an offline
-January 1-December 31, 2025 comparison package. Use a Riyadh/NASA config the
-same way when network access and cached weather are available.
+`configs/default.yaml` is the sole runtime config. Unit and regression tests
+derive short and full-year deterministic fixture variants programmatically in
+`tests/config_factory.py`; those variants are not user-facing configuration files.
 
 ## Public API
 
@@ -32,7 +31,10 @@ Each run writes `outputs/<run_id>/` with:
 - `comparison_metadata.json` and `metadata.json`
 - `weather_hourly.csv`, `clean_energy_hourly.csv`, `daily_clean_energy.csv`
 - `event_tape.json`
-- `scenario_daily_summary.csv`
+- `scenario_daily_summary.csv` (per-scenario daily records; includes
+  `cumulative_energy_gain_vs_baseline_kwh`, a running total of daily AC energy
+  minus the baseline's whose final value equals the scenario's annual
+  `energy_gain_vs_baseline_kwh`)
 - `scenario_annual_summary.csv`
 - `scenario_cost_summary.csv`
 - `scenario_events.csv`

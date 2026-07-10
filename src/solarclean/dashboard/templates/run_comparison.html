@@ -4,8 +4,28 @@
 
 <div class="run-head">
   <h1 class="mono">{{ run_id }}</h1>
-  <a class="quiet-link" href="/api/runs/{{ run_id }}/download">download full run (.zip)</a>
+  <span class="run-head-actions">
+    {% if rerun_supported %}
+    <button type="button" id="rerun-btn" data-run-id="{{ run_id }}" title="Repeat this analysis with the run's own stored config snapshot">re-run this analysis</button>
+    {% endif %}
+    <a class="quiet-link" href="/api/runs/{{ run_id }}/download">download full run (.zip)</a>
+  </span>
+  <span id="rerun-status" class="hint" role="status"></span>
 </div>
+
+{% if headline %}
+<section class="headline-cards">
+  {% for card in headline %}
+  <div class="headline-card">
+    <span class="headline-label">{{ card.label }}</span>
+    <span class="headline-value">{{ card.value }}</span>
+    {% if card.unit %}<span class="headline-unit">{{ card.unit }}</span>{% endif %}
+  </div>
+  {% endfor %}
+</section>
+{% endif %}
+
+{% include "_provenance.html" %}
 
 {# Reconciliation comes first on purpose: nothing below it means anything if these fail. #}
 {% if reconciliation %}
@@ -15,6 +35,15 @@
     <span class="chip {{ 'chip-pass' if check.passed else 'chip-fail' }}"
           title="{{ check.message }}">{{ check.name }}</span>
   {% endfor %}
+  <details class="recon-help">
+    <summary>What is this?</summary>
+    <p>Reconciliation is the run's self-audit. Before any ranking is accepted, the backend checks
+    that all three scenarios used the same weather and event data, that annual totals equal the
+    sum of the daily results, and that <strong>costs match the operational quantities</strong>
+    the simulation actually recorded — for example, the crew labour cost must equal crew hours
+    &times; the labour rate, and the water cost must equal water used &times; the water price.
+    If any check fails, the run is not trusted and no winner is declared.</p>
+  </details>
 </section>
 {% if not reconciliation.passed %}
 <p class="warn-note">One or more reconciliation checks failed, so no ranking was accepted for this
@@ -77,13 +106,24 @@ run. Failure messages are in <code>reconciliation_report.json</code>.</p>
     <thead><tr><th></th>{% for s in kpi_table.scenarios %}<th class="num">{{ s }}</th>{% endfor %}</tr></thead>
     <tbody>
       {% for row in kpi_table.rows %}
-      <tr><th>{{ row.label }}</th>
-        {% for v in row["values"] %}<td class="num mono">{{ v | display_number }}</td>{% endfor %}
+      <tr><th{% if row.help %} class="has-help" title="{{ row.help }}"{% endif %}>{{ row.label }}</th>
+        {% for v in row["values"] %}<td class="num mono{{ ' best-cell' if row.best[loop.index0] }}">{{ v | display_number }}</td>{% endfor %}
       </tr>
       {% endfor %}
     </tbody>
   </table>
-  <p class="hint">Rounded for reading. Full precision is in
+  <details class="assumption-block">
+    <summary>What these metrics mean</summary>
+    <ul class="glossary">
+      {% for row in kpi_table.rows %}{% if row.help %}
+      <li><strong>{{ row.label }}</strong> — {{ row.help }}</li>
+      {% endif %}{% endfor %}
+    </ul>
+  </details>
+  <p class="hint"><span class="best-key"></span> best value in each row (green): higher is better
+    for revenue, energy gain, net benefit, and ROI; lower is better for losses, costs, payback,
+    and LCOE. Operational rows (water, crew, drone hours) are not ranked. Rounded for reading —
+    full precision is in
     <a href="/api/runs/{{ run_id }}/artifact/scenario_annual_summary.csv">scenario_annual_summary.csv</a>.</p>
 </section>
 {% endif %}
@@ -95,33 +135,101 @@ run. Failure messages are in <code>reconciliation_report.json</code>.</p>
 </section>
 {% endif %}
 
-{% if plots %}
+{% if daily_loss %}
 <section class="panel">
-  <h2>Generated plots</h2>
-  <div class="plot-grid">
-    {% for p in plots %}
-    <figure>
-      <img src="/api/runs/{{ run_id }}/artifact/{{ p }}" alt="{{ p }}" loading="lazy">
-      <figcaption class="mono">{{ p }}</figcaption>
-    </figure>
-    {% endfor %}
-  </div>
+  <h2>Daily energy loss by scenario</h2>
+  <canvas id="daily-loss-chart" height="110"></canvas>
+  <p class="hint">Values are the stored <code>energy_loss_kwh</code> column of
+    <a href="/api/runs/{{ run_id }}/artifact/scenario_daily_summary.csv">scenario_daily_summary.csv</a>.</p>
 </section>
 {% endif %}
 
-{% if cost_summary %}
+{% if daily_soiling %}
+<section class="panel">
+  <h2>Daily contamination cleanliness by scenario</h2>
+  <canvas id="daily-soiling-chart" height="110"></canvas>
+  <p class="hint">1.0 = perfectly clean panels. Each scenario uses its stored dust or
+    contamination-cleanliness field from the state that produced that day's energy.</p>
+</section>
+{% endif %}
+
+{% if daily_cumgain %}
+<section class="panel">
+  <h2>Cumulative energy gain vs baseline</h2>
+  <canvas id="daily-cumgain-chart" height="110"></canvas>
+  <p class="hint">Running total of each scenario's daily AC energy minus the baseline's — where a
+    curve climbs, the strategy is pulling ahead. Values are the stored
+    <code>cumulative_energy_gain_vs_baseline_kwh</code> column of the daily summary; the final
+    value equals the annual energy gain in the KPI table.</p>
+</section>
+{% endif %}
+
+{% if annual_cost_bars %}
+<section class="panel">
+  <h2>Annual revenue, cost, and benefit</h2>
+  <canvas id="annual-cost-chart" height="110"></canvas>
+  <p class="hint">Bars show the stored annual figures (SAR) from
+    <a href="/api/runs/{{ run_id }}/artifact/scenario_annual_summary.csv">scenario_annual_summary.csv</a>.</p>
+</section>
+{% endif %}
+
+{% if cost_table %}
 <section class="panel">
   <h2>Cost components</h2>
-  <div class="scroll-x">
-  <table class="data-table small">
-    <thead><tr>{% for h in cost_summary.header %}<th>{{ h }}</th>{% endfor %}</tr></thead>
+  <details class="recon-help cost-help">
+    <summary>How to read this table (cost reconciliation)</summary>
+    <p>Each operating cost is a quantity the simulation recorded multiplied by a unit rate from
+    the calibration registry — crew hours &times; labour rate, water used &times; water price,
+    flight hours &times; drone operating rate. The reconciliation strip at the top of this page
+    verifies those multiplications; this table only displays the stored results. Subtotals and
+    totals are the backend's own figures from
+    <a href="/api/runs/{{ run_id }}/artifact/scenario_cost_summary.csv">scenario_cost_summary.csv</a>.</p>
+  </details>
+  {% for sc in cost_table %}
+  <h3 class="cost-scenario">{{ sc.scenario }}</h3>
+  {% if sc.groups %}
+  <table class="data-table cost-table">
+    <thead><tr><th>Cost item</th><th class="num">Amount</th><th>Unit</th></tr></thead>
     <tbody>
-      {% for row in cost_summary.rows %}
-      <tr>{% for v in row %}<td class="mono">{{ v }}</td>{% endfor %}</tr>
+      {% for group in sc.groups %}
+      <tr class="cost-group-row"><td colspan="3">{{ group.label }}</td></tr>
+      {% for comp in group.components %}
+      <tr><td class="cost-item">{{ comp.name }}</td>
+        <td class="num mono">{{ comp.amount | sar }}</td><td class="unit">{{ comp.unit }}</td></tr>
       {% endfor %}
+      <tr class="cost-subtotal-row"><td>Subtotal — {{ group.label }}</td>
+        <td class="num mono">{{ group.subtotal_amount | sar }}</td><td class="unit">{{ group.subtotal_unit }}</td></tr>
+      {% endfor %}
+      <tr class="cost-total-row"><td>Annualized CAPEX
+          {% if sc.capital_recovery_life_years %}<span class="hint-inline">(recovered over {{ sc.capital_recovery_life_years | display_number }} yr)</span>{% endif %}</td>
+        <td class="num mono">{{ sc.annualized_capex_sar | sar }}</td><td class="unit">SAR/year</td></tr>
+      <tr class="cost-total-row"><td>Annual OPEX</td>
+        <td class="num mono">{{ sc.annual_opex_sar | sar }}</td><td class="unit">SAR/year</td></tr>
+      <tr class="cost-total-row cost-grand-total"><td>Total annual cost</td>
+        <td class="num mono">{{ sc.total_annual_cost_sar | sar }}</td><td class="unit">SAR/year</td></tr>
     </tbody>
   </table>
-  </div>
+  <details class="assumption-block evidence-block">
+    <summary>Evidence status &amp; sources (advanced)</summary>
+    <table class="data-table small">
+      <thead><tr><th>Cost item</th><th>Evidence status</th><th>Source</th><th>Notes</th></tr></thead>
+      <tbody>
+        {% for ev in sc.evidence %}
+        <tr><td>{{ ev.name }}</td>
+          <td><span class="chip chip-evidence">{{ ev.evidence_status or "–" }}</span></td>
+          <td class="small-note">{{ ev.source }}</td>
+          <td class="small-note mono">{{ ev.notes }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="hint">Evidence status describes how well a unit rate is sourced (quoted,
+      provisional, or blocked pending validated field data). It does not change the arithmetic.</p>
+  </details>
+  {% else %}
+  <p class="empty">No cost components — the {{ sc.scenario }} scenario runs no mitigation
+    programme (total annual cost {{ sc.total_annual_cost_sar | sar }} SAR).</p>
+  {% endif %}
+  {% endfor %}
 </section>
 {% endif %}
 
@@ -137,15 +245,23 @@ run. Failure messages are in <code>reconciliation_report.json</code>.</p>
       {% endfor %}
     </tbody>
   </table>
+  <p class="hint">Static PNG plots exported by the backend remain available here for download and
+    reports; the sections above chart the same stored data interactively.</p>
 </section>
 
 {% endblock %}
 {% block scripts %}
-{% if daily_energy %}
+{% if daily_energy or daily_loss or daily_soiling or daily_cumgain or annual_cost_bars %}
 <script src="/static/chart.umd.js"></script>
 <script>
-  window.solarcleanDailyEnergy = {{ daily_energy | tojson }};
-  drawDailyEnergyChart();
+  window.solarcleanCharts = {
+    dailyEnergy: {{ daily_energy | tojson if daily_energy else 'null' }},
+    dailyLoss: {{ daily_loss | tojson if daily_loss else 'null' }},
+    dailySoiling: {{ daily_soiling | tojson if daily_soiling else 'null' }},
+    dailyCumGain: {{ daily_cumgain | tojson if daily_cumgain else 'null' }},
+    annualCostBars: {{ annual_cost_bars | tojson if annual_cost_bars else 'null' }}
+  };
+  drawComparisonCharts();
 </script>
 {% endif %}
 {% endblock %}

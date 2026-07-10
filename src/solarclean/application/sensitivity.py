@@ -25,6 +25,7 @@ from solarclean.application.comparison import (
     CANONICAL_SCENARIO_IDS,
     CompareAllScenarios,
     ComparisonResult,
+    ProgressCallback,
 )
 from solarclean.config.models import SolarCleanConfig
 from solarclean.domain.calibration.parameter_overrides import (
@@ -262,6 +263,7 @@ class OneWaySensitivityExperiment:
         scenario_order: Sequence[str] | None = None,
         parameter_registry_path: Path | None = None,
         write_artifacts: bool = True,
+        progress_callback: ProgressCallback | None = None,
     ) -> None:
         self.config = config
         self.steps = steps
@@ -276,11 +278,31 @@ class OneWaySensitivityExperiment:
         else:
             self.parameter_names = tuple(parameter_names)
         self.write_artifacts = write_artifacts
+        # One unit = one full comparison run (base variant or one sweep point).
+        # Observational only; a callback may raise to abort between variants.
+        self.progress_callback = progress_callback
+
+    def _total_variant_count(self) -> int:
+        """Exact number of comparison runs this experiment will execute."""
+        total = 1  # base variant
+        for name in self.parameter_names:
+            spec = self._catalog_by_name.get(name)
+            if spec is not None:
+                total += len(_sweep_points(spec, self.steps))
+        return total
+
+    def _report_progress(self, done: int, total: int, stage: str) -> None:
+        if self.progress_callback is not None:
+            self.progress_callback(done, total, stage)
 
     def run(self) -> OneWaySensitivityOutcome:
+        total = self._total_variant_count()
+        completed = 0
+        self._report_progress(completed, total, "Running base (central) comparison")
         base_variant = _run_variant(
             config=self.config, registry=self.registry, scenario_order=self.scenario_order
         )
+        completed += 1
 
         results: list[OneWayParameterResult] = []
         skipped: list[str] = []
@@ -289,7 +311,18 @@ class OneWaySensitivityExperiment:
             if spec is None:
                 skipped.append(name)
                 continue
-            results.append(self._sweep_parameter(spec, base_variant))
+
+            swept_name = spec.name
+
+            def on_point(
+                done_points: int, spec_name: str = swept_name, base: int = completed
+            ) -> None:
+                self._report_progress(base + done_points, total, f"Sweeping {spec_name}")
+
+            self._report_progress(completed, total, f"Sweeping {swept_name}")
+            results.append(self._sweep_parameter(spec, base_variant, on_point=on_point))
+            completed += len(_sweep_points(spec, self.steps))
+        self._report_progress(total, total, "Sweeps complete; writing artifacts")
 
         writer = OutputWriter(self.config)
         if self.write_artifacts:
@@ -329,7 +362,10 @@ class OneWaySensitivityExperiment:
         return OneWaySensitivityOutcome(output_directory=output_dir, result=result)
 
     def _sweep_parameter(
-        self, spec: ParameterOverrideSpec, base_variant: VariantResult
+        self,
+        spec: ParameterOverrideSpec,
+        base_variant: VariantResult,
+        on_point: Callable[[int], None] | None = None,
     ) -> OneWayParameterResult:
         points: list[SweepPoint] = []
         for value in _sweep_points(spec, self.steps):
@@ -348,6 +384,8 @@ class OneWaySensitivityExperiment:
                     failed_reconciliation_checks=variant.failed_reconciliation_checks,
                 )
             )
+            if on_point is not None:
+                on_point(len(points))
         winner_changed = any(
             base_variant.reconciled and point.reconciled and point.winner != base_variant.winner
             for point in points
@@ -507,6 +545,7 @@ class TwoWaySensitivityExperiment:
         scenario_order: Sequence[str] | None = None,
         parameter_registry_path: Path | None = None,
         write_artifacts: bool = True,
+        progress_callback: ProgressCallback | None = None,
     ) -> None:
         if parameter_name_a == parameter_name_b:
             raise ValueError("parameter_name_a and parameter_name_b must differ")
@@ -526,10 +565,18 @@ class TwoWaySensitivityExperiment:
         self.spec_a = catalog[parameter_name_a]
         self.spec_b = catalog[parameter_name_b]
         self.write_artifacts = write_artifacts
+        # One unit = one grid-point comparison run. Observational only.
+        self.progress_callback = progress_callback
+
+    def _report_progress(self, done: int, total: int, stage: str) -> None:
+        if self.progress_callback is not None:
+            self.progress_callback(done, total, stage)
 
     def run(self) -> TwoWaySensitivityOutcome:
         values_a = _sweep_points(self.spec_a, self.grid_steps)
         values_b = _sweep_points(self.spec_b, self.grid_steps)
+        total = len(values_a) * len(values_b)
+        self._report_progress(0, total, f"Gridding {self.spec_a.name} x {self.spec_b.name}")
         grid: list[WinnerMapGridPoint] = []
         for value_a in values_a:
             config_a, registry_a = _apply_override(
@@ -554,6 +601,11 @@ class TwoWaySensitivityExperiment:
                         net_annual_benefit_sar=variant.net_annual_benefit_sar,
                         failed_reconciliation_checks=variant.failed_reconciliation_checks,
                     )
+                )
+                self._report_progress(
+                    len(grid),
+                    total,
+                    f"Grid point {len(grid)} of {total} complete",
                 )
 
         writer = OutputWriter(self.config)
@@ -740,6 +792,7 @@ class BreakEvenExperiment:
         relative_tolerance: float = DEFAULT_BREAKEVEN_RELATIVE_TOLERANCE,
         parameter_registry_path: Path | None = None,
         write_artifacts: bool = True,
+        progress_callback: ProgressCallback | None = None,
     ) -> None:
         if scenario_a not in CANONICAL_SCENARIO_IDS or scenario_b not in CANONICAL_SCENARIO_IDS:
             raise ValueError("scenario_a/scenario_b must be baseline, reactive, or coating")
@@ -763,6 +816,15 @@ class BreakEvenExperiment:
             )
         self.spec = catalog[parameter_name]
         self.write_artifacts = write_artifacts
+        # One unit = one comparison-run evaluation. The search may finish under
+        # budget (early convergence / no crossing), so progress is reported
+        # against the max_evaluations budget and completes when the search ends
+        # -- a truthful upper bound, never an invented completion estimate.
+        self.progress_callback = progress_callback
+
+    def _report_progress(self, done: int, total: int, stage: str) -> None:
+        if self.progress_callback is not None:
+            self.progress_callback(done, total, stage)
 
     def _evaluate(self, value: float) -> BreakEvenEvaluation:
         config, registry = _apply_override(
@@ -789,6 +851,12 @@ class BreakEvenExperiment:
         def evaluate(value: float) -> BreakEvenEvaluation:
             evaluation = self._evaluate(value)
             evaluations.append(evaluation)
+            self._report_progress(
+                len(evaluations),
+                self.max_evaluations,
+                f"Evaluated {self.spec.name}={value:g} "
+                f"({len(evaluations)} of up to {self.max_evaluations})",
+            )
             return evaluation
 
         low, high = self.spec.low_value, self.spec.high_value
@@ -941,7 +1009,17 @@ class BreakEvenExperiment:
         return (lo + hi) / 2.0, remaining, None
 
     def run(self) -> BreakEvenOutcome:
+        self._report_progress(
+            0, self.max_evaluations, f"Scanning registry range of {self.spec.name}"
+        )
         search = self._search()
+        # The search may legitimately finish under budget; close the bar out
+        # honestly at completion rather than leaving it stuck mid-way.
+        self._report_progress(
+            self.max_evaluations,
+            self.max_evaluations,
+            f"Search complete after {len(search.evaluations)} evaluations",
+        )
         crossover_value = search.crossover_values[0] if search.crossover_values else None
 
         writer = OutputWriter(self.config)

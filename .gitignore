@@ -43,3 +43,8 @@ Thumbs.db
 *token*
 *secret*
 id_rsa*
+
+# Pytest temporary output directories
+ptmp/
+ptf/
+pytest_tmp*/

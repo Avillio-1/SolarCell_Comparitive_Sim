@@ -1,18 +1,26 @@
+# Default dashboard configuration.
+# Weather is fetched live from NASA POWER for site.latitude/site.longitude,
+# so changing the location (e.g. via the dashboard map picker) changes the
+# hourly irradiance, temperature, wind, humidity, and precipitation the
+# simulation runs on. Responses are cached per coordinate/period under
+# data/cache/weather. Soiling/dust-event calibration parameters below remain
+# the Riyadh central-v2 assumption set regardless of location.
 simulation:
   start: "2025-01-01T00:00:00+03:00"
   end: "2025-12-31T23:00:00+03:00"
   target_timezone: Asia/Riyadh
-  run_id_prefix: t6-central-v2-offline-fixture-full-year
+  run_id_prefix: default-riyadh
 site:
   name: Riyadh
   latitude: 24.7136
   longitude: 46.6753
   timezone: Asia/Riyadh
 weather:
-  provider: fixture
+  provider: nasa_power
   cache_enabled: true
   cache_directory: data/cache/weather
   missing_data_policy: error
+  timeout_seconds: 60
 pv_system:
   panel_count: 10000
   panel_capacity_w: 400
@@ -58,14 +66,14 @@ logging:
   level: INFO
 coating:
   enabled: true
-  preset: central
+  preset: weak
   physics:
     optical_transmittance_multiplier: 1.0
     source_optical_transmittance_absolute_fraction: null
     emissivity_atmospheric_window: 0.90
     contact_angle_degrees: 167
     sliding_angle_degrees: 3
-    dust_accumulation_multiplier: 0.70
+    dust_accumulation_multiplier: 0.60
     initial_effectiveness_fraction: 1.0
     annual_degradation_fraction: 0.05
     max_surface_cooling_c: 6.0
@@ -140,4 +148,4 @@ reactive_cv:
 calibration:
   assumption_set: riyadh_central_v2
   parameter_registry_path: data/calibration/parameter_registry.yaml
-  source_note: "T6 corrected central-v2 assumptions from 2026-07-06 audit pass; fixture weather remains test-only."
+  source_note: "Default dashboard config: live NASA POWER weather for the configured site; general soiling/dust and cost calibration use Riyadh central-v2 assumptions, with the explicit weak coating preset at a 0.60 dust accumulation multiplier."

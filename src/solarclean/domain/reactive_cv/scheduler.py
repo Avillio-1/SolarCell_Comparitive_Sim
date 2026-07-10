@@ -29,6 +29,8 @@ class InspectionScheduler:
         )
 
     def due_cohorts(self, day_index: int) -> ScheduledInspection:
+        if day_index < self.config.first_inspection_day_index:
+            return ScheduledInspection(due_cohort_ids=())
         cycle_position = (day_index - self.config.first_inspection_day_index) % (
             self.config.interval_days
         )
