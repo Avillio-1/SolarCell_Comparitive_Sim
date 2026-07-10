@@ -4,13 +4,31 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block title %}SolarClean-DT{% endblock %}</title>
+<script>
+  // Apply the persisted theme before the stylesheet paints to avoid a flash.
+  // Stored in localStorage so the choice survives refresh and new tabs.
+  (function () {
+    try {
+      var theme = localStorage.getItem("solarclean-theme");
+      if (theme === "dark" || theme === "light") {
+        document.documentElement.dataset.theme = theme;
+      } else if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+        document.documentElement.dataset.theme = "dark";
+      }
+    } catch (e) { /* storage unavailable: default to light */ }
+  })();
+</script>
 <link rel="stylesheet" href="/static/dashboard.css">
 </head>
 <body>
 <header class="topbar">
   <a class="brand" href="/">SolarClean-DT</a>
   <span class="topbar-note">10,000-panel farm &middot; Riyadh &middot; cleaning strategy comparator</span>
-  <nav><a href="/">Runs</a></nav>
+  <nav>
+    <a href="/">Runs</a>
+    <button id="theme-toggle" type="button" class="theme-toggle"
+            aria-label="Switch between light and dark mode">theme</button>
+  </nav>
 </header>
 <main>
 {% block content %}{% endblock %}

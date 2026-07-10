@@ -188,7 +188,10 @@ def generate_event_tape(
         for cohort_id in range(farm.cohort_count):
             variation = 1.0
             if farm.cohort_soiling_variation_fraction > 0:
-                variation = float(cohort_rng.normal(1.0, farm.cohort_soiling_variation_fraction))
+                variation = max(
+                    0.0,
+                    float(cohort_rng.normal(1.0, farm.cohort_soiling_variation_fraction)),
+                )
             events.append(
                 _event(
                     day,

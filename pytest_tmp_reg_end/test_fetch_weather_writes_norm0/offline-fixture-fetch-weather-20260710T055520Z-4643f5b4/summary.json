@@ -1,0 +1,5 @@
+{
+  "command": "fetch-weather",
+  "provider": "fixture",
+  "weather_rows": 48
+}

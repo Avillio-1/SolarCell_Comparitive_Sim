@@ -14,8 +14,10 @@ The current implementation is limited to:
 - T3: provisional self-cleaning coating strategy and cost basis.
 - T4/T5: common economics engine backed by the calibration parameter registry.
 - T6: three-scenario comparison, reconciliation, ranking, recommendation, and export package.
+- T7: Monte Carlo, one-way/two-way sensitivity, and break-even analysis.
+- T8/T9: web dashboard over the T6/T7 use cases (run/deploy instructions in `docs/dashboard_user_guide.md`).
 
-Not implemented yet: optimization, sensitivity analysis, databases, dashboards, authentication, Docker, and cloud deployment. Reactive CV, coating, economics, and ranking assumptions remain provisional until field calibration and validated cost inputs are available.
+Not implemented yet: optimization, databases, authentication, Docker, and managed cloud deployment. Reactive CV, coating, economics, and ranking assumptions remain provisional until field calibration and validated cost inputs are available.
 
 ## Architecture Summary
 

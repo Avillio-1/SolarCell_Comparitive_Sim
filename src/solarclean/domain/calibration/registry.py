@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from types import MappingProxyType
@@ -129,6 +131,14 @@ class ParameterRegistry:
 
     def to_records(self) -> list[dict[str, object]]:
         return [parameter.to_record() for parameter in self.parameters]
+
+    def checksum(self) -> str:
+        payload = {
+            "metadata": dict(self.metadata),
+            "parameters": self.to_records(),
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
 
     def with_central_value(self, name: str, value: float) -> Self:
         """Return a copy of this registry with one parameter's central_value replaced.

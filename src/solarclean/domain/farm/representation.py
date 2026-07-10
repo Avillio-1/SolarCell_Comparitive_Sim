@@ -6,7 +6,12 @@ from typing import Protocol
 
 import numpy as np
 
-from solarclean.config.models import BirdDroppingConfig, FarmConfig
+from solarclean.config.models import (
+    BirdDroppingConfig,
+    FarmConfig,
+    RainfallCleaningConfig,
+    SoilingConfig,
+)
 from solarclean.domain.contamination.soiling import SimulationEvent
 
 
@@ -114,13 +119,10 @@ class CohortFarm:
             coverage = cohort.bird_drop_coverage_fraction
             if precipitation_mm > 0 and coverage > 0:
                 coverage *= 1.0 - self.bird_config.rain_removal_efficiency
-            tape_coverage = (
-                bird_coverage_additions.get(cohort.cohort_id)
-                if bird_coverage_additions is not None
-                else None
-            )
-            if tape_coverage is not None:
-                added_coverage = tape_coverage
+            if bird_coverage_additions is not None:
+                # The event tape is authoritative: an absent cohort entry means
+                # no bird event today, not permission to draw a replacement.
+                added_coverage = bird_coverage_additions.get(cohort.cohort_id)
             elif rng.random() < self.bird_config.event_probability_per_cohort_day:
                 added_coverage = float(
                     rng.uniform(
@@ -170,3 +172,33 @@ def _calculate_state_energy(state: FarmState, clean_per_panel_kwh: float) -> flo
         bird = max(0.0, min(1.0, 1.0 - cohort.bird_drop_loss_fraction))
         total += clean_per_panel_kwh * cohort.panel_count * dust * bird
     return total
+
+
+def advance_dust_ratio(
+    current_ratio: float,
+    *,
+    daily_loss_fraction: float,
+    dust_event_loss_fraction: float,
+    precipitation_mm: float,
+    soiling: SoilingConfig,
+    rainfall: RainfallCleaningConfig,
+    cohort_variation_multiplier: float = 1.0,
+    accumulation_multiplier: float = 1.0,
+) -> float:
+    """Apply shared environmental dust drivers to one cohort's persistent state.
+
+    Cohort variation is defined as a non-negative multiplier on *new deposition*,
+    never on the cohort's complete accumulated cleanliness state. Scenario-specific
+    coatings may reduce new deposition through ``accumulation_multiplier`` while
+    rainfall restoration remains a shared environmental effect.
+    """
+    variation = max(0.0, cohort_variation_multiplier)
+    deposition_multiplier = max(0.0, accumulation_multiplier)
+    deposited = max(0.0, daily_loss_fraction + dust_event_loss_fraction)
+    ratio = current_ratio - deposited * variation * deposition_multiplier
+    ratio = max(soiling.minimum_soiling_ratio, min(1.0, ratio))
+    if precipitation_mm >= rainfall.full_rain_cleaning_threshold_mm:
+        ratio += (1.0 - ratio) * rainfall.full_rain_cleaning_efficiency
+    elif precipitation_mm >= rainfall.partial_rain_threshold_mm:
+        ratio += (1.0 - ratio) * rainfall.partial_rain_cleaning_efficiency
+    return max(soiling.minimum_soiling_ratio, min(1.0, ratio))

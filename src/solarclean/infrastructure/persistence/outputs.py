@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import uuid
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
 import yaml
 
+from solarclean import __version__
 from solarclean.config.models import SolarCleanConfig
 from solarclean.domain.environment.weather import WeatherDataset
 from solarclean.domain.pv.model import CleanEnergyProfile
@@ -43,6 +46,35 @@ _BASELINE_EVENT_COLUMNS = [
     "cohort_id",
     "metadata",
 ]
+
+
+@lru_cache(maxsize=1)
+def code_version_metadata() -> dict[str, object]:
+    try:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        ).stdout.strip()
+        dirty_result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        commit = ""
+        dirty: bool | None = None
+    else:
+        dirty = bool(dirty_result.stdout.strip())
+    return {
+        "solarclean_version": __version__,
+        "git_commit": commit or None,
+        "git_worktree_dirty": dirty,
+    }
 
 
 class OutputWriter:
@@ -124,13 +156,16 @@ class OutputWriter:
             columns=_BASELINE_EVENT_COLUMNS,
             include_scenario_name=False,
         )
-        if config.farm.store_cohort_daily_details and baseline.cohort_daily is not None:
+        include_cohort_details = (
+            config.farm.store_cohort_daily_details and config.output.include_cohort_daily_details
+        )
+        if include_cohort_details and baseline.cohort_daily is not None:
             baseline.cohort_daily.to_csv(
                 output_dir / "cohort_daily_results.csv",
                 index=False,
                 float_format=config.output.csv_float_format,
             )
-        elif config.farm.store_cohort_daily_details:
+        elif include_cohort_details:
             (output_dir / "cohort_daily_results.csv").write_text(
                 "date,cohort_id,panel_count,dust_soiling_ratio,bird_drop_coverage_fraction,"
                 "bird_drop_loss_fraction,actual_energy_kwh\n",

@@ -31,6 +31,7 @@ from solarclean.application.comparison import (
     CANONICAL_SCENARIO_IDS,
     CompareAllScenarios,
     ComparisonResult,
+    ProgressCallback,
 )
 from solarclean.config.models import SolarCleanConfig
 from solarclean.infrastructure.persistence.outputs import OutputWriter
@@ -203,6 +204,7 @@ class MonteCarloExperiment:
         scenario_order: Sequence[str] | None = None,
         parameter_registry_path: Path | None = None,
         write_artifacts: bool = True,
+        progress_callback: ProgressCallback | None = None,
     ) -> None:
         if trial_count < 2:
             raise ValueError("trial_count must be at least 2 to compute a spread")
@@ -214,6 +216,9 @@ class MonteCarloExperiment:
             parameter_registry_path or config.calibration.parameter_registry_path
         )
         self.write_artifacts = write_artifacts
+        # Trial-level progress reporting for callers such as the dashboard.
+        # One unit = the central comparison or one seeded trial; observational only.
+        self.progress_callback = progress_callback
 
     def trial_seeds(self) -> tuple[int, ...]:
         # A fixed base_seed always produces the same trial seeds, independent of everything
@@ -221,7 +226,13 @@ class MonteCarloExperiment:
         rng = random.Random(self.base_seed)
         return tuple(rng.randrange(1, 2**31 - 1) for _ in range(self.trial_count))
 
+    def _report_progress(self, done: int, total: int, stage: str) -> None:
+        if self.progress_callback is not None:
+            self.progress_callback(done, total, stage)
+
     def run(self) -> MonteCarloExperimentOutcome:
+        total_units = 1 + self.trial_count  # central comparison + each seeded trial
+        self._report_progress(0, total_units, "Running central comparison")
         central_comparison = (
             CompareAllScenarios(
                 self.config,
@@ -240,9 +251,14 @@ class MonteCarloExperiment:
         central_failed_checks = _failed_reconciliation_checks(central_comparison)
 
         seeds = self.trial_seeds()
-        trials = tuple(
-            self._run_trial(trial_index=index, seed=seed) for index, seed in enumerate(seeds)
-        )
+        trial_list = []
+        for index, seed in enumerate(seeds):
+            self._report_progress(
+                1 + index, total_units, f"Running trial {index + 1} of {self.trial_count}"
+            )
+            trial_list.append(self._run_trial(trial_index=index, seed=seed))
+        self._report_progress(total_units, total_units, "Trials complete; summarizing")
+        trials = tuple(trial_list)
         reconciled_trials = tuple(trial for trial in trials if trial.reconciled)
         failed_count = len(trials) - len(reconciled_trials)
 
@@ -385,7 +401,11 @@ def _majority_winner(reconciled_trials: tuple[MonteCarloTrialRecord, ...]) -> st
     for trial in reconciled_trials:
         if trial.winner is not None:
             tally[trial.winner] += 1
-    return max(tally, key=lambda scenario_id: tally[scenario_id])
+    highest = max(tally.values())
+    leaders = [scenario_id for scenario_id, wins in tally.items() if wins == highest]
+    if highest <= len(reconciled_trials) / 2 or len(leaders) != 1:
+        return None
+    return leaders[0]
 
 
 def _replace_artifacts(result: MonteCarloResult, artifacts: tuple[str, ...]) -> MonteCarloResult:

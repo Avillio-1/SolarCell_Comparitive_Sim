@@ -1,0 +1,8 @@
+command: run-baseline
+farm_representation: cohort
+annual_clean_energy_kwh: 28042.50025091375
+annual_actual_energy_kwh: 27994.20068594026
+annual_soiling_loss_kwh: 48.29956497348758
+annual_soiling_loss_percent: 0.17223701360906207
+event_count: 13
+cohort_daily_rows: 200

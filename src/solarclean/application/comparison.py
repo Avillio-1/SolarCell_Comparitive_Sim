@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -11,7 +11,6 @@ from typing import Any, cast
 
 import pandas as pd
 
-from solarclean import __version__
 from solarclean.config.models import SolarCleanConfig
 from solarclean.domain.calibration.registry import ParameterRegistry
 from solarclean.domain.coating.strategy import CoatingStrategy
@@ -24,6 +23,7 @@ from solarclean.domain.economics import (
     EconomicResult,
     EconomicsCalibration,
     ReactiveCostRates,
+    build_coating_cost_components_from_basis,
     build_economics_from_parameter_registry,
     build_reactive_cost_components,
     evaluate_annual_scenario_outputs,
@@ -44,7 +44,7 @@ from solarclean.domain.scenario.contracts import (
 )
 from solarclean.domain.simulation.baseline_strategy import BaselineStrategy
 from solarclean.domain.simulation.scenario_engine import ScenarioSimulationEngine
-from solarclean.infrastructure.persistence.outputs import OutputWriter
+from solarclean.infrastructure.persistence.outputs import OutputWriter, code_version_metadata
 from solarclean.infrastructure.persistence.plots import write_comparison_diagnostic_plots
 from solarclean.infrastructure.persistence.reports import write_json_report
 from solarclean.infrastructure.pvlib_adapter.pvwatts import PVWattsPowerModel
@@ -53,6 +53,9 @@ from .use_cases import _weather_provider, _weather_request
 
 CANONICAL_SCENARIO_IDS: tuple[str, ...] = ("baseline", "reactive", "coating")
 DEFAULT_PARAMETER_REGISTRY_PATH = Path("data/calibration/parameter_registry.yaml")
+# Optional coarse progress reporting: (completed_units, total_units, stage_label).
+# Units are whole scenario simulations -- no sub-scenario estimation is invented.
+ProgressCallback = Callable[[int, int, str], None]
 ENERGY_TOLERANCE_KWH = 1e-6
 COST_TOLERANCE_SAR = 1e-6
 RANKING_TOLERANCE_SAR = 1e-6
@@ -244,10 +247,15 @@ class CompareAllScenarios:
         parameter_registry_path: Path | None = None,
         parameter_registry: ParameterRegistry | None = None,
         write_artifacts: bool = True,
+        progress_callback: ProgressCallback | None = None,
     ) -> None:
         self.config = config
         self.weather = weather
         self.event_tape = event_tape
+        # Reports scenario-level completion to callers (e.g. the dashboard job
+        # table). Purely observational: it never alters simulation behaviour,
+        # though a callback may raise to abort between scenarios.
+        self.progress_callback = progress_callback
         self.scenario_order = _resolve_scenario_order(scenario_order)
         self.parameter_registry_path = (
             parameter_registry_path or config.calibration.parameter_registry_path
@@ -264,6 +272,10 @@ class CompareAllScenarios:
         self.write_artifacts = write_artifacts
 
     def run(self) -> CompareAllScenariosResult:
+        registry = self.parameter_registry or ParameterRegistry.from_yaml(
+            self.parameter_registry_path
+        )
+        _validate_comparison_config(self.config, registry)
         weather = self.weather if self.weather is not None else _load_weather(self.config)
         profile = PVWattsPowerModel().calculate_hourly(weather, self.config.pv_system)
         event_tape = self.event_tape or _generate_event_tape(self.config, profile)
@@ -283,18 +295,16 @@ class CompareAllScenarios:
             config=self.config,
             context=context,
             scenario_order=self.scenario_order,
+            progress_callback=self.progress_callback,
         )
 
-        economics = (
-            build_economics_from_parameter_registry(self.parameter_registry)
-            if self.parameter_registry is not None
-            else _load_economics(self.parameter_registry_path)
-        )
+        economics = build_economics_from_parameter_registry(registry)
         operational_by_scenario = {
             scenario_id: _annual_operational_quantities(result)
             for scenario_id, result in scenario_results.items()
         }
         annual_outputs = _build_annual_economic_outputs(
+            config=self.config,
             scenario_results=scenario_results,
             operational_by_scenario=operational_by_scenario,
             economics=economics,
@@ -318,6 +328,7 @@ class CompareAllScenarios:
             config=self.config,
             economics=economics,
             registry_path=self.parameter_registry_path,
+            registry=registry,
         )
 
         writer = OutputWriter(self.config)
@@ -337,6 +348,7 @@ class CompareAllScenarios:
             event_tape_checksum=event_tape_checksum,
             scenario_order=self.scenario_order,
             parameter_registry_path=self.parameter_registry_path,
+            parameter_registry=registry,
             economics=economics,
         )
         cost_reconciliation_checks = _cost_reconciliation_checks(
@@ -508,6 +520,28 @@ def _load_weather(config: SolarCleanConfig) -> WeatherDataset:
     return _weather_provider(config).load(_weather_request(config))
 
 
+def _validate_comparison_config(
+    config: SolarCleanConfig,
+    registry: ParameterRegistry,
+) -> None:
+    mitigation_enabled = config.reactive_cv.enabled or config.coating.enabled
+    if mitigation_enabled and config.farm.representation != "cohort":
+        raise ValueError(
+            "three-scenario mitigation comparison requires farm.representation='cohort'"
+        )
+    if (
+        config.calibration.assumption_set == "riyadh_central_v2"
+        and config.coating.preset == "central"
+    ):
+        registry_value = registry.get("coating.dust_accumulation_multiplier").central_value
+        configured = config.coating.physics.dust_accumulation_multiplier
+        if abs(configured - registry_value) > 1e-12:
+            raise ValueError(
+                "riyadh_central_v2 coating dust_accumulation_multiplier must match the "
+                f"active parameter registry central value ({configured} != {registry_value})"
+            )
+
+
 def _generate_event_tape(
     config: SolarCleanConfig,
     profile: CleanEnergyProfile,
@@ -528,30 +562,43 @@ def _run_scenarios(
     config: SolarCleanConfig,
     context: ScenarioContext,
     scenario_order: tuple[str, ...],
+    progress_callback: ProgressCallback | None = None,
 ) -> dict[str, AnnualScenarioResult]:
     executed: dict[str, AnnualScenarioResult] = {}
-    for scenario_id in scenario_order:
+    total = len(scenario_order)
+    for completed, scenario_id in enumerate(scenario_order):
+        if progress_callback is not None:
+            progress_callback(completed, total, f"Simulating {scenario_id} scenario")
         strategy = _build_strategy(scenario_id, config)
         executed[scenario_id] = ScenarioSimulationEngine(strategy).run(
             context,
             random_seed=config.soiling.random_seed,
         )
+    if progress_callback is not None:
+        progress_callback(total, total, "Scenarios simulated; evaluating economics and artifacts")
     return {scenario_id: executed[scenario_id] for scenario_id in CANONICAL_SCENARIO_IDS}
 
 
 def _build_strategy(scenario_id: str, config: SolarCleanConfig) -> MitigationStrategy:
+    baseline_farm = (
+        CohortFarm(config.farm, config.bird_droppings)
+        if config.farm.representation == "cohort"
+        else None
+    )
     if scenario_id == "baseline":
-        farm = (
-            CohortFarm(config.farm, config.bird_droppings)
-            if config.farm.representation == "cohort"
-            else None
-        )
         return BaselineStrategy(
             KimberStyleSoilingModel(config.soiling, config.rainfall_cleaning),
-            farm=farm,
+            farm=baseline_farm,
             farm_config=config.farm,
         )
     if scenario_id == "reactive":
+        if not config.reactive_cv.enabled:
+            return BaselineStrategy(
+                KimberStyleSoilingModel(config.soiling, config.rainfall_cleaning),
+                farm=baseline_farm,
+                farm_config=config.farm,
+                name="reactive",
+            )
         return ReactiveCVStrategy(
             reactive=config.reactive_cv,
             soiling=config.soiling,
@@ -561,6 +608,13 @@ def _build_strategy(scenario_id: str, config: SolarCleanConfig) -> MitigationStr
             name="reactive",
         )
     if scenario_id == "coating":
+        if not config.coating.enabled:
+            return BaselineStrategy(
+                KimberStyleSoilingModel(config.soiling, config.rainfall_cleaning),
+                farm=baseline_farm,
+                farm_config=config.farm,
+                name="coating",
+            )
         return CoatingStrategy(
             coating=config.coating,
             soiling=config.soiling,
@@ -579,6 +633,7 @@ def _load_economics(parameter_registry_path: Path) -> EconomicsCalibration:
 
 def _build_annual_economic_outputs(
     *,
+    config: SolarCleanConfig,
     scenario_results: Mapping[str, AnnualScenarioResult],
     operational_by_scenario: Mapping[str, OperationalQuantities],
     economics: EconomicsCalibration,
@@ -590,7 +645,7 @@ def _build_annual_economic_outputs(
         cost_components: tuple[CostComponent, ...] = ()
         metadata: dict[str, object] = {}
         useful_life_years: float | None = None
-        if scenario_id == "reactive":
+        if scenario_id == "reactive" and config.reactive_cv.enabled:
             cost_components = build_reactive_cost_components(
                 operational_quantities=operational,
                 rates=economics.reactive_cost_rates,
@@ -598,8 +653,15 @@ def _build_annual_economic_outputs(
             )
         elif scenario_id == "coating":
             coating_basis = _coating_cost_basis(result)
-            metadata["coating_cost_basis"] = coating_basis
-            useful_life_years = _coating_useful_life_years(coating_basis)
+            if coating_basis:
+                metadata["coating_cost_basis"] = coating_basis
+                useful_life_years = _coating_useful_life_years(coating_basis)
+                cost_components = build_coating_cost_components_from_basis(
+                    coating_cost_basis=coating_basis,
+                    application_labour_rate=economics.reactive_cost_rates.crew_hour,
+                    process_energy_rate=economics.reactive_cost_rates.energy_kwh,
+                    inspection_labour_rate=economics.reactive_cost_rates.crew_hour,
+                )
         outputs[scenario_id] = AnnualScenarioOutput(
             scenario_name=scenario_id,
             actual_energy_kwh=result.annual_actual_energy_kwh,
@@ -701,9 +763,11 @@ def _comparison_warnings(
                 "code": "simulation_period_not_full_year",
                 "message": (
                     "Comparison period is not a full Jan 1-Dec 31 site-year; "
-                    "annual fields represent the configured period total."
+                    "annual fields represent the configured period total and no economic "
+                    "recommendation may be produced."
                 ),
                 "source": "simulation.start/simulation.end",
+                "blocking": True,
             }
         )
     if config.coating.costs.source_status != "prompt_quoted":
@@ -754,6 +818,7 @@ def _comparison_assumptions(
     config: SolarCleanConfig,
     economics: EconomicsCalibration,
     registry_path: Path,
+    registry: ParameterRegistry,
 ) -> tuple[Mapping[str, object], ...]:
     assumptions: list[Mapping[str, object]] = [
         {
@@ -781,7 +846,7 @@ def _comparison_assumptions(
             "source_note": config.calibration.source_note,
         },
     ]
-    assumptions.extend(_registry_assumption_records(registry_path))
+    assumptions.extend(_registry_assumption_records(registry, registry_path))
     assumptions.extend(_configured_assumption_records(config, registry_path))
     for metadata in economics.parameter_metadata:
         record = asdict(metadata)
@@ -865,8 +930,10 @@ def _configured_assumption_records(
     ]
 
 
-def _registry_assumption_records(registry_path: Path) -> list[Mapping[str, object]]:
-    registry = ParameterRegistry.from_yaml(registry_path)
+def _registry_assumption_records(
+    registry: ParameterRegistry,
+    registry_path: Path,
+) -> list[Mapping[str, object]]:
     records: list[Mapping[str, object]] = []
     for key in KEY_ASSUMPTION_REGISTRY_KEYS:
         parameter = registry.get(key)
@@ -901,14 +968,16 @@ def _traceability(
     event_tape_checksum: str,
     scenario_order: tuple[str, ...],
     parameter_registry_path: Path,
+    parameter_registry: ParameterRegistry,
     economics: EconomicsCalibration,
 ) -> Mapping[str, object]:
+    code_version = code_version_metadata()
     return MappingProxyType(
         {
             "run_id": run_id,
             "created_at_utc": datetime.now(UTC).isoformat(),
             "project": "SolarClean-DT",
-            "solarclean_version": __version__,
+            **code_version,
             "config_checksum": config_checksum,
             "config_metadata": _config_metadata(config),
             "weather_checksum": weather_checksum,
@@ -919,6 +988,9 @@ def _traceability(
             "scenario_execution_order": list(scenario_order),
             "scenario_output_order": list(CANONICAL_SCENARIO_IDS),
             "parameter_registry_path": str(parameter_registry_path),
+            "parameter_registry_checksum": parameter_registry.checksum(),
+            "parameter_registry_metadata": dict(parameter_registry.metadata),
+            "parameter_registry_parameters": parameter_registry.to_records(),
             "calibration_assumption_set": config.calibration.assumption_set,
             "economics_parameter_count": len(economics.parameter_metadata),
             "economics_config": asdict(economics.config),
@@ -1105,14 +1177,28 @@ def _coating_operational_basis_checks(
         return ()
     basis = _coating_cost_basis(result)
     coated_panels = _annual_operational_quantities(result).coated_panel_count
+    if not basis and coated_panels == 0:
+        return (
+            ReconciliationCheckResult(
+                name="coating_disabled_has_no_operational_or_cost_basis",
+                passed=True,
+                message="OK",
+            ),
+        )
     basis_panels = basis.get("coated_panel_count")
-    passed = isinstance(basis_panels, int | float) and int(basis_panels) == coated_panels
+    panel_passed = isinstance(basis_panels, int | float) and int(basis_panels) == coated_panels
+    operational_energy = _annual_operational_quantities(result).energy_used_kwh
+    basis_energy = basis.get("process_energy_kwh")
+    energy_passed = (
+        isinstance(basis_energy, int | float)
+        and abs(float(basis_energy) - operational_energy) <= ENERGY_TOLERANCE_KWH
+    )
     return (
         ReconciliationCheckResult(
             name="coating_coated_panel_count_reconciles_with_cost_basis",
-            passed=passed,
+            passed=panel_passed,
             message="OK"
-            if passed
+            if panel_passed
             else (
                 "Coating coated_panel_count does not match the coating cost basis "
                 f"(operational={coated_panels}, basis={basis_panels})."
@@ -1120,6 +1206,20 @@ def _coating_operational_basis_checks(
             details={
                 "operational_coated_panel_count": coated_panels,
                 "cost_basis_coated_panel_count": basis_panels,
+            },
+        ),
+        ReconciliationCheckResult(
+            name="coating_process_energy_reconciles_with_cost_basis",
+            passed=energy_passed,
+            message="OK"
+            if energy_passed
+            else (
+                "Coating operational process energy does not match its one-time cost basis "
+                f"(operational={operational_energy}, basis={basis_energy})."
+            ),
+            details={
+                "operational_process_energy_kwh": operational_energy,
+                "cost_basis_process_energy_kwh": basis_energy,
             },
         ),
     )
@@ -1145,7 +1245,44 @@ def _economic_checks(
                     details=asdict(cost_check),
                 )
             )
+    checks.append(
+        _coating_cost_completeness_check(
+            annual_outputs["coating"],
+            economic_results["coating"],
+        )
+    )
     return tuple(checks)
+
+
+def _coating_cost_completeness_check(
+    output: AnnualScenarioOutput,
+    economic: EconomicResult,
+) -> ReconciliationCheckResult:
+    basis = output.metadata.get("coating_cost_basis")
+    if not isinstance(basis, Mapping):
+        passed = not output.cost_components
+        return ReconciliationCheckResult(
+            name="coating_cost_basis_is_fully_priced",
+            passed=passed,
+            message="OK" if passed else "Disabled coating unexpectedly has cost components.",
+        )
+    required = {
+        "coating material capex",
+        "coating surface preparation capex",
+        "coating fixed equipment capex",
+        "coating maintenance opex",
+        "coating application labour capex",
+        "coating process energy capex",
+        "coating inspection labour opex",
+    }
+    present = {component.name for component in economic.cost_breakdown}
+    missing = sorted(required - present)
+    return ReconciliationCheckResult(
+        name="coating_cost_basis_is_fully_priced",
+        passed=not missing,
+        message="OK" if not missing else f"Missing coating cost components: {missing}.",
+        details={"required_components": sorted(required), "missing_components": missing},
+    )
 
 
 def _economic_physical_check(
@@ -1262,19 +1399,18 @@ def _energy_gain_checks(
 def _warnings_check(
     warnings: tuple[Mapping[str, object], ...],
 ) -> ReconciliationCheckResult:
-    passed = len(warnings) > 0
+    blocking = [warning for warning in warnings if warning.get("blocking") is True]
+    passed = not blocking
     return ReconciliationCheckResult(
-        name="assumption_warnings_present",
+        name="no_blocking_assumption_warnings",
         passed=passed,
         message="OK"
         if passed
-        else (
-            "Comparison must surface warnings for provisional, missing, or "
-            "non-validated assumptions."
-        ),
+        else "Comparison has blocking assumption warnings and cannot be ranked.",
         details={
             "warning_count": len(warnings),
             "warning_codes": [w.get("code") for w in warnings],
+            "blocking_warning_codes": [w.get("code") for w in blocking],
         },
     )
 
@@ -1441,12 +1577,25 @@ def _build_recommendation(
 def _daily_summaries(
     scenario_results: Mapping[str, AnnualScenarioResult],
 ) -> dict[str, tuple[Mapping[str, object], ...]]:
+    # Running total of (scenario daily AC energy - baseline daily AC energy).
+    # All scenarios share one weather/event context, so dates align 1:1; the
+    # final value per scenario equals its annual energy_gain_vs_baseline_kwh.
+    baseline_daily_actual = {
+        day.date.isoformat(): day.actual_energy_kwh
+        for day in scenario_results["baseline"].daily_results
+    }
     summaries: dict[str, tuple[Mapping[str, object], ...]] = {}
     for scenario_id in CANONICAL_SCENARIO_IDS:
         records = []
+        cumulative_gain = 0.0
         for record in scenario_results[scenario_id].to_daily_frame().to_dict(orient="records"):
             typed = {str(key): value for key, value in record.items()}
             typed["scenario_id"] = scenario_id
+            day_date = typed.get("date")
+            actual = typed.get("actual_energy_kwh")
+            if day_date in baseline_daily_actual and isinstance(actual, int | float):
+                cumulative_gain += float(actual) - baseline_daily_actual[day_date]
+                typed["cumulative_energy_gain_vs_baseline_kwh"] = cumulative_gain
             records.append(MappingProxyType(typed))
         summaries[scenario_id] = tuple(records)
     return summaries
@@ -1853,9 +2002,6 @@ def _resolve_scenario_order(order: Sequence[str] | None) -> tuple[str, ...]:
 
 
 def _weather_checksum(weather: WeatherDataset) -> str:
-    value = weather.metadata.get("checksum")
-    if isinstance(value, str) and value:
-        return value
     return _dataframe_checksum(weather.hourly)
 
 

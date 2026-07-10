@@ -1,0 +1,14 @@
+date,event_sequence,event_phase,effective_for_energy_date,event_type,magnitude,description,cohort_id,metadata
+2025-01-01,1,pre_generation_state,2025-01-01,dust_accumulation,0.0025,Daily provisional dust accumulation applied.,,{}
+2025-01-01,2,pre_generation_state,2025-01-01,bird_dropping_event,0.0035304977829748035,Sparse cohort-level bird-dropping event.,25,{}
+2025-01-01,3,pre_generation_state,2025-01-01,bird_dropping_event,0.0017390733546761693,Sparse cohort-level bird-dropping event.,41,{}
+2025-01-01,4,pre_generation_state,2025-01-01,bird_dropping_event,0.0030643277809373577,Sparse cohort-level bird-dropping event.,74,{}
+2025-01-01,5,pre_generation_state,2025-01-01,bird_dropping_event,0.0029289490536895733,Sparse cohort-level bird-dropping event.,78,{}
+2025-01-01,6,pre_generation_state,2025-01-01,bird_dropping_event,0.00265407601577678,Sparse cohort-level bird-dropping event.,81,{}
+2025-01-01,7,pre_generation_state,2025-01-01,bird_dropping_event,0.003788823916321897,Sparse cohort-level bird-dropping event.,93,{}
+2025-01-02,1,pre_generation_state,2025-01-02,dust_accumulation,0.0025,Daily provisional dust accumulation applied.,,{}
+2025-01-02,2,pre_generation_state,2025-01-02,heavy_dust_event,0.007977550047980685,Stochastic localized heavy dust event.,,{}
+2025-01-02,3,pre_generation_state,2025-01-02,full_rain_cleaning,0.012328672545581593,Strong rainfall natural cleaning applied.,,{}
+2025-01-02,4,pre_generation_state,2025-01-02,bird_dropping_event,0.002425161727001336,Sparse cohort-level bird-dropping event.,8,{}
+2025-01-02,5,pre_generation_state,2025-01-02,bird_dropping_event,0.0026594354147745124,Sparse cohort-level bird-dropping event.,23,{}
+2025-01-02,6,pre_generation_state,2025-01-02,bird_dropping_event,0.0019710104293279495,Sparse cohort-level bird-dropping event.,36,{}

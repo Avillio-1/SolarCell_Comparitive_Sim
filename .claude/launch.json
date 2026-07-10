@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dashboard",
+      "runtimeExecutable": ".venv-x64\\Scripts\\python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "solarclean.dashboard.app:app", "--port", "8051"],
+      "port": 8051
+    }
+  ]
+}

@@ -157,6 +157,7 @@ def build_coating_cost_components_from_basis(
     coating_cost_basis: Mapping[str, object],
     application_labour_rate: UnitCostRate | None = None,
     process_energy_rate: UnitCostRate | None = None,
+    inspection_labour_rate: UnitCostRate | None = None,
 ) -> tuple[CostComponent, ...]:
     """Map T3 coating cost-basis quantities to T4 cost components.
 
@@ -227,6 +228,15 @@ def build_coating_cost_components_from_basis(
         quantity_value=_basis_float(coating_cost_basis, "process_energy_kwh"),
         rate=process_energy_rate,
     )
+    if inspection_labour_rate is not None:
+        _append_rated_component(
+            components,
+            name="coating inspection labour opex",
+            category="opex",
+            quantity_name="inspection_hours_per_year",
+            quantity_value=_basis_float(coating_cost_basis, "inspection_hours_per_year"),
+            rate=inspection_labour_rate,
+        )
 
     return tuple(components)
 

@@ -219,7 +219,13 @@ class DomainEvent:
     def __post_init__(self) -> None:
         cohort_id = None if self.cohort_id is None else int(self.cohort_id)
         phase = self.event_phase or _default_event_phase(self.event_type)
-        effective_date = self.effective_for_energy_date or self.date
+        effective_date = self.effective_for_energy_date
+        if effective_date is None:
+            effective_date = (
+                self.date + dt.timedelta(days=1)
+                if phase in {"cleaning", "nighttime_condensation"}
+                else self.date
+            )
         object.__setattr__(self, "cohort_id", cohort_id)
         object.__setattr__(self, "metadata", _freeze_mapping(self.metadata))
         object.__setattr__(self, "event_sequence", int(self.event_sequence))

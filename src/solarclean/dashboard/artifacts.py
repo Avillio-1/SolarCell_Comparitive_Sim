@@ -8,6 +8,7 @@ module -- if a number is not in an artifact file, the dashboard does not show it
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import json
 from dataclasses import dataclass
@@ -57,6 +58,13 @@ def list_runs(outputs_dir: Path) -> list[RunEntry]:
         return entries
     for run_dir in outputs_dir.iterdir():
         if not run_dir.is_dir():
+            continue
+        if not any(run_dir.iterdir()):
+            # Empty shell left behind when a delete raced a sync client's
+            # directory handle (OneDrive). The run's data is gone; hide it
+            # and quietly finish the removal when the handle is released.
+            with contextlib.suppress(OSError):
+                run_dir.rmdir()
             continue
         kind = _detect_kind(run_dir.name)
         winner: str | None = None
@@ -125,11 +133,11 @@ def read_csv_rows(path: Path, limit: int | None = None) -> tuple[list[str], list
     return header, rows
 
 
-def daily_energy_series(run_dir: Path) -> dict[str, object] | None:
+def daily_series(run_dir: Path, value_column: str) -> dict[str, object] | None:
     """Reshape scenario_daily_summary.csv into per-scenario chart series.
 
-    Column selection only: dates on the x axis, the stored
-    actual_energy_kwh value per scenario on the y axis.
+    Column selection only: dates on the x axis, the stored value of
+    ``value_column`` per scenario on the y axis. No values are computed.
     """
     path = run_dir / "scenario_daily_summary.csv"
     if not path.is_file():
@@ -138,22 +146,30 @@ def daily_energy_series(run_dir: Path) -> dict[str, object] | None:
     try:
         date_col = header.index("date")
         scenario_col = header.index("scenario_name")
-        energy_col = header.index("actual_energy_kwh")
+        value_col = header.index(value_column)
     except ValueError:
         return None
     dates: list[str] = []
-    series: dict[str, dict[str, float]] = {}
+    series: dict[str, dict[str, float | None]] = {}
     for row in rows:
-        date, scenario, energy = row[date_col], row[scenario_col], row[energy_col]
+        date, scenario, raw = row[date_col], row[scenario_col], row[value_col]
         if date not in dates:
             dates.append(date)
-        series.setdefault(scenario, {})[date] = float(energy)
+        try:
+            value: float | None = float(raw)
+        except ValueError:
+            value = None
+        series.setdefault(scenario, {})[date] = value
     return {
         "dates": dates,
         "series": {
             scenario: [values.get(date) for date in dates] for scenario, values in series.items()
         },
     }
+
+
+def daily_energy_series(run_dir: Path) -> dict[str, object] | None:
+    return daily_series(run_dir, "actual_energy_kwh")
 
 
 def text_preview(path: Path) -> str | None:

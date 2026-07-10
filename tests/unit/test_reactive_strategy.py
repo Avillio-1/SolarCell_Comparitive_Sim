@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 from tests.unit.test_weather import _request
 
 from solarclean.config.loader import load_config
@@ -198,6 +199,21 @@ def test_targeted_cleaning_dust_benefit_stays_on_cleaned_cohort() -> None:
         second_step.state.cohort_by_id(0).dust_soiling_ratio
         > second_step.state.cohort_by_id(2).dust_soiling_ratio
     )
+
+
+def test_post_generation_cleaning_does_not_retroactively_increase_daily_energy() -> None:
+    config, context = _context(_targeted_cleaning_config())
+    strategy = _strategy(config, perfect_information=True)
+    rng = np.random.default_rng(42)
+    state = strategy.initial_state(context, rng)
+
+    step = strategy.simulate_day(_day_input(context, 0), state, context, rng)
+    cleaning_event = next(
+        event for event in step.result.events if event.event_type == "reactive_cleaning_action"
+    )
+
+    assert step.result.actual_energy_kwh == pytest.approx(step.result.clean_energy_kwh * 0.99)
+    assert cleaning_event.effective_for_energy_date == step.result.date + timedelta(days=1)
 
 
 def test_capacity_skipped_inspections_are_backlogged_and_prioritized() -> None:

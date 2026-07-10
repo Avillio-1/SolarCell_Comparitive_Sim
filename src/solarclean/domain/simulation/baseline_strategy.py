@@ -7,7 +7,7 @@ import pandas as pd
 
 from solarclean.config.models import FarmConfig
 from solarclean.domain.contamination.soiling import ContaminationState, KimberStyleSoilingModel
-from solarclean.domain.farm.representation import CohortFarm, FarmState
+from solarclean.domain.farm.representation import CohortFarm, FarmState, advance_dust_ratio
 from solarclean.domain.scenario.contracts import (
     DailyScenarioInput,
     DailyScenarioResult,
@@ -31,10 +31,12 @@ class BaselineStrategy:
         soiling_model: KimberStyleSoilingModel,
         farm: CohortFarm | None = None,
         farm_config: FarmConfig | None = None,
+        name: str = "baseline",
     ) -> None:
         self.soiling_model = soiling_model
         self.farm = farm
         self.farm_config = farm_config
+        self.name = name
 
     def initial_state(
         self,
@@ -62,8 +64,14 @@ class BaselineStrategy:
     ) -> StrategyStep:
         del context
         typed_state = _coerce_state(state)
+        contamination_state = typed_state.contamination_state
+        if typed_state.farm_state is not None:
+            contamination_state = replace(
+                contamination_state,
+                dust_soiling_ratio=typed_state.farm_state.aggregate_dust_soiling_ratio,
+            )
         update = self.soiling_model.update(
-            typed_state.contamination_state,
+            contamination_state,
             day_input.environment,
             rng,
             event_inputs=day_input.event_inputs,
@@ -81,11 +89,26 @@ class BaselineStrategy:
             if farm_state is None:
                 raise ValueError("baseline cohort farm requires an initialized farm state")
             varied_state = _apply_dust_to_farm(
-                farm_state,
-                update.state.dust_soiling_ratio,
-                self.farm_config.cohort_soiling_variation_fraction if self.farm_config else 0.0,
-                rng,
-                dict(day_input.event_inputs.cohort_variation_multipliers)
+                FarmState(date=day_input.date, cohorts=list(farm_state.cohorts)),
+                daily_loss_fraction=sum(
+                    event.magnitude
+                    for event in update.events
+                    if event.event_type == "dust_accumulation"
+                ),
+                dust_event_loss_fraction=sum(
+                    event.magnitude
+                    for event in update.events
+                    if event.event_type == "heavy_dust_event"
+                ),
+                precipitation_mm=day_input.environment.precipitation_mm,
+                soiling_model=self.soiling_model,
+                variation_fraction=(
+                    self.farm_config.cohort_soiling_variation_fraction if self.farm_config else 0.0
+                ),
+                rng=rng,
+                cohort_variation_multipliers=dict(
+                    day_input.event_inputs.cohort_variation_multipliers
+                )
                 if day_input.event_inputs is not None
                 else None,
             )
@@ -155,17 +178,31 @@ def _coerce_state(state: object) -> BaselineStrategyState:
 
 def _apply_dust_to_farm(
     state: FarmState,
-    base_ratio: float,
+    *,
+    daily_loss_fraction: float,
+    dust_event_loss_fraction: float,
+    precipitation_mm: float,
+    soiling_model: KimberStyleSoilingModel,
     variation_fraction: float,
     rng: np.random.Generator,
     cohort_variation_multipliers: dict[int, float] | None = None,
 ) -> FarmState:
     cohorts = []
     for cohort in state.cohorts:
-        ratio = base_ratio
         if cohort_variation_multipliers is not None:
-            ratio *= cohort_variation_multipliers.get(cohort.cohort_id, 1.0)
+            variation = cohort_variation_multipliers.get(cohort.cohort_id, 1.0)
         elif variation_fraction > 0:
-            ratio *= float(rng.normal(1.0, variation_fraction))
-        cohorts.append(replace(cohort, dust_soiling_ratio=max(0.0, min(1.0, ratio))))
+            variation = max(0.0, float(rng.normal(1.0, variation_fraction)))
+        else:
+            variation = 1.0
+        ratio = advance_dust_ratio(
+            cohort.dust_soiling_ratio,
+            daily_loss_fraction=daily_loss_fraction,
+            dust_event_loss_fraction=dust_event_loss_fraction,
+            precipitation_mm=precipitation_mm,
+            soiling=soiling_model.config,
+            rainfall=soiling_model.rainfall,
+            cohort_variation_multiplier=variation,
+        )
+        cohorts.append(replace(cohort, dust_soiling_ratio=ratio))
     return FarmState(date=state.date, cohorts=cohorts)

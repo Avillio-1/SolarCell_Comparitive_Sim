@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from solarclean.config.models import ReactiveCVObserverConfig, ReactiveInspectionConfig
 from solarclean.domain.farm.representation import CohortState
@@ -109,3 +110,17 @@ def test_estimated_loss_is_bounded_between_zero_and_one() -> None:
     observation = observer.observe(cohort, rng)
 
     assert observation.estimated_loss_fraction == 1.0
+
+
+def test_mixed_dust_and_bird_loss_matches_the_energy_formula() -> None:
+    observer = PerfectInformationObserver(_inspection())
+    cohort = CohortState(
+        cohort_id=3,
+        panel_count=100,
+        dust_soiling_ratio=0.7,
+        bird_drop_loss_fraction=0.2,
+    )
+
+    observation = observer.observe(cohort, np.random.default_rng(6))
+
+    assert observation.estimated_loss_fraction == pytest.approx(1.0 - 0.7 * 0.8)

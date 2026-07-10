@@ -4,8 +4,16 @@
 
 <div class="run-head">
   <h1 class="mono">{{ run_id }}</h1>
-  <a class="quiet-link" href="/api/runs/{{ run_id }}/download">download full run (.zip)</a>
+  <span class="run-head-actions">
+    {% if rerun_supported %}
+    <button type="button" id="rerun-btn" data-run-id="{{ run_id }}" title="Repeat this analysis with the run's own stored config snapshot">re-run this analysis</button>
+    {% endif %}
+    <a class="quiet-link" href="/api/runs/{{ run_id }}/download">download full run (.zip)</a>
+  </span>
+  <span id="rerun-status" class="hint" role="status"></span>
 </div>
+
+{% include "_provenance.html" %}
 
 {% if mc_summary %}
 <section class="panel">
@@ -39,6 +47,84 @@
     </tbody>
   </table>
 </section>
+
+{% if mc_trials %}
+<section class="panel">
+  <h2>Net benefit distribution across trials</h2>
+  <canvas id="mc-trials-chart" height="90"></canvas>
+  <p class="hint">Every reconciled trial's stored net annual benefit, one dot per trial per
+    scenario (from <code>monte_carlo_trials.csv</code>). Overlapping clouds mean the ranking is
+    seed-sensitive; separated clouds mean it is robust.</p>
+</section>
+{% endif %}
+
+<section class="panel">
+  <h2>Win probability by scenario</h2>
+  <canvas id="mc-win-chart" height="90"></canvas>
+</section>
+<section class="panel">
+  <h2>Net annual benefit spread (mean, P5, P95)</h2>
+  <canvas id="mc-benefit-chart" height="90"></canvas>
+  <p class="hint">Values are the stored statistics from <code>monte_carlo_summary.json</code>;
+    nothing is recomputed for this chart.</p>
+</section>
+{% endif %}
+
+{% if oneway_tornado %}
+<section class="panel">
+  <h2>Which assumption moves the outcome most (tornado)</h2>
+  <canvas id="tornado-chart" height="{{ 30 + oneway_tornado.entries|length * 22 }}"></canvas>
+  <p class="hint">Each bar is the stored net-benefit swing (max across scenarios) when that
+    parameter sweeps its registry low–high range, everything else held central. Amber bars flip
+    the winning scenario somewhere in their range. Data:
+    <a href="/api/runs/{{ run_id }}/artifact/sensitivity_oneway_summary.json">sensitivity_oneway_summary.json</a>.</p>
+</section>
+{% endif %}
+
+{% if twoway_grid %}
+<section class="panel">
+  <h2>Winner map: {{ twoway_grid.parameter_a }} × {{ twoway_grid.parameter_b }}</h2>
+  <div class="scroll-x">
+  <table class="winner-map" aria-label="winner by parameter grid">
+    <thead>
+      <tr><th class="wm-axis">{{ twoway_grid.parameter_b }} ↓ \ {{ twoway_grid.parameter_a }} →</th>
+        {% for a in twoway_grid.values_a %}<th class="num mono">{{ a | display_number }}</th>{% endfor %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in twoway_grid.matrix %}
+      <tr>
+        <th class="num mono">{{ twoway_grid.values_b_desc[loop.index0] | display_number }}</th>
+        {% for cell in row %}
+        {% if cell %}
+        <td class="wm-cell wm-{{ cell.winner or 'invalid' }}" title="{{ cell.tooltip }}">
+          {{ (cell.winner or "×")[:1] }}</td>
+        {% else %}<td class="wm-cell wm-missing"></td>{% endif %}
+        {% endfor %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="hint">Cell colour = winning scenario at that parameter pair (hover for each
+    scenario's stored net benefit; × = unreconciled point).
+    <span class="wm-key wm-baseline">b</span> baseline
+    <span class="wm-key wm-reactive">r</span> reactive
+    <span class="wm-key wm-coating">c</span> coating</p>
+</section>
+{% endif %}
+
+{% if breakeven_chart %}
+<section class="panel">
+  <h2>Break-even: {{ breakeven_chart.scenario_a }} minus {{ breakeven_chart.scenario_b }}</h2>
+  <canvas id="breakeven-chart" height="90"></canvas>
+  <p class="hint">Stored margin (net annual benefit of {{ breakeven_chart.scenario_a }} minus
+    {{ breakeven_chart.scenario_b }}) at every evaluated value of
+    <code>{{ breakeven_chart.parameter_name }}</code>. Where the curve crosses zero, the two
+    strategies tie{% if breakeven_chart.crossovers %} — found at
+    {% for c in breakeven_chart.crossovers %}<span class="mono">{{ c | display_number }}</span>{% if not loop.last %}, {% endif %}{% endfor %}{% endif %}.</p>
+  {% if breakeven and breakeven.message %}<p class="hint">{{ breakeven.message }}</p>{% endif %}
+</section>
 {% endif %}
 
 {% if summary_text %}
@@ -50,15 +136,17 @@
 
 {% if plots %}
 <section class="panel">
-  <h2>Generated plots</h2>
-  <div class="plot-grid">
-    {% for p in plots %}
-    <figure>
-      <img src="/api/runs/{{ run_id }}/artifact/{{ p }}" alt="{{ p }}" loading="lazy">
-      <figcaption class="mono">{{ p }}</figcaption>
-    </figure>
-    {% endfor %}
-  </div>
+  <details class="assumption-block">
+    <summary>Static plot images exported by the backend ({{ plots|length }})</summary>
+    <div class="plot-grid">
+      {% for p in plots %}
+      <figure>
+        <img src="/api/runs/{{ run_id }}/artifact/{{ p }}" alt="{{ p }}" loading="lazy">
+        <figcaption class="mono">{{ p }}</figcaption>
+      </figure>
+      {% endfor %}
+    </div>
+  </details>
 </section>
 {% endif %}
 
@@ -76,4 +164,16 @@
   </table>
 </section>
 
+{% endblock %}
+{% block scripts %}
+{% if mc_summary or oneway_tornado or breakeven_chart %}
+<script src="/static/chart.umd.js"></script>
+<script>
+  window.solarcleanMonteCarlo = {{ mc_summary | tojson if mc_summary else 'null' }};
+  window.solarcleanMcTrials = {{ mc_trials | tojson if mc_trials else 'null' }};
+  window.solarcleanTornado = {{ oneway_tornado | tojson if oneway_tornado else 'null' }};
+  window.solarcleanBreakEven = {{ breakeven_chart | tojson if breakeven_chart else 'null' }};
+  drawAnalysisCharts();
+</script>
+{% endif %}
 {% endblock %}
