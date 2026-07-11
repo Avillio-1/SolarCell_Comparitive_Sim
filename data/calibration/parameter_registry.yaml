@@ -767,18 +767,18 @@ parameters:
   - name: economics.water_cost_sar_per_m3
     configuration_path: economics.costs.water_sar_per_m3
     category: economics
-    central_value: 6.0
+    central_value: 10.0
     low_value: 2.0
-    high_value: 12.0
+    high_value: 20.0
     unit: SAR/m3
-    source: "Saudi National Water Company tariff references and arid-site delivered-water uncertainty."
+    source: "Delivered-water central estimate for a remote utility farm (tanker delivery), bracketed by recycled/TSE water (low) and long-haul tanker rates (high); NWC piped tariff (~4.5-9 SAR/m3 by tier) applies only if the site is utility-connected."
     evidence_type: inferred
     source_geography_and_climate: "Saudi water tariff context plus site delivery uncertainty."
     applicability_to_saudi_conditions: "Water scarcity and delivery distance are directly relevant to Saudi cleaning decisions."
     confidence: low
     status: blocked
-    rationale: "Prices wet-cleaning water use in future economics."
-    limitations: "NWC tariff may not equal delivered water cost for a remote utility farm."
+    rationale: "Prices wet-cleaning water at delivered-to-site cost rather than the piped utility tariff, since a 10,000-panel farm outside Riyadh is unlikely to sit on an NWC connection."
+    limitations: "Requires a site-specific water supply plan (piped, tanker, or recycled) before decision use."
     responsible_module_or_owner: T3 coating/economics
   - name: economics.drone_equipment_cost_sar
     configuration_path: economics.capex.drone_equipment_sar
@@ -795,6 +795,22 @@ parameters:
     status: blocked
     rationale: "Central-v2 reactive CV comparison uses a 150,000 SAR drone/camera/battery equipment CAPEX."
     limitations: "Requires selected drone, camera payload, batteries, chargers, insurance, and spares."
+    responsible_module_or_owner: T3 coating/economics
+  - name: economics.drone_equipment_useful_life_years
+    configuration_path: economics.capex.drone_equipment_useful_life_years
+    category: economics
+    central_value: 3.0
+    low_value: 2.0
+    high_value: 5.0
+    unit: years
+    source: "Commercial UAV depreciation practice for near-daily desert operations; airframe fatigue, crash risk, and payload obsolescence dominate; battery and wear-part replacement is priced separately in the flight-hour rate and overhead."
+    evidence_type: inferred
+    source_geography_and_climate: "Enterprise UAV fleet practice; Saudi heat and dust shorten airframe life."
+    applicability_to_saudi_conditions: "Directly relevant: high temperatures, dust ingestion, and frequent flights accelerate wear."
+    confidence: low
+    status: provisional
+    rationale: "Annualizes the drone equipment CAPEX over an equipment-specific life instead of inheriting the 15-year PV plant convention, matching how the coating recovers its CAPEX over its own useful life."
+    limitations: "Requires a selected airframe, vendor support horizon, and fleet maintenance plan."
     responsible_module_or_owner: T3 coating/economics
   - name: economics.drone_flight_operation_cost_sar_per_hour
     configuration_path: economics.costs.drone_flight_sar_per_hour

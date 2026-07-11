@@ -1,19 +1,19 @@
-# Default dashboard configuration.
-# Weather is fetched live from NASA POWER for site.latitude/site.longitude,
-# so changing the location (e.g. via the dashboard map picker) changes the
-# hourly irradiance, temperature, wind, humidity, and precipitation the
-# simulation runs on. Responses are cached per coordinate/period under
-# data/cache/weather. Soiling/dust-event calibration parameters below remain
-# the Riyadh central-v2 assumption set regardless of location.
+# Humid-coastal-desert site for the dry-vs-humid desert coating experiment.
+# Identical to configs/riyadh_dry_desert.yaml except site name/coordinates
+# and run_id_prefix, so any outcome difference is attributable to the weather
+# NASA POWER returns for the location (Dammam: humid Gulf-coast desert, frequent high-RH nights).
+# Humidity physics (dew cementation, coating condensation, smooth humidity
+# cooling) are enabled in BOTH configs; the dry site simply rarely triggers
+# them.
 simulation:
   start: "2025-01-01T00:00:00+03:00"
   end: "2025-12-31T23:00:00+03:00"
   target_timezone: Asia/Riyadh
-  run_id_prefix: default-riyadh
+  run_id_prefix: humid-dammam
 site:
-  name: Riyadh
-  latitude: 24.7136
-  longitude: 46.6753
+  name: Dammam (humid coastal desert)
+  latitude: 26.4207
+  longitude: 50.0888
   timezone: Asia/Riyadh
 weather:
   provider: nasa_power
@@ -48,6 +48,13 @@ soiling:
   minimum_soiling_ratio: 0.55
   stochastic_std_fraction: 0.1
   random_seed: 42
+  dew_cementation:
+    enabled: true
+    onset_relative_humidity_pct: 75.0
+    saturation_relative_humidity_pct: 95.0
+    max_soiling_rate_multiplier: 1.5
+    max_rain_efficiency_penalty: 0.5
+    memory_days: 10
 rainfall_cleaning:
   partial_rain_threshold_mm: 1.0
   full_rain_cleaning_threshold_mm: 5.0
@@ -66,27 +73,38 @@ logging:
   level: INFO
 coating:
   enabled: true
-  preset: weak
+  preset: kaust_paper_strong
+  # Coating physics anchored to the KAUST paper (10.1002/eem2.70350) and the
+  # project's T3 calibration audit (docs/audits/t3_t6_kaust_coating_correction.md):
+  # +1.4% measured transmittance vs uncoated glass (Fig 2e), ~7 C max radiative
+  # cooling with only a modest humidity penalty (8.0 C @50% RH -> 6.1 C @90% RH,
+  # Fig 3a => floor 0.70), condensation onset near 65% RH (Fig 3c), dew yield
+  # calibrated to 128 g/m2/night (Fig 5h), and self-cleaning that is dew-driven
+  # (passive 0.11/day at full dew) rather than adhesion-multiplier-driven.
   physics:
-    optical_transmittance_multiplier: 1.0
+    optical_transmittance_multiplier: 1.014
     source_optical_transmittance_absolute_fraction: null
     emissivity_atmospheric_window: 0.90
     contact_angle_degrees: 167
     sliding_angle_degrees: 3
-    dust_accumulation_multiplier: 0.60
+    dust_accumulation_multiplier: 0.90
     initial_effectiveness_fraction: 1.0
-    annual_degradation_fraction: 0.05
-    max_surface_cooling_c: 6.0
+    annual_degradation_fraction: 0.02
+    max_surface_cooling_c: 7.0
     humidity_cooling_reference_pct: 80
+    humidity_cooling_mode: smooth
+    humidity_cooling_dry_reference_pct: 40
+    humidity_cooling_floor_fraction: 0.70
+    cementation_suppression_fraction: 0.9
     wind_cooling_decay_per_m_s: 0.08
-    daytime_cooling_fraction: 0.05
-    passive_cleaning_base_efficiency: 0.80
+    daytime_cooling_fraction: 0.0
+    passive_cleaning_base_efficiency: 0.11
     passive_cleaning_tilt_reference_degrees: 25
-    bird_removal_efficiency: 0.50
-    max_bird_removal_fraction_per_day: 0.25
+    bird_removal_efficiency: 0.05
+    max_bird_removal_fraction_per_day: 0.01
   water:
-    condensation_liters_per_m2_per_c_hour: 0.0
-    minimum_relative_humidity_pct: 100
+    condensation_liters_per_m2_per_c_hour: 0.0036
+    minimum_relative_humidity_pct: 65
     collectable_water_efficiency_fraction: 0.0
     actual_collection_efficiency_fraction: 0.0
   deployment:
@@ -140,15 +158,12 @@ reactive_cv:
     max_queue_age_days: 14
   crew:
     daily_capacity_cohorts: 6
-    # Minutes are WORKER-minutes for a 2-person crew (elapsed time is half):
-    # 100 panels per 25 elapsed minutes needs two workers at the registry's
-    # central 120 panels/worker-hour, so labour is billed for both.
-    setup_minutes_per_cohort: 16
-    cleaning_minutes_per_cohort: 50
+    setup_minutes_per_cohort: 8
+    cleaning_minutes_per_cohort: 25
     water_liters_per_cohort: 150
     dust_removal_efficiency: 0.92
     bird_removal_efficiency: 0.95
 calibration:
   assumption_set: riyadh_central_v2
   parameter_registry_path: data/calibration/parameter_registry.yaml
-  source_note: "Default dashboard config: live NASA POWER weather for the configured site; general soiling/dust and cost calibration use Riyadh central-v2 assumptions, with the explicit weak coating preset at a 0.60 dust accumulation multiplier. Crew minutes are worker-minutes for a 2-person crew (registry central 120 panels/worker-hour), and water is priced at delivered-to-site cost (registry central 10 SAR/m3)."
+  source_note: "Dry-vs-humid desert experiment, humid arm: live NASA POWER weather for Dammam; Riyadh central-v2 soiling/dust/cost calibration; coating physics anchored to KAUST paper 10.1002/eem2.70350 via the T3 kaust_paper_strong calibration audit (dew-driven passive cleaning, +1.4% optical, cooling humidity floor 0.70, condensation from 65% RH); dew cementation enabled identically in both arms."

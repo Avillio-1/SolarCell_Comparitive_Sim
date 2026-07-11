@@ -47,11 +47,6 @@ from solarclean.domain.calibration.registry import ParameterRegistry
 
 _PACKAGE_DIR = Path(__file__).parent
 
-# The one config the launch form runs, presented as "Default" in the UI.
-# It uses the nasa_power weather provider, so the site coordinates (editable
-# via the map picker on the config page) genuinely change the weather the
-# simulation runs on. The project intentionally has no config picker or
-# alternate runtime YAMLs.
 DEFAULT_CONFIG_NAME = "default.yaml"
 DEFAULT_CONFIG_LABEL = "Default"
 
@@ -159,12 +154,15 @@ templates.env.filters["sar"] = _format_sar
 def _config_path(name: str) -> Path:
     if not _CONFIG_NAME_PATTERN.match(name):
         raise HTTPException(status_code=400, detail="Config name must be <letters-digits-_->.yaml")
-    if name != DEFAULT_CONFIG_NAME:
-        raise HTTPException(status_code=404, detail=f"Only {DEFAULT_CONFIG_NAME} is supported")
     path = _CONFIGS_DIR / name
     if not path.is_file():
         raise HTTPException(status_code=404, detail=f"No config named {name} in configs/")
     return path
+
+
+def _config_names() -> list[str]:
+    """Names of the YAML configurations available for new dashboard runs."""
+    return sorted(path.name for path in _CONFIGS_DIR.glob("*.yaml"))
 
 
 def _run_dir_or_404(run_id: str) -> Path:
@@ -193,6 +191,8 @@ _KPI_FIELDS: tuple[tuple[str, str, str | None], ...] = (
     ("Incremental payback vs baseline (yr)", "incremental_payback_years_vs_baseline", "lower"),
     ("Effective LCOE (SAR/kWh)", "effective_lcoe_sar_per_kwh", "lower"),
     ("Water used (L)", "annual_operational_water_liters", None),
+    ("Water condensed on coating (L)", "annual_condensed_water_liters", None),
+    ("Water collected for reuse (L)", "annual_collected_water_liters", None),
     ("Crew hours", "annual_operational_crew_hours", None),
     ("Drone flight hours", "annual_operational_drone_flight_hours", None),
 )
@@ -238,6 +238,15 @@ def _kpi_table(header: list[str], rows: list[list[str]]) -> dict[str, object]:
             }
         )
     return {"scenarios": scenarios, "rows": table_rows}
+
+
+def _stored_kpi_table(run_dir: Path) -> dict[str, object] | None:
+    """Selected annual KPIs already stored in a run's summary CSV."""
+    annual_path = run_dir / "scenario_annual_summary.csv"
+    if not annual_path.is_file():
+        return None
+    header, rows = artifacts.read_csv_rows(annual_path)
+    return _kpi_table(header, rows)
 
 
 # Cost component category order and labels for the redesigned cost table.
@@ -415,6 +424,17 @@ _KPI_GLOSSARY: dict[str, str] = {
     "effective_lcoe_sar_per_kwh": (
         "Levelized cost of energy: the strategy's annual cost divided by the energy "
         "delivered — SAR spent per kWh produced. Lower is cheaper energy."
+    ),
+    "annual_condensed_water_liters": (
+        "Dew that formed on the coated panels over the year. It powers the coating's "
+        "passive self-cleaning as it rolls off; it is not captured unless collection "
+        "is configured. Zero for uncoated scenarios."
+    ),
+    "annual_collected_water_liters": (
+        "The share of condensed dew routed to storage for reuse (e.g. irrigation). "
+        "Stays zero unless the config enables collection efficiencies — and enabling "
+        "them should come with a water_collection_infrastructure_cost. Volume only: "
+        "it earns no revenue in the economics."
     ),
 }
 
@@ -606,14 +626,27 @@ def _provenance(run_dir: Path) -> dict[str, object] | None:
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
+    runs = []
+    for run in artifacts.list_runs(_OUTPUTS_DIR):
+        site = _resolved_config_section(run.path, "site").get("name")
+        runs.append(
+            {
+                "run_id": run.run_id,
+                "created": run.created,
+                "kind": run.kind,
+                "site": site if isinstance(site, str) else None,
+                "winner": run.winner,
+                "valid": run.valid,
+            }
+        )
     return templates.TemplateResponse(
         request,
         "index.html",
         {
             "default_config_name": DEFAULT_CONFIG_NAME,
             "default_config_label": DEFAULT_CONFIG_LABEL,
-            "default_config_exists": (_CONFIGS_DIR / DEFAULT_CONFIG_NAME).is_file(),
-            "runs": artifacts.list_runs(_OUTPUTS_DIR),
+            "configs": _config_names(),
+            "runs": runs,
             "jobs": jobs.records(),
             "parameters": _parameter_catalog(),
         },
@@ -650,6 +683,8 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
                 "daily_cumgain": artifacts.daily_series(
                     run_dir, "cumulative_energy_gain_vs_baseline_kwh"
                 ),
+                "daily_dew": artifacts.daily_series(run_dir, "extension_dew_risk"),
+                "daily_cementation": artifacts.daily_series(run_dir, "extension_cementation_index"),
             }
         )
         annual_path = run_dir / "scenario_annual_summary.csv"
@@ -690,6 +725,23 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
     return templates.TemplateResponse(request, "run_analysis.html", context)
 
 
+@app.get("/compare-runs", response_class=HTMLResponse)
+def compare_runs(request: Request, a: str, b: str) -> HTMLResponse:
+    if a == b:
+        raise HTTPException(status_code=400, detail="Choose two different runs to compare")
+    runs = []
+    for run_id in (a, b):
+        run_dir = _run_dir_or_404(run_id)
+        runs.append(
+            {
+                "run_id": run_id,
+                "provenance": _provenance(run_dir),
+                "kpi_table": _stored_kpi_table(run_dir),
+            }
+        )
+    return templates.TemplateResponse(request, "compare_runs.html", {"runs": runs})
+
+
 @app.get("/config/{name}", response_class=HTMLResponse)
 def config_page(request: Request, name: str) -> HTMLResponse:
     path = _config_path(name)
@@ -712,6 +764,7 @@ def config_page(request: Request, name: str) -> HTMLResponse:
 
 class LaunchRequest(BaseModel):
     kind: str
+    config: str = "default.yaml"
     trials: int = 25
     base_seed: int | None = None
     steps: int = 5
@@ -846,9 +899,8 @@ def launch_run(body: LaunchRequest) -> JSONResponse:
     if body.kind not in JOB_KINDS:
         raise HTTPException(status_code=400, detail=f"kind must be one of {JOB_KINDS}")
     _reject_if_busy()
-    # Runs always use the Default config; there is deliberately no picker.
-    config_path = _config_path(DEFAULT_CONFIG_NAME)
-    job = jobs.submit(body.kind, DEFAULT_CONFIG_NAME, _make_work(body, config_path))
+    config_path = _config_path(body.config)
+    job = jobs.submit(body.kind, body.config, _make_work(body, config_path))
     return JSONResponse(job.to_record(), status_code=202)
 
 

@@ -17,6 +17,10 @@ from pathlib import Path
 # Artifacts small enough to inline in a results page. Everything else is
 # offered as a download only.
 _TEXT_PREVIEW_LIMIT_BYTES = 200_000
+# Daily summaries can include serialized cohort-state extension fields. They
+# are not parsed by the dashboard, but CSV still has to read past them to pick
+# the displayed columns.
+_CSV_FIELD_SIZE_LIMIT = 10_000_000
 
 
 @dataclass
@@ -122,6 +126,7 @@ def list_artifacts(run_dir: Path) -> list[dict[str, object]]:
 
 
 def read_csv_rows(path: Path, limit: int | None = None) -> tuple[list[str], list[list[str]]]:
+    csv.field_size_limit(_CSV_FIELD_SIZE_LIMIT)
     with path.open(encoding="utf-8", newline="") as handle:
         reader = csv.reader(handle)
         header = next(reader, [])
@@ -210,10 +215,6 @@ def daily_cleanliness_series(run_dir: Path) -> dict[str, object] | None:
             scenario: [values.get(date) for date in dates] for scenario, values in series.items()
         },
     }
-
-
-def daily_energy_series(run_dir: Path) -> dict[str, object] | None:
-    return daily_series(run_dir, "actual_energy_kwh")
 
 
 def text_preview(path: Path) -> str | None:

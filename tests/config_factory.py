@@ -43,7 +43,13 @@ def fixture_config(overrides: Mapping[str, Any] | None = None) -> SolarCleanConf
                 "run_id_prefix": "test-fixture",
             },
             "weather": {"provider": "fixture", "fixture_profile": "riyadh_synthetic"},
-            "farm": {"cohort_soiling_variation_fraction": 0.0},
+            "farm": {
+                # Keep the frozen regression fixture independent of runtime
+                # changes to the default farm resolution.
+                "cohort_count": 100,
+                "panels_per_cohort": 100,
+                "cohort_soiling_variation_fraction": 0.0,
+            },
             "soiling": {
                 "base_daily_soiling_loss_fraction": 0.0025,
                 "seasonal_multipliers": {1: 1.0},

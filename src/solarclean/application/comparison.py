@@ -652,6 +652,11 @@ def _build_annual_economic_outputs(
                 rates=economics.reactive_cost_rates,
                 additional_components=economics.equipment_cost_components,
             )
+            # Drone/camera equipment wears out on its own schedule, not the
+            # PV plant's: recover the reactive CAPEX over the registry's
+            # drone-equipment life, mirroring how coating CAPEX uses the
+            # coating's useful life.
+            useful_life_years = economics.drone_equipment_useful_life_years
         elif scenario_id == "coating":
             coating_basis = _coating_cost_basis(result)
             if coating_basis:
@@ -1629,6 +1634,7 @@ def _annual_summaries(
                 operational=operational_by_scenario[scenario_id],
             )
         )
+        record.update(_annual_water_balance_summary(result))
         record.update(_economic_summary(economic))
         record.update(
             _incremental_mitigation_summary(
@@ -1638,6 +1644,25 @@ def _annual_summaries(
         )
         summaries[scenario_id] = MappingProxyType(record)
     return summaries
+
+
+def _annual_water_balance_summary(result: AnnualScenarioResult) -> dict[str, object]:
+    """Annual totals of the coating's stored daily water diagnostics.
+
+    Zero for scenarios without the extensions (baseline/reactive harvest no
+    water), so the CSV columns stay uniform across scenarios. Condensed water
+    is dew that formed on the coated surface (it drives passive cleaning);
+    collected water is the smaller share routed to storage, which stays zero
+    unless the config enables collection efficiencies.
+    """
+    return {
+        "annual_condensed_water_liters": _sum_daily_extension(
+            result, "condensed_water_liters"
+        ),
+        "annual_collected_water_liters": _sum_daily_extension(
+            result, "actually_collected_water_liters"
+        ),
+    }
 
 
 def _annual_operational_extension_summary(

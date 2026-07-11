@@ -94,7 +94,7 @@ class BaselineStrategy:
                 daily_loss_fraction=sum(
                     event.magnitude
                     for event in update.events
-                    if event.event_type == "dust_accumulation"
+                    if event.event_type in ("dust_accumulation", "dew_cementation_adhesion")
                 ),
                 dust_event_loss_fraction=sum(
                     event.magnitude
@@ -153,6 +153,7 @@ class BaselineStrategy:
                 day_input.environment.precipitation_mm,
                 soiling=self.soiling_model.config,
                 rainfall=self.soiling_model.rainfall,
+                rain_efficiency_multiplier=update.rain_efficiency_multiplier,
             )
         actual_energy = min(day_input.clean_energy_kwh, max(0.0, actual_energy))
         result = DailyScenarioResult(
@@ -165,6 +166,9 @@ class BaselineStrategy:
                 "dust_soiling_ratio": energy_dust_ratio,
                 "precipitation_mm": day_input.environment.precipitation_mm,
                 "mean_relative_humidity_pct": day_input.environment.mean_relative_humidity_pct,
+                "dew_risk": update.dew_risk,
+                "cementation_index": update.state.cementation_index,
+                "rain_efficiency_multiplier": update.rain_efficiency_multiplier,
                 "cohort_count": cohort_count,
                 "cohort_records": cohort_records,
             },

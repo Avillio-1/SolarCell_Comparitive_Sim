@@ -11,6 +11,7 @@ class CleaningOutcome:
     cohort: CohortState
     crew_hours: float
     water_liters: float
+    effective_dust_removal_efficiency: float
 
 
 class CleaningCrew:
@@ -19,8 +20,16 @@ class CleaningCrew:
     def __init__(self, config: ReactiveCrewConfig) -> None:
         self.config = config
 
-    def clean(self, cohort: CohortState) -> CleaningOutcome:
-        restored_dust = (1.0 - cohort.dust_soiling_ratio) * self.config.dust_removal_efficiency
+    def clean(
+        self,
+        cohort: CohortState,
+        *,
+        dust_efficiency_multiplier: float = 1.0,
+    ) -> CleaningOutcome:
+        """Clean one cohort, reducing dust removal when crust resists washing."""
+        multiplier = min(1.0, max(0.0, dust_efficiency_multiplier))
+        effective_efficiency = self.config.dust_removal_efficiency * multiplier
+        restored_dust = (1.0 - cohort.dust_soiling_ratio) * effective_efficiency
         new_dust_ratio = min(1.0, cohort.dust_soiling_ratio + restored_dust)
         new_bird_coverage = cohort.bird_drop_coverage_fraction * (
             1.0 - self.config.bird_removal_efficiency
@@ -40,4 +49,5 @@ class CleaningCrew:
             cohort=cleaned,
             crew_hours=hours,
             water_liters=self.config.water_liters_per_cohort,
+            effective_dust_removal_efficiency=effective_efficiency,
         )

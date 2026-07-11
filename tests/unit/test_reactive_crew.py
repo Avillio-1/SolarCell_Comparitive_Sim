@@ -69,3 +69,13 @@ def test_reports_crew_hours_and_water_from_config() -> None:
 
     assert outcome.crew_hours == 0.5
     assert outcome.water_liters == 150.0
+
+
+def test_cementation_multiplier_reduces_dust_removal_efficiency() -> None:
+    crew = CleaningCrew(_config(dust_removal_efficiency=0.9))
+    cohort = CohortState(cohort_id=0, panel_count=100, dust_soiling_ratio=0.6)
+
+    outcome = crew.clean(cohort, dust_efficiency_multiplier=0.5)
+
+    assert outcome.effective_dust_removal_efficiency == pytest.approx(0.45)
+    assert outcome.cohort.dust_soiling_ratio == pytest.approx(0.78)

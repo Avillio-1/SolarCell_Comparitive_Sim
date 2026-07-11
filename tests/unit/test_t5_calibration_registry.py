@@ -130,6 +130,18 @@ def test_economics_registry_bridge_builds_expected_config() -> None:
     assert energy_rate.amount_sar_per_unit == pytest.approx(0.18)
 
 
+def test_economics_registry_bridge_exposes_drone_equipment_life() -> None:
+    """Drone CAPEX must recover over the equipment's own life, not the
+    15-year PV plant convention (drones do not survive 15 desert years)."""
+    registry = ParameterRegistry.from_yaml(REGISTRY_PATH)
+
+    calibration = build_economics_from_parameter_registry(registry)
+
+    life = calibration.drone_equipment_useful_life_years
+    assert life == pytest.approx(3.0)
+    assert life < calibration.config.useful_life_years
+
+
 def test_economics_registry_bridge_converts_water_m3_to_liter_rate() -> None:
     registry = ParameterRegistry.from_yaml(REGISTRY_PATH)
 
@@ -137,7 +149,7 @@ def test_economics_registry_bridge_converts_water_m3_to_liter_rate() -> None:
 
     water_rate = calibration.reactive_cost_rates.water_liter
     assert water_rate is not None
-    assert water_rate.amount_sar_per_unit == pytest.approx(0.006)
+    assert water_rate.amount_sar_per_unit == pytest.approx(0.010)
     assert water_rate.quantity_unit == "liter"
     assert "conversion=1 m3 = 1000 liters" in str(water_rate.notes)
 

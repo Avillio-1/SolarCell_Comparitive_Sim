@@ -11,12 +11,14 @@
 <section class="panel">
   <p class="hint">Edits are checked with the same loader the simulator uses, so anything that
   validates here will load for a run.
-  <strong>Save</strong> updates the {{ default_config_label }} configuration that every run uses.</p>
+  <strong>Validate and save</strong> updates only the {{ default_config_label }} configuration.</p>
   <textarea id="config-editor" class="mono" spellcheck="false"
             data-name="{{ name }}" data-is-default="{{ 'true' if is_default else 'false' }}">{{ content }}</textarea>
   <div class="field-row">
     <button class="primary" id="validate-btn" type="button">Validate</button>
+    {% if is_default %}
     <button class="primary" id="save-default-btn" type="button">Validate and save</button>
+    {% endif %}
   </div>
   <p id="config-status" role="status"></p>
 </section>
@@ -46,10 +48,9 @@
   the simulation runs on: hourly irradiance (GHI/DNI/DHI), air temperature, wind speed,
   relative humidity, and precipitation are fetched from NASA POWER for those coordinates
   (once per location and period, then cached under <code>data/cache/weather</code>).
-  Two things do <strong>not</strong> follow the map: soiling/dust-event and cost calibration
-  parameters remain the Riyadh central-v2 assumption set wherever the site is placed, and
-  with the <code>fixture</code> or <code>csv</code> providers the weather data is fixed, so
-  coordinates are recorded as metadata only.</p>
+  dust-event frequency and cost calibration stay Riyadh central-v2 regardless of location,
+  but humidity-coupled soiling (dew cementation) and coating condensation follow the fetched
+  weather when enabled in the config.</p>
   <p class="hint" id="provider-warning" role="note" hidden></p>
 </section>
 

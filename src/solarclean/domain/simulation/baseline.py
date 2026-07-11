@@ -73,6 +73,8 @@ class BaselineSimulationEngine:
                     "dust_soiling_ratio": result.extensions["dust_soiling_ratio"],
                     "precipitation_mm": result.extensions["precipitation_mm"],
                     "mean_relative_humidity_pct": result.extensions["mean_relative_humidity_pct"],
+                    "dew_risk": result.extensions.get("dew_risk", 0.0),
+                    "cementation_index": result.extensions.get("cementation_index", 0.0),
                     "cohort_count": result.extensions["cohort_count"],
                 }
             )

@@ -62,20 +62,19 @@ def client() -> TestClient:
 
 
 # --------------------------------------------------------------------------
-# Default config behaviour
+# Configuration selection
 # --------------------------------------------------------------------------
 
 
-def test_index_offers_only_the_default_config(client: TestClient) -> None:
+def test_index_offers_available_configurations(client: TestClient) -> None:
     response = client.get("/")
     assert response.status_code == 200
-    # The launch form shows the Default config and links to its editor ...
-    assert ">Default<" in response.text
+    assert '<select id="config"' in response.text
     assert f"/config/{DEFAULT_CONFIG_NAME}" in response.text
-    # ... and no longer renders a config picker over configs/*.yaml.
-    assert '<select id="config"' not in response.text
-    assert "riyadh_2025.yaml" not in response.text
-    assert "coating_central.yaml" not in response.text
+    assert f'value="{DEFAULT_CONFIG_NAME}"' in response.text
+    assert 'value="dammam_humid_desert.yaml"' in response.text
+    assert 'value="riyadh_dry_desert.yaml"' in response.text
+    assert "Configuration" in response.text
 
 
 def test_launch_rejects_unknown_kind(client: TestClient) -> None:
@@ -83,22 +82,27 @@ def test_launch_rejects_unknown_kind(client: TestClient) -> None:
     assert response.status_code == 400
 
 
-def test_launch_runs_default_config_and_reports_progress(
+def test_launch_runs_selected_config_and_reports_progress(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    # Point "Default" at the fast 2-day fixture so the test finishes quickly;
-    # the route logic is identical for the real full-year default.
+    # Point both names at the fast 2-day fixture so the test finishes quickly;
+    # the route logic is identical for the real full-year configurations.
     sandbox = tmp_path / "configs"
     sandbox.mkdir()
     (sandbox / DEFAULT_CONFIG_NAME).write_text(
         yaml.safe_dump(fixture_config().model_dump(mode="json"), sort_keys=False),
         encoding="utf-8",
     )
+    selected_name = "dammam_humid_desert.yaml"
+    (sandbox / selected_name).write_text(
+        yaml.safe_dump(fixture_config().model_dump(mode="json"), sort_keys=False),
+        encoding="utf-8",
+    )
     monkeypatch.setattr(dashboard_app, "_CONFIGS_DIR", sandbox)
-    launched = client.post("/api/runs", json={"kind": "compare"})
+    launched = client.post("/api/runs", json={"kind": "compare", "config": selected_name})
     assert launched.status_code == 202
     record = launched.json()
-    assert record["config_name"] == DEFAULT_CONFIG_NAME
+    assert record["config_name"] == selected_name
 
     deadline = time.time() + 120
     while time.time() < deadline:
@@ -561,6 +565,23 @@ def test_config_save_updates_default(
     assert not (tmp_path / "escape.yaml").exists()
 
 
+def test_nondefault_config_page_is_not_saveable(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sandbox = tmp_path / "configs"
+    sandbox.mkdir()
+    content = DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")
+    (sandbox / DEFAULT_CONFIG_NAME).write_text(content, encoding="utf-8")
+    other_name = "dammam_humid_desert.yaml"
+    (sandbox / other_name).write_text(content, encoding="utf-8")
+    monkeypatch.setattr(dashboard_app, "_CONFIGS_DIR", sandbox)
+
+    page = client.get(f"/config/{other_name}")
+    assert page.status_code == 200
+    assert 'id="validate-btn"' in page.text
+    assert 'id="save-default-btn"' not in page.text
+
+
 def test_default_config_runs_live_weather_for_riyadh() -> None:
     config = load_config(Path("configs") / DEFAULT_CONFIG_NAME)
     # The Default fetches location-driven NASA POWER weather, so the map picker
@@ -574,11 +595,11 @@ def test_default_config_runs_live_weather_for_riyadh() -> None:
 
 def test_config_page_states_location_semantics(client: TestClient) -> None:
     page = client.get(f"/config/{DEFAULT_CONFIG_NAME}").text
-    # States what a location change does (live NASA POWER weather) and what it
-    # does not do (fixture/csv weather is fixed; dust calibration stays Riyadh).
+    # States what a location change does (live NASA POWER weather), the fixed
+    # calibration assumption, and the humidity-coupled exceptions.
     assert "NASA POWER" in page
-    assert "metadata only" in page
     assert "Riyadh central-v2" in page
+    assert "humidity-coupled soiling" in page
 
 
 def test_config_page_has_offline_map_picker(client: TestClient) -> None:
@@ -659,6 +680,63 @@ def test_runs_table_offers_delete_controls(client: TestClient, comparison_run: P
     assert "Delete selected" in page
     assert 'class="danger-quiet run-delete"' in page
     assert "permanently removes its directory" in page  # destructive action is spelled out
+
+
+def test_runs_table_shows_site_from_stored_config(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outputs = tmp_path / "outputs"
+    run_dir = outputs / "dammam-compare-all-scenarios-20260711T000000Z-abc123"
+    run_dir.mkdir(parents=True)
+    (run_dir / "summary.json").write_text("{}", encoding="utf-8")
+    (run_dir / "config_resolved.yaml").write_text(
+        yaml.safe_dump({"site": {"name": "Dammam (humid coastal desert)"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(dashboard_app, "_OUTPUTS_DIR", outputs)
+
+    page = client.get("/")
+    assert page.status_code == 200
+    assert "Dammam (humid coastal desert)" in page.text
+
+
+def test_compare_runs_renders_stored_provenance_and_kpis(
+    client: TestClient, comparison_run: Path
+) -> None:
+    other = Path("outputs") / "test-dashboard-compare-runs-other-compare-all-scenarios"
+    other.mkdir(parents=True, exist_ok=True)
+    (other / "config_resolved.yaml").write_text(
+        yaml.safe_dump(
+            {
+                "site": {
+                    "name": "Dammam (humid coastal desert)",
+                    "latitude": 26.42,
+                    "longitude": 50.09,
+                },
+                "weather": {"provider": "fixture"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (other / "metadata.json").write_text(
+        json.dumps({"created_utc": "2026-07-11T12:00:00Z", "weather_checksum": "abc123"}),
+        encoding="utf-8",
+    )
+    (other / "scenario_annual_summary.csv").write_text(
+        "scenario_name,annual_actual_energy_kwh,annual_energy_loss_percent,net_annual_benefit_sar\n"
+        "baseline,1000,10,100\ncoating,1100,5,200\n",
+        encoding="utf-8",
+    )
+    try:
+        page = client.get("/compare-runs", params={"a": comparison_run.name, "b": other.name})
+        assert page.status_code == 200
+        assert "Two-run comparison" in page.text
+        assert comparison_run.name in page.text
+        assert other.name in page.text
+        assert "Dammam (humid coastal desert)" in page.text
+        assert "Annual KPIs" in page.text
+    finally:
+        client.delete(f"/api/runs/{other.name}")
 
 
 # --------------------------------------------------------------------------
@@ -847,6 +925,35 @@ def test_cumulative_gain_column_reconciles_and_charts(
 
     page = client.get(f"/run/{comparison_run.name}").text
     assert 'id="daily-cumgain-chart"' in page
+
+
+def test_dew_chart_is_optional_for_old_and_new_comparison_runs(client: TestClient) -> None:
+    fresh = Path("outputs") / "test-dashboard-dew-compare-all-scenarios-new"
+    old = Path("outputs") / "test-dashboard-dew-compare-all-scenarios-old"
+    for run_dir, header in (
+        (
+            fresh,
+            "date,scenario_name,actual_energy_kwh,extension_dew_risk,extension_cementation_index\n",
+        ),
+        (old, "date,scenario_name,actual_energy_kwh\n"),
+    ):
+        run_dir.mkdir(parents=True, exist_ok=True)
+        (run_dir / "scenario_daily_summary.csv").write_text(
+            header + "2025-01-01,baseline,100,0.75,0.20\n",
+            encoding="utf-8",
+        )
+    try:
+        new_page = client.get(f"/run/{fresh.name}")
+        assert new_page.status_code == 200
+        assert 'id="daily-dew-chart"' in new_page.text
+        assert "dailyDew:" in new_page.text
+        assert "dailyCementation:" in new_page.text
+        old_page = client.get(f"/run/{old.name}")
+        assert old_page.status_code == 200
+        assert 'id="daily-dew-chart"' not in old_page.text
+    finally:
+        for run_dir in (fresh, old):
+            client.delete(f"/api/runs/{run_dir.name}")
 
 
 # --------------------------------------------------------------------------

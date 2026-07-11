@@ -58,5 +58,6 @@ def _daily_environment(hourly_weather: pd.DataFrame) -> dict[date, DailyEnvironm
             date=day,
             precipitation_mm=float(frame["precipitation_mm"].sum()),
             mean_relative_humidity_pct=float(frame["relative_humidity_pct"].mean()),
+            max_relative_humidity_pct=float(frame["relative_humidity_pct"].max()),
         )
     return result

@@ -215,6 +215,39 @@ def test_post_generation_cleaning_does_not_retroactively_increase_daily_energy()
     assert cleaning_event.effective_for_energy_date == step.result.date + timedelta(days=1)
 
 
+def test_reactive_cleaning_uses_persisted_cementation_penalty() -> None:
+    config = _targeted_cleaning_config()
+    cementation = config.soiling.dew_cementation.model_copy(
+        update={
+            "enabled": True,
+            "onset_relative_humidity_pct": 0.0,
+            "saturation_relative_humidity_pct": 1.0,
+            "max_rain_efficiency_penalty": 0.5,
+            "memory_days": 1.0,
+        }
+    )
+    config = config.model_copy(
+        update={"soiling": config.soiling.model_copy(update={"dew_cementation": cementation})}
+    )
+    config, context = _context(config)
+    strategy = _strategy(config, perfect_information=True)
+    rng = np.random.default_rng(42)
+
+    step = strategy.simulate_day(
+        _day_input(context, 0),
+        strategy.initial_state(context, rng),
+        context,
+        rng,
+    )
+    cleaning_event = next(
+        event for event in step.result.events if event.event_type == "reactive_cleaning_action"
+    )
+
+    assert step.state.cementation_index == pytest.approx(1.0)
+    assert step.result.extensions["crew_dust_efficiency_multiplier"] == pytest.approx(0.5)
+    assert cleaning_event.metadata["effective_dust_removal_efficiency"] == pytest.approx(0.5)
+
+
 def test_capacity_skipped_inspections_are_backlogged_and_prioritized() -> None:
     config = fixture_config()
     reactive = config.reactive_cv.model_copy(

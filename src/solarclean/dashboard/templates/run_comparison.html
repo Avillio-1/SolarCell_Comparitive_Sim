@@ -153,6 +153,15 @@ run. Failure messages are in <code>reconciliation_report.json</code>.</p>
 </section>
 {% endif %}
 
+{% if daily_dew or daily_cementation %}
+<section class="panel">
+  <h2>Daily dew risk and dust cementation</h2>
+  <canvas id="daily-dew-chart" height="110"></canvas>
+  <p class="hint">Values come from the stored
+    <a href="/api/runs/{{ run_id }}/artifact/scenario_daily_summary.csv">scenario_daily_summary.csv</a>.</p>
+</section>
+{% endif %}
+
 {% if daily_cumgain %}
 <section class="panel">
   <h2>Cumulative energy gain vs baseline</h2>
@@ -251,13 +260,15 @@ run. Failure messages are in <code>reconciliation_report.json</code>.</p>
 
 {% endblock %}
 {% block scripts %}
-{% if daily_energy or daily_loss or daily_soiling or daily_cumgain or annual_cost_bars %}
+{% if daily_energy or daily_loss or daily_soiling or daily_dew or daily_cementation or daily_cumgain or annual_cost_bars %}
 <script src="/static/chart.umd.js"></script>
 <script>
   window.solarcleanCharts = {
     dailyEnergy: {{ daily_energy | tojson if daily_energy else 'null' }},
     dailyLoss: {{ daily_loss | tojson if daily_loss else 'null' }},
     dailySoiling: {{ daily_soiling | tojson if daily_soiling else 'null' }},
+    dailyDew: {{ daily_dew | tojson if daily_dew else 'null' }},
+    dailyCementation: {{ daily_cementation | tojson if daily_cementation else 'null' }},
     dailyCumGain: {{ daily_cumgain | tojson if daily_cumgain else 'null' }},
     annualCostBars: {{ annual_cost_bars | tojson if annual_cost_bars else 'null' }}
   };

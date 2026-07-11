@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Compare runs · SolarClean-DT{% endblock %}
+{% block content %}
+
+<div class="run-head">
+  <h1>Two-run comparison</h1>
+  <a class="quiet-link" href="/">back to runs</a>
+</div>
+
+<div class="plot-grid">
+  {% for run in runs %}
+  <div>
+    <section class="panel">
+      <h2 class="mono"><a href="/run/{{ run.run_id }}">{{ run.run_id }}</a></h2>
+      {% if run.provenance %}
+      <dl class="fact-strip small-facts">
+        <div><dt>Weather provider</dt><dd class="mono">{{ run.provenance.provider or "–" }}</dd></div>
+        <div><dt>Site</dt><dd>{{ run.provenance.site_name or "–" }}
+          {% if run.provenance.latitude is not none and run.provenance.longitude is not none %}
+          <span class="mono">({{ run.provenance.latitude }}, {{ run.provenance.longitude }})</span>
+          {% endif %}</dd></div>
+        <div><dt>Weather checksum</dt><dd class="mono">{{ run.provenance.weather_checksum_short or "–" }}</dd></div>
+        <div><dt>Created (UTC)</dt><dd class="mono">{{ run.provenance.created_at_utc or "–" }}</dd></div>
+        {% if run.provenance.assumption_set %}
+        <div><dt>Assumption set</dt><dd class="mono">{{ run.provenance.assumption_set }}</dd></div>
+        {% endif %}
+      </dl>
+      {% else %}
+      <p class="empty">No stored provenance is available for this run.</p>
+      {% endif %}
+    </section>
+
+    <section class="panel">
+      <h2>Annual KPIs</h2>
+      {% if run.kpi_table %}
+      <table class="data-table kpi-table">
+        <thead><tr><th></th>{% for scenario in run.kpi_table.scenarios %}<th class="num">{{ scenario }}</th>{% endfor %}</tr></thead>
+        <tbody>
+          {% for row in run.kpi_table.rows %}
+          <tr><th{% if row.help %} class="has-help" title="{{ row.help }}"{% endif %}>{{ row.label }}</th>
+            {% for value in row["values"] %}<td class="num mono{{ ' best-cell' if row.best[loop.index0] }}">{{ value | display_number }}</td>{% endfor %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p class="empty">This run has no <code>scenario_annual_summary.csv</code> artifact.</p>
+      {% endif %}
+    </section>
+  </div>
+  {% endfor %}
+</div>
+
+{% endblock %}

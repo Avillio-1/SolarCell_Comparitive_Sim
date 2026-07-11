@@ -34,6 +34,7 @@ class ReactiveScenarioState:
     date: date
     cohorts: tuple[CohortState, ...]
     cv_rng: np.random.Generator = field(repr=False, compare=False)
+    cementation_index: float = 0.0
     days_since_inspection: MappingProxyType[int, int] = field(
         default_factory=lambda: MappingProxyType({})
     )

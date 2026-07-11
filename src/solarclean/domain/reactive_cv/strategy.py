@@ -157,7 +157,10 @@ class ReactiveCVStrategy:
         # cohort from its own prior dust state so targeted cleaning persists.
         previous_average_dust = _average_dust(typed_state.cohorts)
         update = self.soiling_model.update(
-            ContaminationState(dust_soiling_ratio=previous_average_dust),
+            ContaminationState(
+                dust_soiling_ratio=previous_average_dust,
+                cementation_index=typed_state.cementation_index,
+            ),
             day_input.environment,
             rng,
             event_inputs=day_input.event_inputs,
@@ -197,6 +200,7 @@ class ReactiveCVStrategy:
             day_input.environment.precipitation_mm,
             soiling=self.soiling_config,
             rainfall=self.rainfall_config,
+            rain_efficiency_multiplier=update.rain_efficiency_multiplier,
         )
         true_cohorts = {cohort.cohort_id: cohort for cohort in rain_state.cohorts}
 
@@ -296,6 +300,7 @@ class ReactiveCVStrategy:
             dispatch_threshold_fraction=self.reactive.dispatch.estimated_loss_threshold_fraction,
             scenario_name=self.name,
             crew=self.crew,
+            dust_efficiency_multiplier=self.soiling_model.rain_efficiency_multiplier(update.state),
         )
         true_cohorts = cleaning_pass.true_cohorts
         events.extend(cleaning_pass.events)
@@ -395,6 +400,10 @@ class ReactiveCVStrategy:
                 ),
                 "dirty_cleaning_count": cleaning_pass.dirty_cleaning_count,
                 "false_positive_cleaning_count": cleaning_pass.false_positive_cleaning_count,
+                "cementation_index": update.state.cementation_index,
+                "crew_dust_efficiency_multiplier": (
+                    self.soiling_model.rain_efficiency_multiplier(update.state)
+                ),
                 "event_tape_checksum": str(context.metadata.get("event_tape_checksum", "")),
             },
         )
@@ -402,6 +411,7 @@ class ReactiveCVStrategy:
             date=day_input.date,
             cohorts=next_cohorts,
             cv_rng=typed_state.cv_rng,
+            cementation_index=update.state.cementation_index,
             days_since_inspection=MappingProxyType(next_days_since_inspection),
             inspection_backlog=next_inspection_backlog,
             cleaning_queue=decision.updated_queue,
@@ -538,6 +548,7 @@ def _apply_cleaning_pass(
     dispatch_threshold_fraction: float,
     scenario_name: str,
     crew: CleaningCrew,
+    dust_efficiency_multiplier: float = 1.0,
 ) -> CleaningPassResult:
     cleaned_true_cohorts = dict(true_cohorts)
     events: list[DomainEvent] = []
@@ -556,7 +567,10 @@ def _apply_cleaning_pass(
             ),
         )
         pre_clean = cleaned_true_cohorts[cohort_id]
-        outcome = crew.clean(pre_clean)
+        outcome = crew.clean(
+            pre_clean,
+            dust_efficiency_multiplier=dust_efficiency_multiplier,
+        )
         cleaned_true_cohorts[cohort_id] = outcome.cohort
         crew_hours += outcome.crew_hours
         water_liters += outcome.water_liters
@@ -578,6 +592,7 @@ def _apply_cleaning_pass(
                 cleaned_loss_kwh=cleaned_loss_kwh,
                 crew_hours=outcome.crew_hours,
                 water_liters=outcome.water_liters,
+                effective_dust_removal_efficiency=(outcome.effective_dust_removal_efficiency),
                 queue_age_days=current_queue_age_by_cohort.get(cohort_id, 0),
                 false_positive_cleaning=cohort_id not in true_actionable_dirty_ids,
                 scenario_name=scenario_name,
@@ -624,6 +639,7 @@ def _cleaning_events(
     cleaned_loss_kwh: float,
     crew_hours: float,
     water_liters: float,
+    effective_dust_removal_efficiency: float,
     queue_age_days: int,
     false_positive_cleaning: bool,
     scenario_name: str,
@@ -659,6 +675,7 @@ def _cleaning_events(
                 cleaned_loss_kwh=cleaned_loss_kwh,
                 crew_hours=crew_hours,
                 water_liters=water_liters,
+                effective_dust_removal_efficiency=effective_dust_removal_efficiency,
                 false_positive_cleaning=false_positive_cleaning,
             ),
             effective_for_energy_date=event_day + timedelta(days=1),
@@ -858,6 +875,7 @@ def _cleaning_event_metadata(
     cleaned_loss_kwh: float,
     crew_hours: float,
     water_liters: float,
+    effective_dust_removal_efficiency: float,
     false_positive_cleaning: bool,
 ) -> dict[str, object]:
     return {
@@ -886,6 +904,7 @@ def _cleaning_event_metadata(
         "crew_minutes": crew_hours * 60.0,
         "crew_hours": crew_hours,
         "water_liters": water_liters,
+        "effective_dust_removal_efficiency": effective_dust_removal_efficiency,
         "recovered_loss_estimated_kwh": cleaned_loss_kwh,
         "avoided_loss_estimated_kwh": cleaned_loss_kwh,
         "audit": {
@@ -916,7 +935,9 @@ def _advance_dust_for_farm(
     cohort_variation_multipliers: dict[int, float] | None = None,
 ) -> FarmState:
     daily_loss = sum(
-        event.magnitude for event in daily_events if event.event_type == "dust_accumulation"
+        event.magnitude
+        for event in daily_events
+        if event.event_type in ("dust_accumulation", "dew_cementation_adhesion")
     )
     dust_event_loss = sum(
         event.magnitude for event in daily_events if event.event_type == "heavy_dust_event"

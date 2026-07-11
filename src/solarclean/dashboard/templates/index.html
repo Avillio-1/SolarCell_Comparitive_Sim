@@ -4,9 +4,8 @@
 
 <section class="panel">
   <h2>Start a run</h2>
-  {% if not default_config_exists %}
-  <p class="warn-note">The Default configuration
-    (<code>configs/{{ default_config_name }}</code>) is missing, so runs cannot start.</p>
+  {% if not configs %}
+  <p class="warn-note">No configurations were found under <code>configs/</code>, so runs cannot start.</p>
   {% endif %}
   <form id="launch-form" onsubmit="return false;">
     <div class="field-row">
@@ -22,9 +21,13 @@
       </label>
       <label>
         <span>Configuration</span>
-        <span class="config-fixed mono" title="configs/{{ default_config_name }}">{{ default_config_label }}</span>
+        <select id="config" name="config">
+          {% for config_name in configs %}
+          <option value="{{ config_name }}"{% if config_name == default_config_name %} selected{% endif %}>{{ config_name }}</option>
+          {% endfor %}
+        </select>
       </label>
-      <a class="quiet-link" href="/config/{{ default_config_name }}">view / edit config</a>
+      <a id="config-link" class="quiet-link" href="/config/{{ default_config_name }}">view / edit config</a>
     </div>
 
     <div class="field-row kind-opts" data-kind="monte-carlo" hidden>
@@ -70,27 +73,28 @@
     </div>
 
     <div class="field-row">
-      <button id="launch" class="primary" type="button" {% if not default_config_exists %}disabled{% endif %}>Start run</button>
+      <button id="launch" class="primary" type="button" {% if not configs %}disabled{% endif %}>Start run</button>
       <span id="launch-error" class="error-text" role="alert"></span>
     </div>
   </form>
-  <p class="hint">Every run uses the Default configuration; edit it (including the site
-     location on the map) via "view / edit config". The Default fetches live NASA POWER
-     weather for the configured site — the first run per location needs internet, after
-     which the weather is cached. One run executes at a time. Parameter ranges come from
-     <code>data/calibration/parameter_registry.yaml</code> (hover an option to see them).</p>
+  <p class="hint">Choose the configuration for this run, then view it before starting if needed.
+     The default configuration can be edited here; other listed configurations are read-only.
+     NASA POWER weather is fetched for the configured site — the first run per location needs
+     internet, after which the weather is cached. One run executes at a time. Parameter ranges
+     come from <code>data/calibration/parameter_registry.yaml</code> (hover an option to see them).</p>
 </section>
 
 <section class="panel" id="jobs-panel" {% if not jobs %}hidden{% endif %}>
   <h2>Run sessions</h2>
   <table class="data-table" id="jobs-table">
-    <thead><tr><th>Started</th><th>Analysis</th><th>Status</th><th>Progress</th>
+    <thead><tr><th>Started</th><th>Analysis</th><th>Configuration</th><th>Status</th><th>Progress</th>
       <th>Elapsed</th><th>ETA</th><th>Result</th><th></th></tr></thead>
     <tbody>
       {% for j in jobs %}
       <tr data-job="{{ j.job_id }}">
         <td class="mono">{{ j.created_at[:19] }}</td>
         <td>{{ j.kind }}</td>
+        <td class="mono">{{ j.config_name or "–" }}</td>
         <td class="job-status"><span class="status status-{{ j.status }}">{{ j.status }}</span></td>
         <td class="job-progress">
           {% if j.progress_percent is not none %}
@@ -117,11 +121,12 @@
   <h2>Completed runs</h2>
   {% if runs %}
   <div class="field-row runs-toolbar">
+    <button type="button" id="compare-selected-runs" disabled>Compare 2 selected</button>
     <button type="button" id="delete-selected-runs" class="danger-quiet" disabled>Delete selected</button>
     <span id="runs-delete-error" class="error-text" role="alert"></span>
   </div>
   <table class="data-table" id="runs-table">
-    <thead><tr><th></th><th>Run</th><th>Created (UTC)</th><th>Analysis</th><th>Winner</th><th>Reconciled</th><th></th></tr></thead>
+    <thead><tr><th></th><th>Run</th><th>Created (UTC)</th><th>Analysis</th><th>Site</th><th>Winner</th><th>Reconciled</th><th></th></tr></thead>
     <tbody>
       {% for r in runs %}
       <tr data-run="{{ r.run_id }}">
@@ -129,6 +134,7 @@
         <td class="mono"><a href="/run/{{ r.run_id }}">{{ r.run_id }}</a></td>
         <td class="mono">{{ r.created[:19] or "–" }}</td>
         <td>{{ r.kind }}</td>
+        <td>{{ r.site or "–" }}</td>
         <td>{{ r.winner or "–" }}</td>
         <td>
           {% if r.valid is none %}–
@@ -146,7 +152,7 @@
   <p class="hint">Deleting a run permanently removes its directory under <code>outputs/</code> —
      download the .zip first if you need the exports.</p>
   {% else %}
-  <p class="empty">No runs yet. Start one above with the Default configuration.</p>
+  <p class="empty">No runs yet. Choose a configuration above to start one.</p>
   {% endif %}
 </section>
 

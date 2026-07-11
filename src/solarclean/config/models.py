@@ -131,6 +131,27 @@ class FarmConfig(StrictModel):
         return self
 
 
+class DewCementationConfig(StrictModel):
+    """Humidity-driven dust cementation (dew wets deposited dust, which dries
+    into an adherent crust). Disabled by default so the frozen Riyadh
+    calibration sets keep their exact historical behavior."""
+
+    enabled: bool = False
+    onset_relative_humidity_pct: float = Field(default=75.0, ge=0, le=100)
+    saturation_relative_humidity_pct: float = Field(default=95.0, ge=0, le=100)
+    max_soiling_rate_multiplier: float = Field(default=1.5, ge=1)
+    max_rain_efficiency_penalty: float = Field(default=0.5, ge=0, le=1)
+    memory_days: float = Field(default=10.0, ge=1)
+
+    @model_validator(mode="after")
+    def validate_humidity_range(self) -> DewCementationConfig:
+        if self.saturation_relative_humidity_pct <= self.onset_relative_humidity_pct:
+            raise ValueError(
+                "saturation_relative_humidity_pct must exceed onset_relative_humidity_pct"
+            )
+        return self
+
+
 class SoilingConfig(StrictModel):
     base_daily_soiling_loss_fraction: float = Field(default=0.001, ge=0, le=1)
     seasonal_multipliers: dict[int, float] = Field(default_factory=dict)
@@ -140,6 +161,7 @@ class SoilingConfig(StrictModel):
     minimum_soiling_ratio: float = Field(default=0.55, gt=0, le=1)
     stochastic_std_fraction: float = Field(default=0.1, ge=0)
     random_seed: int = 42
+    dew_cementation: DewCementationConfig = Field(default_factory=DewCementationConfig)
 
     @model_validator(mode="after")
     def validate_dust_event_range(self) -> SoilingConfig:
@@ -227,7 +249,7 @@ class ReactiveCrewConfig(StrictModel):
 
 class ReactiveCVConfig(StrictModel):
     enabled: bool = True
-    perfect_information_benchmark: bool = True
+    perfect_information_benchmark: bool = False
     inspection: ReactiveInspectionConfig = Field(default_factory=ReactiveInspectionConfig)
     drone: ReactiveDroneConfig = Field(default_factory=ReactiveDroneConfig)
     observer: ReactiveCVObserverConfig = Field(default_factory=ReactiveCVObserverConfig)
@@ -246,6 +268,10 @@ class CoatingPhysicsConfig(StrictModel):
     annual_degradation_fraction: float = Field(default=0.05, ge=0, le=1)
     max_surface_cooling_c: float = Field(default=0.0, ge=0)
     humidity_cooling_reference_pct: float = Field(default=80.0, ge=1, le=100)
+    humidity_cooling_mode: Literal["threshold", "smooth"] = "threshold"
+    humidity_cooling_dry_reference_pct: float = Field(default=40.0, ge=0, lt=100)
+    humidity_cooling_floor_fraction: float = Field(default=0.0, ge=0, le=1)
+    cementation_suppression_fraction: float = Field(default=0.9, ge=0, le=1)
     wind_cooling_decay_per_m_s: float = Field(default=0.08, ge=0)
     daytime_cooling_fraction: float = Field(default=0.0, ge=0, le=1)
     passive_cleaning_base_efficiency: float = Field(default=0.0, ge=0, le=1)

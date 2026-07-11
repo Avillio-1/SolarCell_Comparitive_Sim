@@ -123,7 +123,7 @@ class CoatingStrategy:
             DomainEvent.from_simulation_event(event, scenario_name=self.name)
             for event in base_update.events
         ]
-        daily_loss, dust_event_loss = _dust_event_losses(base_update.events)
+        daily_loss, dust_event_loss, cementation_loss = _dust_event_losses(base_update.events)
         energy_cohorts: list[CoatingCohortState] = []
         next_cohorts: list[CoatingCohortState] = []
         total_restored = 0.0
@@ -139,6 +139,10 @@ class CoatingStrategy:
                 )
             else:
                 variation = 1.0
+            suppression = _cementation_suppression(
+                effectiveness,
+                self.coating.physics.cementation_suppression_fraction,
+            )
             dust_ratio = advance_dust_ratio(
                 cohort.dust_soiling_ratio,
                 daily_loss_fraction=daily_loss,
@@ -151,6 +155,7 @@ class CoatingStrategy:
                     effectiveness,
                     self.coating.physics.dust_accumulation_multiplier,
                 ),
+                unscaled_deposition_fraction=cementation_loss * (1.0 - suppression),
             )
             coverage = cohort.bird_drop_coverage_fraction
             coverage_addition = (
@@ -196,6 +201,8 @@ class CoatingStrategy:
                 soiling=self.soiling_model.config,
                 rainfall=self.soiling_model.rainfall,
                 bird_rain_removal_efficiency=self.birds.rain_removal_efficiency,
+                rain_efficiency_multiplier=1.0
+                - (1.0 - base_update.rain_efficiency_multiplier) * (1.0 - suppression),
             )
             restored = calculate_passive_dust_cleaning(
                 current_dust_soiling_ratio=dust_ratio,
@@ -317,6 +324,8 @@ class CoatingStrategy:
             bird_removal_day=bird_removal_day,
             total_restored=total_restored,
             total_bird_removed=total_bird_removed,
+            dew_risk=base_update.dew_risk,
+            uncoated_rain_efficiency_multiplier=base_update.rain_efficiency_multiplier,
         )
         return StrategyStep(
             state=CoatingScenarioState(date=day_input.date, cohorts=typed_next),
@@ -338,6 +347,8 @@ class CoatingStrategy:
         bird_removal_day: bool,
         total_restored: float,
         total_bird_removed: float,
+        dew_risk: float = 0.0,
+        uncoated_rain_efficiency_multiplier: float = 1.0,
     ) -> DailyScenarioResult:
         cleanliness_ratio = _average_cleanliness(energy_cohorts)
         average_dust_soiling_ratio = _average_dust(energy_cohorts)
@@ -379,6 +390,8 @@ class CoatingStrategy:
             "condensed_liters_per_m2": condensed_per_m2,
             "max_wind_speed_m_s": day_water.max_wind_speed_m_s,
             "precipitation_mm": day_input.environment.precipitation_mm,
+            "dew_risk": dew_risk,
+            "uncoated_rain_efficiency_multiplier": uncoated_rain_efficiency_multiplier,
             "passive_cleaning_day": passive_cleaning_day,
             "passive_dust_restored_fraction": average_restored,
             "bird_removal_day": bird_removal_day,
@@ -413,12 +426,22 @@ class CoatingStrategy:
         return result
 
 
-def _dust_event_losses(events: list[SimulationEvent]) -> tuple[float, float]:
+def _dust_event_losses(events: list[SimulationEvent]) -> tuple[float, float, float]:
     daily_loss = sum(event.magnitude for event in events if event.event_type == "dust_accumulation")
     dust_event_loss = sum(
         event.magnitude for event in events if event.event_type == "heavy_dust_event"
     )
-    return daily_loss, dust_event_loss
+    cementation_loss = sum(
+        event.magnitude for event in events if event.event_type == "dew_cementation_adhesion"
+    )
+    return daily_loss, dust_event_loss, cementation_loss
+
+
+def _cementation_suppression(effectiveness: float, suppression_fraction: float) -> float:
+    """Fraction of the dew-cementation penalty the coating removes: a beading
+    hydrophobic surface prevents the water film that cements dust, degrading
+    with coating effectiveness."""
+    return min(1.0, max(0.0, suppression_fraction * effectiveness))
 
 
 def _apply_natural_rain_cleaning(
@@ -429,12 +452,14 @@ def _apply_natural_rain_cleaning(
     soiling: SoilingConfig,
     rainfall: RainfallCleaningConfig,
     bird_rain_removal_efficiency: float,
+    rain_efficiency_multiplier: float = 1.0,
 ) -> tuple[float, float]:
     next_dust_ratio = restore_dust_ratio_after_rain(
         dust_ratio,
         precipitation_mm=precipitation_mm,
         soiling=soiling,
         rainfall=rainfall,
+        rain_efficiency_multiplier=rain_efficiency_multiplier,
     )
     next_coverage = coverage
     if precipitation_mm > 0.0:

@@ -57,6 +57,7 @@ _EVENT_PHASE_ORDER: dict[str, int] = {
 
 _EVENT_TYPE_PHASES: dict[str, str] = {
     "dust_accumulation": "pre_generation_state",
+    "dew_cementation_adhesion": "pre_generation_state",
     "heavy_dust_event": "pre_generation_state",
     "partial_rain_cleaning": "cleaning",
     "full_rain_cleaning": "cleaning",
@@ -71,6 +72,7 @@ _EVENT_TYPE_PHASES: dict[str, str] = {
 
 _EVENT_TYPE_ORDER: dict[str, int] = {
     "dust_accumulation": 10,
+    "dew_cementation_adhesion": 15,
     "heavy_dust_event": 20,
     "partial_rain_cleaning": 30,
     "full_rain_cleaning": 30,

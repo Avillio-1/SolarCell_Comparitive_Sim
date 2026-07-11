@@ -14,6 +14,7 @@ _TARIFF_KEY = "economics.electricity_tariff_sar_per_kwh"
 _LABOUR_KEY = "economics.labour_cost_sar_per_hour"
 _WATER_KEY = "economics.water_cost_sar_per_m3"
 _DRONE_EQUIPMENT_KEY = "economics.drone_equipment_cost_sar"
+_DRONE_EQUIPMENT_LIFE_KEY = "economics.drone_equipment_useful_life_years"
 _DRONE_FLIGHT_HOUR_KEY = "economics.drone_flight_operation_cost_sar_per_hour"
 _REACTIVE_OVERHEAD_OPEX_KEY = "economics.reactive_overhead_opex_sar_per_year"
 _DISCOUNT_RATE_KEY = "economics.discount_rate_fraction"
@@ -24,6 +25,7 @@ _REQUIRED_PARAMETER_KEYS = (
     _LABOUR_KEY,
     _WATER_KEY,
     _DRONE_EQUIPMENT_KEY,
+    _DRONE_EQUIPMENT_LIFE_KEY,
     _DRONE_FLIGHT_HOUR_KEY,
     _REACTIVE_OVERHEAD_OPEX_KEY,
     _DISCOUNT_RATE_KEY,
@@ -66,6 +68,10 @@ class EconomicsCalibration:
     config: EconomicConfig
     reactive_cost_rates: ReactiveCostRates
     equipment_cost_components: tuple[CostComponent, ...]
+    # Recovery life for the reactive equipment CAPEX. Drone systems wear out
+    # far sooner than the PV plant, so their CAPEX must not inherit the
+    # plant-level useful_life_years convention.
+    drone_equipment_useful_life_years: float
     warnings: tuple[EconomicsCalibrationWarning, ...]
     parameter_metadata: tuple[RegistryParameterMetadata, ...]
 
@@ -109,10 +115,17 @@ def build_economics_from_parameter_registry(
         _reactive_overhead_opex_component(parameters[_REACTIVE_OVERHEAD_OPEX_KEY]),
     )
 
+    drone_equipment_life = _central_value(
+        parameters[_DRONE_EQUIPMENT_LIFE_KEY], expected_unit="years"
+    )
+    if drone_equipment_life <= 0:
+        raise ValueError("economics.drone_equipment_useful_life_years must be positive")
+
     return EconomicsCalibration(
         config=config,
         reactive_cost_rates=rates,
         equipment_cost_components=equipment_components,
+        drone_equipment_useful_life_years=drone_equipment_life,
         warnings=status_warnings,
         parameter_metadata=tuple(
             _parameter_metadata(parameters[key]) for key in _REQUIRED_PARAMETER_KEYS

@@ -171,6 +171,7 @@ class CohortFarm:
         *,
         soiling: SoilingConfig,
         rainfall: RainfallCleaningConfig,
+        rain_efficiency_multiplier: float = 1.0,
     ) -> FarmState:
         """Apply end-of-day natural cleaning to the state used tomorrow."""
 
@@ -189,6 +190,7 @@ class CohortFarm:
                         precipitation_mm=precipitation_mm,
                         soiling=soiling,
                         rainfall=rainfall,
+                        rain_efficiency_multiplier=rain_efficiency_multiplier,
                     ),
                     bird_drop_coverage_fraction=coverage,
                     bird_drop_loss_fraction=min(
@@ -220,6 +222,8 @@ def advance_dust_ratio(
     rainfall: RainfallCleaningConfig,
     cohort_variation_multiplier: float = 1.0,
     accumulation_multiplier: float = 1.0,
+    unscaled_deposition_fraction: float = 0.0,
+    rain_efficiency_multiplier: float = 1.0,
 ) -> float:
     """Apply shared environmental dust drivers to one cohort's persistent state.
 
@@ -227,17 +231,28 @@ def advance_dust_ratio(
     never on the cohort's complete accumulated cleanliness state. Scenario-specific
     coatings may reduce new deposition through ``accumulation_multiplier`` while
     rainfall restoration remains a shared environmental effect.
+    ``unscaled_deposition_fraction`` carries deposition already adjusted by the
+    caller (dew-cementation adhesion after coating suppression), so it bypasses
+    ``accumulation_multiplier`` while still varying per cohort.
     """
     variation = max(0.0, cohort_variation_multiplier)
     deposition_multiplier = max(0.0, accumulation_multiplier)
     deposited = max(0.0, daily_loss_fraction + dust_event_loss_fraction)
-    ratio = current_ratio - deposited * variation * deposition_multiplier
+    unscaled = max(0.0, unscaled_deposition_fraction)
+    if unscaled == 0.0:
+        # Preserve the frozen calculation order exactly when dew cementation is
+        # disabled; the historical regression fixtures depend on bit-for-bit
+        # compatibility with this path.
+        ratio = current_ratio - deposited * variation * deposition_multiplier
+    else:
+        ratio = current_ratio - (deposited * deposition_multiplier + unscaled) * variation
     ratio = max(soiling.minimum_soiling_ratio, min(1.0, ratio))
     return restore_dust_ratio_after_rain(
         ratio,
         precipitation_mm=precipitation_mm,
         soiling=soiling,
         rainfall=rainfall,
+        rain_efficiency_multiplier=rain_efficiency_multiplier,
     )
 
 
@@ -247,10 +262,12 @@ def restore_dust_ratio_after_rain(
     precipitation_mm: float,
     soiling: SoilingConfig,
     rainfall: RainfallCleaningConfig,
+    rain_efficiency_multiplier: float = 1.0,
 ) -> float:
+    multiplier = min(1.0, max(0.0, rain_efficiency_multiplier))
     ratio = max(soiling.minimum_soiling_ratio, min(1.0, current_ratio))
     if precipitation_mm >= rainfall.full_rain_cleaning_threshold_mm:
-        ratio += (1.0 - ratio) * rainfall.full_rain_cleaning_efficiency
+        ratio += (1.0 - ratio) * rainfall.full_rain_cleaning_efficiency * multiplier
     elif precipitation_mm >= rainfall.partial_rain_threshold_mm:
-        ratio += (1.0 - ratio) * rainfall.partial_rain_cleaning_efficiency
+        ratio += (1.0 - ratio) * rainfall.partial_rain_cleaning_efficiency * multiplier
     return max(soiling.minimum_soiling_ratio, min(1.0, ratio))

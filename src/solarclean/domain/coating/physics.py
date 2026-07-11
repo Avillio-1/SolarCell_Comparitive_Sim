@@ -49,13 +49,31 @@ def calculate_surface_temperature_c(
     irradiance_w_m2: float,
     physics: CoatingPhysicsConfig,
 ) -> float:
-    if relative_humidity_pct <= physics.humidity_cooling_reference_pct:
+    if physics.humidity_cooling_mode == "smooth":
+        # Water vapour progressively closes the 8-13um atmospheric window, so
+        # cooling declines continuously from the dry reference instead of
+        # holding full strength until a threshold.
+        span = 100.0 - physics.humidity_cooling_dry_reference_pct
+        humidity_factor = (
+            min(
+                1.0,
+                max(0.0, (100.0 - relative_humidity_pct) / span),
+            )
+            ** 0.5
+        )
+    elif relative_humidity_pct <= physics.humidity_cooling_reference_pct:
         humidity_factor = 1.0
     else:
         humidity_factor = max(
             0.0,
             (100.0 - relative_humidity_pct) / (100.0 - physics.humidity_cooling_reference_pct),
         )
+    # Radiative cooling does not vanish at saturation: the KAUST coating paper
+    # (10.1002/eem2.70350, Figure 3a) predicts ~6.1 C of sub-ambient cooling at
+    # 90% RH versus 8.0 C at 50% RH, and field data show condensation-enabling
+    # cooling on 90%+ RH nights. The floor preserves that residual capability.
+    floor = physics.humidity_cooling_floor_fraction
+    humidity_factor = floor + (1.0 - floor) * humidity_factor
     wind_factor = math.exp(-physics.wind_cooling_decay_per_m_s * max(0.0, wind_speed_m_s))
     night_factor = 1.0 if irradiance_w_m2 <= 5.0 else physics.daytime_cooling_fraction
     cooling = (

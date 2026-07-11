@@ -32,6 +32,16 @@
     showOptionsForKind();
   }
 
+  var configSelect = document.getElementById("config");
+  var configLink = document.getElementById("config-link");
+  if (configSelect && configLink) {
+    var updateConfigLink = function () {
+      configLink.href = "/config/" + encodeURIComponent(configSelect.value);
+    };
+    configSelect.addEventListener("change", updateConfigLink);
+    updateConfigLink();
+  }
+
   // --- launching runs -----------------------------------------------------
 
   var launchButton = document.getElementById("launch");
@@ -40,8 +50,7 @@
       var errorEl = document.getElementById("launch-error");
       errorEl.textContent = "";
 
-      // The server always runs the Default configuration; no config is sent.
-      var body = { kind: kindSelect.value };
+      var body = { kind: kindSelect.value, config: configSelect.value };
       if (body.kind === "monte-carlo") {
         body.trials = parseInt(document.getElementById("trials").value, 10) || 25;
         var seed = document.getElementById("base-seed").value;
@@ -118,6 +127,7 @@
     row.innerHTML =
       '<td class="mono">' + job.created_at.slice(0, 19) + "</td>" +
       "<td>" + job.kind + "</td>" +
+      '<td class="job-config mono"></td>' +
       '<td class="job-status"><span class="status status-queued">queued</span></td>' +
       '<td class="job-progress"><span class="progress-label mono">–</span></td>' +
       '<td class="job-elapsed mono">–</td>' +
@@ -125,6 +135,7 @@
       '<td class="job-result"></td>' +
       '<td class="job-actions"><button type="button" class="danger-quiet job-delete" data-job-id="' +
       job.job_id + '">Cancel &amp; remove</button></td>';
+    row.querySelector(".job-config").textContent = job.config_name || "–";
     tbody.insertBefore(row, tbody.firstChild);
   }
 
@@ -161,15 +172,41 @@
     }
   }
 
+  // The completed-runs table is server-rendered. When a job finishes, fetch
+  // the page again and swap in the fresh rows so the new run appears without
+  // a manual reload (Jinja stays the only place that renders run rows).
+  function refreshCompletedRuns() {
+    fetch("/")
+      .then(function (r) { return r.ok ? r.text() : null; })
+      .then(function (html) {
+        if (!html) return;
+        var doc = new DOMParser().parseFromString(html, "text/html");
+        var freshBody = doc.querySelector("#runs-table tbody");
+        var currentBody = document.querySelector("#runs-table tbody");
+        if (freshBody && currentBody) {
+          currentBody.innerHTML = freshBody.innerHTML;
+          updateBulkDeleteState();
+        } else if (freshBody && !currentBody) {
+          // First completed run ever: the empty-state panel has no table to
+          // swap into, so take the one-off full reload.
+          window.location.reload();
+        }
+      })
+      .catch(function () { /* transient fetch issue: next completion retries */ });
+  }
+
   function pollJob(jobId) {
+    var consecutiveFailures = 0;
     var timer = setInterval(function () {
       fetch("/api/jobs/" + jobId)
         .then(function (r) {
           if (r.status === 404) { clearInterval(timer); return null; }
+          if (!r.ok) throw new Error("HTTP " + r.status);
           return r.json();
         })
         .then(function (job) {
           if (!job) return;
+          consecutiveFailures = 0;
           var row = document.querySelector('tr[data-job="' + jobId + '"]');
           if (!row) { clearInterval(timer); return; }
           updateJobRow(row, job);
@@ -177,6 +214,7 @@
             row.querySelector(".job-result").innerHTML =
               '<a href="/run/' + job.run_id + '">' + job.run_id + "</a>";
             clearInterval(timer);
+            refreshCompletedRuns();
           } else if (job.status === "failed") {
             var resultCell = row.querySelector(".job-result");
             resultCell.textContent = job.error || "failed";
@@ -186,7 +224,10 @@
             clearInterval(timer);
           }
         })
-        .catch(function () { clearInterval(timer); });
+        .catch(function () {
+          consecutiveFailures += 1;
+          if (consecutiveFailures >= 5) clearInterval(timer);
+        });
     }, 2000);
   }
 
@@ -248,8 +289,10 @@
 
   function updateBulkDeleteState() {
     var bulkButton = document.getElementById("delete-selected-runs");
-    if (!bulkButton) return;
-    bulkButton.disabled = document.querySelectorAll(".run-select:checked").length === 0;
+    var selectedCount = document.querySelectorAll(".run-select:checked").length;
+    if (bulkButton) bulkButton.disabled = selectedCount === 0;
+    var compareButton = document.getElementById("compare-selected-runs");
+    if (compareButton) compareButton.disabled = selectedCount !== 2;
   }
 
   var runsTable = document.getElementById("runs-table");
@@ -267,6 +310,15 @@
       var selected = Array.from(document.querySelectorAll(".run-select:checked"))
         .map(function (box) { return box.value; });
       if (selected.length) deleteRuns(selected, runsError);
+    });
+    var compareButton = document.getElementById("compare-selected-runs");
+    compareButton.addEventListener("click", function () {
+      var selected = Array.from(document.querySelectorAll(".run-select:checked"))
+        .map(function (box) { return box.value; });
+      if (selected.length === 2) {
+        window.location.href = "/compare-runs?a=" + encodeURIComponent(selected[0]) +
+          "&b=" + encodeURIComponent(selected[1]);
+      }
     });
   }
 
@@ -620,15 +672,17 @@
     });
   }
 
-  function drawScenarioLines(canvasId, data, yLabel) {
+  function drawScenarioLines(canvasId, data, yLabel, seriesStyles) {
     var canvas = document.getElementById(canvasId);
-    if (!data || !canvas || typeof Chart === "undefined") return;
+    if (!data || !data.series || !canvas || typeof Chart === "undefined") return;
     var datasets = Object.keys(data.series).map(function (scenario) {
+      var style = seriesStyles && seriesStyles[scenario];
+      var colorScenario = style && style.colorScenario ? style.colorScenario : scenario;
       return {
-        label: scenario,
-        _scenario: scenario,
+        label: style && style.label ? style.label : scenario,
+        _scenario: colorScenario,
         data: data.series[scenario],
-        borderColor: scenarioColor(scenario),
+        borderColor: scenarioColor(colorScenario),
         backgroundColor: "transparent",
         borderWidth: 1.5,
         pointRadius: 0,
@@ -642,6 +696,34 @@
     }));
   }
 
+  function baselineSeries(data) {
+    if (!data || !data.series || !Array.isArray(data.series.baseline)) return null;
+    return data.series.baseline;
+  }
+
+  function drawDewCementationLines(dew, cementation) {
+    var source = dew || cementation;
+    if (!source || !source.dates) return;
+
+    var series = {};
+    var styles = {};
+    var dewSeries = baselineSeries(dew);
+    var cementationSeries = baselineSeries(cementation);
+    if (dewSeries) {
+      series.dew = dewSeries;
+      styles.dew = { label: "Dew risk", colorScenario: "baseline" };
+    }
+    if (cementationSeries) {
+      series.cementation = cementationSeries;
+      styles.cementation = { label: "Cementation index", colorScenario: "reactive" };
+    }
+    if (!Object.keys(series).length) return;
+
+    drawScenarioLines(
+      "daily-dew-chart", { dates: source.dates, series: series }, "Risk / index (0–1)", styles
+    );
+  }
+
   // Called from the comparison template after Chart.js loads. Data comes
   // straight from the run's stored CSV artifacts via the server.
   window.drawComparisonCharts = function () {
@@ -651,6 +733,7 @@
     drawScenarioLines(
       "daily-soiling-chart", payload.dailySoiling, "Dust / contamination cleanliness (1 = clean)"
     );
+    drawDewCementationLines(payload.dailyDew, payload.dailyCementation);
     drawScenarioLines(
       "daily-cumgain-chart", payload.dailyCumGain, "Cumulative gain vs baseline (kWh)"
     );
