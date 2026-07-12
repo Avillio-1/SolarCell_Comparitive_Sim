@@ -114,7 +114,10 @@ class CoatingStrategy:
         )
         previous_average_dust = _average_dust(state.cohorts)
         base_update = self.soiling_model.update(
-            ContaminationState(dust_soiling_ratio=previous_average_dust),
+            ContaminationState(
+                dust_soiling_ratio=previous_average_dust,
+                cementation_index=state.cementation_index,
+            ),
             day_input.environment,
             rng,
             event_inputs=day_input.event_inputs,
@@ -326,9 +329,14 @@ class CoatingStrategy:
             total_bird_removed=total_bird_removed,
             dew_risk=base_update.dew_risk,
             uncoated_rain_efficiency_multiplier=base_update.rain_efficiency_multiplier,
+            cementation_index=base_update.state.cementation_index,
         )
         return StrategyStep(
-            state=CoatingScenarioState(date=day_input.date, cohorts=typed_next),
+            state=CoatingScenarioState(
+                date=day_input.date,
+                cohorts=typed_next,
+                cementation_index=base_update.state.cementation_index,
+            ),
             result=result,
         )
 
@@ -349,6 +357,7 @@ class CoatingStrategy:
         total_bird_removed: float,
         dew_risk: float = 0.0,
         uncoated_rain_efficiency_multiplier: float = 1.0,
+        cementation_index: float = 0.0,
     ) -> DailyScenarioResult:
         cleanliness_ratio = _average_cleanliness(energy_cohorts)
         average_dust_soiling_ratio = _average_dust(energy_cohorts)
@@ -392,6 +401,7 @@ class CoatingStrategy:
             "precipitation_mm": day_input.environment.precipitation_mm,
             "dew_risk": dew_risk,
             "uncoated_rain_efficiency_multiplier": uncoated_rain_efficiency_multiplier,
+            "cementation_index": cementation_index,
             "passive_cleaning_day": passive_cleaning_day,
             "passive_dust_restored_fraction": average_restored,
             "bird_removal_day": bird_removal_day,

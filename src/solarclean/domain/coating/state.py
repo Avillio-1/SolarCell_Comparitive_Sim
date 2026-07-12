@@ -24,3 +24,6 @@ class CoatingCohortState:
 class CoatingScenarioState:
     date: date
     cohorts: tuple[CoatingCohortState, ...]
+    # Environmental dew-cemented crust state shared with the uncoated scenarios;
+    # the coating suppresses its *effects*, not the crust dynamics themselves.
+    cementation_index: float = 0.0

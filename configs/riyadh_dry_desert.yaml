@@ -158,8 +158,11 @@ reactive_cv:
     max_queue_age_days: 14
   crew:
     daily_capacity_cohorts: 6
-    setup_minutes_per_cohort: 8
-    cleaning_minutes_per_cohort: 25
+    # Minutes are WORKER-minutes for a 2-person crew (elapsed time is half):
+    # 100 panels per 25 elapsed minutes needs two workers at the registry's
+    # central 120 panels/worker-hour, so labour is billed for both.
+    setup_minutes_per_cohort: 16
+    cleaning_minutes_per_cohort: 50
     water_liters_per_cohort: 150
     dust_removal_efficiency: 0.92
     bird_removal_efficiency: 0.95
