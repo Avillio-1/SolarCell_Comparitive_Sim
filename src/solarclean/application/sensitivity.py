@@ -70,7 +70,7 @@ def _failed_reconciliation_checks(
         for check in comparison.reconciliation_report.checks
         if not check.passed
     ]
-    if comparison.reconciliation_report.passed and not comparison.recommendation.valid:
+    if comparison.reconciliation_report.passed and not comparison.recommendation.calculation_valid:
         failed.append(
             MappingProxyType(
                 {
@@ -120,7 +120,9 @@ def _apply_override(
     value: float,
 ) -> tuple[SolarCleanConfig, ParameterRegistry]:
     if spec.kind == "config":
-        return apply_config_override(base_config, spec, value), base_registry
+        updated = apply_config_override(base_config, spec, value)
+        validated = SolarCleanConfig.model_validate(updated.model_dump(mode="python"))
+        return validated, base_registry
     return base_config, apply_economics_override(base_registry, spec, value)
 
 
@@ -148,7 +150,9 @@ def _run_variant(
         scenario_id: comparison.economic_results[scenario_id].net_annual_benefit_sar
         for scenario_id in CANONICAL_SCENARIO_IDS
     }
-    reconciled = comparison.reconciliation_report.passed and comparison.recommendation.valid
+    reconciled = (
+        comparison.reconciliation_report.passed and comparison.recommendation.calculation_valid
+    )
     winner = comparison.recommendation.winner if reconciled else None
     return VariantResult(
         net_annual_benefit_sar=MappingProxyType(net_benefit),
@@ -220,6 +224,7 @@ class OneWayParameterResult:
 class OneWaySensitivityResult:
     run_id: str
     output_directory: Path
+    base_mode: str
     base_winner: str | None
     base_reconciled: bool
     base_net_annual_benefit_sar: Mapping[str, float]
@@ -245,6 +250,7 @@ class OneWaySensitivityResult:
     def to_record(self) -> dict[str, object]:
         return {
             "run_id": self.run_id,
+            "base_mode": self.base_mode,
             "base_winner": self.base_winner,
             "base_reconciled": self.base_reconciled,
             "base_net_annual_benefit_sar": dict(self.base_net_annual_benefit_sar),
@@ -267,7 +273,11 @@ class OneWaySensitivityOutcome:
 
 
 class OneWaySensitivityExperiment:
-    """Sweep one calibration parameter at a time, holding everything else at its central value."""
+    """Sweep one axis around the supplied reference configuration.
+
+    Registry values define the swept axis. Other parameters retain their supplied config values,
+    so the base is explicitly not described as fully registry-central.
+    """
 
     def __init__(
         self,
@@ -313,7 +323,7 @@ class OneWaySensitivityExperiment:
     def run(self) -> OneWaySensitivityOutcome:
         total = self._total_variant_count()
         completed = 0
-        self._report_progress(completed, total, "Running base (central) comparison")
+        self._report_progress(completed, total, "Running reference-config base comparison")
         weather, clean_energy = _prepare_shared_inputs(self.config)
         base_variant = _run_variant(
             config=self.config,
@@ -364,6 +374,7 @@ class OneWaySensitivityExperiment:
         result = OneWaySensitivityResult(
             run_id=run_id,
             output_directory=output_dir,
+            base_mode="reference_config",
             base_winner=base_variant.winner,
             base_reconciled=base_variant.reconciled,
             base_net_annual_benefit_sar=base_variant.net_annual_benefit_sar,
@@ -379,6 +390,7 @@ class OneWaySensitivityExperiment:
             result = OneWaySensitivityResult(
                 run_id=result.run_id,
                 output_directory=result.output_directory,
+                base_mode=result.base_mode,
                 base_winner=result.base_winner,
                 base_reconciled=result.base_reconciled,
                 base_net_annual_benefit_sar=result.base_net_annual_benefit_sar,
@@ -487,6 +499,7 @@ def _write_oneway_package(
     summary: dict[str, object] = {
         "command": "sensitivity-oneway",
         "run_id": result.run_id,
+        "base_mode": result.base_mode,
         "base_winner": result.base_winner,
         "base_reconciled": result.base_reconciled,
         "base_failed_reconciliation_check_names": list(

@@ -57,6 +57,32 @@ def test_oneway_sweeps_requested_parameters_only(tmp_path: Path) -> None:
     result = outcome.result
     assert {r.spec.name for r in result.parameter_results} == set(names)
     assert result.skipped_parameters == ()
+    assert result.base_mode == "reference_config"
+
+
+def test_sensitivity_revalidates_completed_config_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _fixture_config(tmp_path)
+    supported, _ = sensitivity_module.build_parameter_catalog(
+        sensitivity_module.ParameterRegistry.from_yaml(config.calibration.parameter_registry_path)
+    )
+    spec = next(item for item in supported if item.kind == "config")
+
+    def invalid_override(base_config, _spec, _value):
+        invalid_farm = base_config.farm.model_copy(update={"total_panels": 9999})
+        return base_config.model_copy(update={"farm": invalid_farm})
+
+    monkeypatch.setattr(sensitivity_module, "apply_config_override", invalid_override)
+    with pytest.raises(ValueError):
+        sensitivity_module._apply_override(
+            base_config=config,
+            base_registry=sensitivity_module.ParameterRegistry.from_yaml(
+                config.calibration.parameter_registry_path
+            ),
+            spec=spec,
+            value=spec.central_value,
+        )
 
 
 def test_oneway_reports_unknown_parameter_names_as_skipped(tmp_path: Path) -> None:
@@ -142,6 +168,7 @@ def test_oneway_writes_full_artifact_package(tmp_path: Path) -> None:
         (result.output_directory / "sensitivity_oneway_summary.json").read_text(encoding="utf-8")
     )
     assert summary["parameters_swept"] == 2
+    assert summary["base_mode"] == "reference_config"
 
 
 def test_ranked_by_swing_is_sorted_descending(tmp_path: Path) -> None:

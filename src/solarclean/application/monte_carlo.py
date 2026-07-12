@@ -55,7 +55,7 @@ def _failed_reconciliation_checks(
         for check in comparison.reconciliation_report.checks
         if not check.passed
     ]
-    if comparison.reconciliation_report.passed and not comparison.recommendation.valid:
+    if comparison.reconciliation_report.passed and not comparison.recommendation.calculation_valid:
         failed.append(
             MappingProxyType(
                 {
@@ -256,7 +256,7 @@ class MonteCarloExperiment:
         )
         central_reconciled = (
             central_comparison.reconciliation_report.passed
-            and central_comparison.recommendation.valid
+            and central_comparison.recommendation.calculation_valid
         )
         central_t6_winner = central_comparison.recommendation.winner if central_reconciled else None
         central_failed_checks = _failed_reconciliation_checks(central_comparison)
@@ -359,7 +359,9 @@ class MonteCarloExperiment:
             )
             for scenario_id in CANONICAL_SCENARIO_IDS
         }
-        reconciled = comparison.reconciliation_report.passed and comparison.recommendation.valid
+        reconciled = (
+            comparison.reconciliation_report.passed and comparison.recommendation.calculation_valid
+        )
         winner = comparison.recommendation.winner if reconciled else None
         return MonteCarloTrialRecord(
             trial_index=trial_index,
