@@ -21,7 +21,7 @@ T1 freezes shared scenario contracts for baseline, reactive CV, coating, economi
 | `clean_energy` | `FrozenCleanEnergyInput` | kWh and W columns | PV/application | Exposes copy-protected clean PV tables. |
 | `event_tape` | `ExogenousEventTape | None` | event-specific | Core/contracts | Immutable stochastic dust, bird, and cohort inputs. |
 | `farm_config` | `FarmConfig | None` | panels, W | Configuration owner | Shared panel/cohort structure. |
-| `metadata` | immutable mapping | mixed | Application | Run tags, checksums, provenance. |
+| `metadata` | recursively immutable mapping | mixed | Application | Run tags, checksums, provenance. Nested mappings and sequences are copy-protected. |
 
 ## DailyScenarioInput
 
@@ -43,6 +43,9 @@ Strategies implement:
 - `simulate_day(day_input, state, context, rng) -> StrategyStep`
 
 The strategy owns only day-level intervention behavior and opaque state. The shared engine owns annual iteration.
+Every returned daily result must echo the input date, strategy name, and shared
+`clean_energy_kwh`; the engine rejects mismatches. Each run receives an isolated
+farm-configuration copy.
 
 ## DailyScenarioResult
 
@@ -64,6 +67,7 @@ may set `allow_above_clean_reference=True` only when the clean reference is not
 the scenario's physical upper bound, such as a coating scenario with
 coating-specific optical or thermal gains. Cleaning-only recovery remains
 bounded by the appropriate clean reference.
+Both clean and actual energy must be finite.
 
 ## OperationalQuantities
 
@@ -80,6 +84,8 @@ bounded by the appropriate clean reference.
 | `capex_cost` | `float` | configured currency/day |
 
 Baseline uses zeros. T2/T3/T4 may fill relevant fields without changing common aggregation.
+Count fields must be non-negative integers. Hour, water, energy, and cost fields
+must be finite and non-negative.
 
 ## DomainEvent
 

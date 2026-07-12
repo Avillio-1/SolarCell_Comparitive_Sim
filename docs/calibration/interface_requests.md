@@ -38,7 +38,7 @@ Requested paths:
 - `coating.performance.dust_adhesion_reduction_fraction`
 - `coating.performance.cell_temperature_reduction_c`
 - `coating.performance.dew_soiling_multiplier`
-- `coating.performance.annual_degradation_fraction`
+- `coating.physics.annual_degradation_fraction`
 - `coating.performance.optical_penalty_fraction`
 - `coating.performance.water_collection_l_per_m2_day`
 - `economics.tariff.sar_per_kwh`

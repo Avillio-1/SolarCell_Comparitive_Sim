@@ -54,6 +54,32 @@ DEFAULT_BREAKEVEN_RELATIVE_TOLERANCE = 1e-3
 DEFAULT_BREAKEVEN_SCAN_POINTS = 9
 
 
+def _freeze_check_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {str(key): _freeze_check_value(item) for key, item in value.items()}
+        )
+    if isinstance(value, list | tuple):
+        return tuple(_freeze_check_value(item) for item in value)
+    return value
+
+
+def _freeze_check_record(record: Mapping[str, object]) -> Mapping[str, object]:
+    return MappingProxyType({str(key): _freeze_check_value(value) for key, value in record.items()})
+
+
+def _copy_check_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {str(key): _copy_check_value(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_copy_check_value(item) for item in value]
+    return value
+
+
+def _copy_check_record(record: Mapping[str, object]) -> dict[str, object]:
+    return {str(key): _copy_check_value(value) for key, value in record.items()}
+
+
 @dataclass(frozen=True)
 class VariantResult:
     net_annual_benefit_sar: Mapping[str, float]
@@ -66,13 +92,13 @@ def _failed_reconciliation_checks(
     comparison: ComparisonResult,
 ) -> tuple[Mapping[str, object], ...]:
     failed = [
-        MappingProxyType(check.to_record())
+        _freeze_check_record(check.to_record())
         for check in comparison.reconciliation_report.checks
         if not check.passed
     ]
     if comparison.reconciliation_report.passed and not comparison.recommendation.calculation_valid:
         failed.append(
-            MappingProxyType(
+            _freeze_check_record(
                 {
                     "name": "recommendation_invalid",
                     "message": comparison.recommendation.message,
@@ -92,23 +118,26 @@ def _failed_check_messages(checks: Sequence[Mapping[str, object]]) -> tuple[str,
 
 
 def _check_records(checks: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
-    return [dict(check) for check in checks]
+    return [_copy_check_record(check) for check in checks]
 
 
 def _sweep_points(spec: ParameterOverrideSpec, steps: int) -> tuple[float, ...]:
-    if steps < 2:
-        raise ValueError("steps must be at least 2")
+    if steps < 3:
+        raise ValueError("steps must be at least 3 so low, central, and high are represented")
     low, central, high = spec.low_value, spec.central_value, spec.high_value
     if low == high:
         return (central,)
     points: set[float] = {low, central, high}
-    # Fill in evenly spaced points between low and high (excluding endpoints, already added),
-    # so the sweep always includes low/central/high exactly plus intermediate resolution.
-    if steps > 3:
-        extra = steps - 3
-        span = high - low
-        for i in range(1, extra + 1):
-            points.add(low + span * i / (extra + 1))
+    # Bisect the widest remaining interval until the requested number of unique points exists.
+    # This preserves low/central/high exactly even when central equals an endpoint or happens to
+    # coincide with an evenly spaced interpolation point.
+    while len(points) < steps:
+        ordered = sorted(points)
+        left, right = max(
+            zip(ordered, ordered[1:], strict=False),
+            key=lambda interval: interval[1] - interval[0],
+        )
+        points.add(left + (right - left) / 2.0)
     return tuple(sorted(points))
 
 
@@ -302,6 +331,13 @@ class OneWaySensitivityExperiment:
             self.parameter_names: tuple[str, ...] = tuple(self._catalog_by_name)
         else:
             self.parameter_names = tuple(parameter_names)
+            unknown = tuple(
+                name
+                for name in self.parameter_names
+                if name not in self._catalog_by_name and name not in self._unsupported_names
+            )
+            if unknown:
+                raise ValueError("unknown calibration parameter name(s): " + ", ".join(unknown))
         self.write_artifacts = write_artifacts
         # One unit = one full comparison run (base variant or one sweep point).
         # Observational only; a callback may raise to abort between variants.

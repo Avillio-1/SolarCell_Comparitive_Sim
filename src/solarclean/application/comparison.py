@@ -563,6 +563,7 @@ def _validate_injected_clean_energy(
         "azimuth_degrees": config.pv_system.azimuth_degrees,
         "inverter_efficiency": config.pv_system.inverter_efficiency,
         "dc_ac_ratio": config.pv_system.dc_ac_ratio,
+        "gamma_pdc_per_c": config.pv_system.gamma_pdc_per_c,
         "module_temperature_model": config.pv_system.module_temperature_model,
     }
     mismatches = [

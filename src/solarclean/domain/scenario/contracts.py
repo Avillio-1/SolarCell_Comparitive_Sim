@@ -19,7 +19,12 @@ from solarclean.domain.pv.model import CleanEnergyProfile
 
 
 def _freeze_mapping(mapping: Mapping[str, object] | None) -> Mapping[str, object]:
-    return cast(Mapping[str, object], MappingProxyType(dict(mapping or {})))
+    return cast(
+        Mapping[str, object],
+        MappingProxyType(
+            {str(key): _freeze_value(value) for key, value in (mapping or {}).items()}
+        ),
+    )
 
 
 def _freeze_value(value: object) -> object:
@@ -27,6 +32,14 @@ def _freeze_value(value: object) -> object:
         return MappingProxyType({str(key): _freeze_value(item) for key, item in value.items()})
     if isinstance(value, list | tuple):
         return tuple(_freeze_value(item) for item in value)
+    return value
+
+
+def _thaw_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {str(key): _thaw_value(item) for key, item in value.items()}
+    if isinstance(value, tuple | list):
+        return [_thaw_value(item) for item in value]
     return value
 
 
@@ -131,7 +144,8 @@ class FrozenWeatherInput:
         return frame.copy(deep=True)
 
     def to_dataset(self) -> WeatherDataset:
-        return WeatherDataset(hourly=self.hourly, metadata=dict(self.metadata))
+        metadata = cast(dict[str, object], _thaw_value(self.metadata))
+        return WeatherDataset(hourly=self.hourly, metadata=metadata)
 
 
 @dataclass(frozen=True)
@@ -164,11 +178,12 @@ class FrozenCleanEnergyInput:
         return self._daily.copy(deep=True)
 
     def to_profile(self) -> CleanEnergyProfile:
+        metadata = cast(dict[str, object], _thaw_value(self.metadata))
         return CleanEnergyProfile(
             hourly=self.hourly,
             daily=self.daily,
             annual_clean_energy_kwh=self.annual_clean_energy_kwh,
-            metadata=dict(self.metadata),
+            metadata=metadata,
         )
 
 
@@ -226,6 +241,35 @@ class OperationalQuantities:
     energy_used_kwh: float = 0.0
     opex_cost: float = 0.0
     capex_cost: float = 0.0
+
+    def __post_init__(self) -> None:
+        count_fields = (
+            "inspections_count",
+            "cleaning_actions_count",
+            "coated_panel_count",
+        )
+        continuous_fields = (
+            "crew_hours",
+            "drone_flight_hours",
+            "water_liters",
+            "energy_used_kwh",
+            "opex_cost",
+            "capex_cost",
+        )
+        for field_name in count_fields:
+            value = getattr(self, field_name)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"{field_name} must be an integer count")
+            if value < 0:
+                raise ValueError(f"{field_name} must be non-negative")
+        for field_name in continuous_fields:
+            value = getattr(self, field_name)
+            if isinstance(value, bool) or not isinstance(value, int | float):
+                raise TypeError(f"{field_name} must be numeric")
+            if value < 0:
+                raise ValueError(f"{field_name} must be non-negative")
+            if not np.isfinite(value):
+                raise ValueError(f"{field_name} must be finite")
 
     def to_record(self) -> dict[str, object]:
         return asdict(self)
@@ -357,6 +401,10 @@ class DailyScenarioResult:
     soiling_ratio: float = field(init=False)
 
     def __post_init__(self) -> None:
+        if not np.isfinite(self.clean_energy_kwh):
+            raise ValueError("clean energy must be finite")
+        if not np.isfinite(self.actual_energy_kwh):
+            raise ValueError("actual energy must be finite")
         if self.clean_energy_kwh < 0:
             raise ValueError("clean energy must be non-negative")
         if self.actual_energy_kwh < 0:

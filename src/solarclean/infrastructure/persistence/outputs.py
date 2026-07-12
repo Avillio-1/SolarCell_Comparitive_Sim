@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -182,7 +183,7 @@ class OutputWriter:
             daily_frame = result.to_daily_frame()
             events = result.events
         else:
-            summary = dict(result.summary)
+            summary = _plain_mapping(result.summary)
             daily_frame = result.daily_frame.copy(deep=True)
             events = result.events
         daily_frame.to_csv(
@@ -224,6 +225,18 @@ def _write_event_csv(
         for event in ordered_domain_events(tuple(events))
     ]
     pd.DataFrame.from_records(records, columns=columns).to_csv(path, index=False)
+
+
+def _plain_mapping(mapping: Mapping[str, object]) -> dict[str, object]:
+    return {str(key): _plain_value(value) for key, value in mapping.items()}
+
+
+def _plain_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return _plain_mapping(value)
+    if isinstance(value, tuple | list):
+        return [_plain_value(item) for item in value]
+    return value
 
 
 def _event_csv_record(event: DomainEvent, *, include_scenario_name: bool) -> dict[str, object]:

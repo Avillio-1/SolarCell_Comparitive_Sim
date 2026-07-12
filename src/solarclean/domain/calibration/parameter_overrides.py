@@ -12,9 +12,6 @@ literal, resolvable attribute path on ``SolarCleanConfig`` today:
   coating.costs.surface_preparation_cost_per_m2``), not a single settable field.
 - The ``economics.*`` entries are not ``SolarCleanConfig`` paths at all -- they are consumed
   directly by name inside ``build_economics_from_parameter_registry``.
-- One documented path has a stale namespace typo (``coating.performance.annual_degradation_
-  fraction`` -- there is no ``performance`` section; the real field is
-  ``coating.physics.annual_degradation_fraction``, confirmed by an exact default-value match).
 
 Blindly walking ``configuration_path`` strings with a generic setter would silently apply wrong
 overrides (or crash) for any of the above. Instead this module hand-maps every registry
@@ -189,10 +186,6 @@ _CONFIG_OVERRIDES: dict[str, ConfigApplyFn] = {
     "coating.dust_accumulation_multiplier": _nested_setter(
         section="coating", subsection="physics", field="dust_accumulation_multiplier"
     ),
-    # Registry documents "coating.performance.annual_degradation_fraction", which does not
-    # exist (CoatingConfig has no `performance` section). The real field is
-    # coating.physics.annual_degradation_fraction; its default (0.05) exactly matches the
-    # registry's central_value (0.05), confirming this is the intended parameter.
     "coating.annual_degradation_fraction": _nested_setter(
         section="coating", subsection="physics", field="annual_degradation_fraction"
     ),
@@ -206,9 +199,15 @@ _CONFIG_OVERRIDES: dict[str, ConfigApplyFn] = {
 # Registry names read directly by build_economics_from_parameter_registry -- overriding these
 # means mutating the ParameterRegistry's central_value and rebuilding EconomicsCalibration,
 # never touching SolarCleanConfig.
-_ECONOMICS_OVERRIDES: frozenset[str] = frozenset(REQUIRED_ECONOMICS_PARAMETER_KEYS)
+_ECONOMICS_OVERRIDES: frozenset[str] = frozenset(
+    key for key in REQUIRED_ECONOMICS_PARAMETER_KEYS if key != "economics.useful_life_years"
+)
 
 _UNSUPPORTED_REASONS: dict[str, str] = {
+    "economics.useful_life_years": (
+        "no current scenario uses the generic economic life for a non-zero CAPEX: reactive "
+        "and coating use scenario-specific lives, while baseline has no CAPEX"
+    ),
     "soiling.no_clean_annual_loss_target_fraction": (
         "configuration_path is an unimplemented calibration.central_v2_targets placeholder"
     ),

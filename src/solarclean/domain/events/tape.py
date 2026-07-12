@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date
 from types import MappingProxyType
@@ -17,6 +17,28 @@ from solarclean.config.models import (
 from solarclean.domain.random.streams import RngStream, RngStreamFactory
 
 
+def _freeze_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return MappingProxyType({str(key): _freeze_value(item) for key, item in value.items()})
+    if isinstance(value, list | tuple):
+        return tuple(_freeze_value(item) for item in value)
+    return value
+
+
+def _freeze_mapping(mapping: Mapping[str, object] | None) -> MappingProxyType[str, object]:
+    return MappingProxyType(
+        {str(key): _freeze_value(value) for key, value in (mapping or {}).items()}
+    )
+
+
+def _thaw_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {str(key): _thaw_value(item) for key, item in value.items()}
+    if isinstance(value, tuple | list):
+        return [_thaw_value(item) for item in value]
+    return value
+
+
 @dataclass(frozen=True)
 class ExogenousEvent:
     date: date
@@ -24,7 +46,10 @@ class ExogenousEvent:
     event_type: str
     value: float
     cohort_id: int | None = None
-    metadata: MappingProxyType[str, object] | None = None
+    metadata: Mapping[str, object] | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "metadata", _freeze_mapping(self.metadata))
 
     def to_record(self) -> dict[str, object]:
         return {
@@ -33,7 +58,7 @@ class ExogenousEvent:
             "event_type": self.event_type,
             "value": self.value,
             "cohort_id": self.cohort_id,
-            "metadata": dict(self.metadata or {}),
+            "metadata": _thaw_value(self.metadata or {}),
         }
 
     @classmethod
@@ -52,7 +77,7 @@ class ExogenousEvent:
             event_type=str(record["event_type"]),
             value=float(raw_value),
             cohort_id=None if cohort_value is None else int(cohort_value),
-            metadata=MappingProxyType(dict(metadata)),
+            metadata=metadata,
         )
 
 
@@ -69,7 +94,7 @@ class DailyEventInputs:
 class ExogenousEventTape:
     seed: int
     events: tuple[ExogenousEvent, ...]
-    metadata: MappingProxyType[str, object] = MappingProxyType({})
+    metadata: Mapping[str, object] = MappingProxyType({})
     _events_by_date: MappingProxyType[date, tuple[ExogenousEvent, ...]] = field(
         init=False,
         repr=False,
@@ -89,7 +114,7 @@ class ExogenousEventTape:
             )
         )
         object.__setattr__(self, "events", sorted_events)
-        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+        object.__setattr__(self, "metadata", _freeze_mapping(self.metadata))
         events_by_date: dict[date, list[ExogenousEvent]] = {}
         for event in sorted_events:
             events_by_date.setdefault(event.date, []).append(event)
@@ -107,7 +132,7 @@ class ExogenousEventTape:
     def to_json(self) -> str:
         payload = {
             "seed": self.seed,
-            "metadata": dict(self.metadata),
+            "metadata": _thaw_value(self.metadata),
             "events": self.to_records(),
         }
         return json.dumps(payload, sort_keys=True, separators=(",", ":"))
@@ -126,7 +151,7 @@ class ExogenousEventTape:
         return cls(
             seed=int(raw["seed"]),
             events=tuple(ExogenousEvent.from_record(record) for record in events),
-            metadata=MappingProxyType(dict(metadata)),
+            metadata=metadata,
         )
 
     def checksum(self) -> str:
@@ -230,13 +255,11 @@ def generate_event_tape(
     return ExogenousEventTape(
         seed=seed,
         events=tuple(events),
-        metadata=MappingProxyType(
-            {
-                "version": "phase-3.5",
-                "stream_names": [stream.value for stream in RngStream],
-                "date_count": len(ordered_dates),
-            }
-        ),
+        metadata={
+            "version": "phase-3.5",
+            "stream_names": [stream.value for stream in RngStream],
+            "date_count": len(ordered_dates),
+        },
     )
 
 
@@ -254,5 +277,5 @@ def _event(
         event_type=event_type,
         value=value,
         cohort_id=cohort_id,
-        metadata=MappingProxyType(metadata or {}),
+        metadata=metadata or {},
     )

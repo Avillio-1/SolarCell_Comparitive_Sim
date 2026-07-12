@@ -18,6 +18,21 @@ Reactive CV, coating, economics, analytics, and dashboard work need stable inter
 
 Future strategies can run under the same weather, clean PV, farm, and exogenous event inputs. Common result handling can compare annual energy and operational quantities while preserving scenario-specific extension fields. Changes to these contracts now require contract-test and ADR updates.
 
+## Adversarial Hardening Amendment (2026-07-12)
+
+The frozen boundary is recursively immutable for structured metadata, not only at
+the outer mapping. Each engine run also receives an isolated copy of the mutable
+Pydantic farm configuration. This prevents one strategy or run from changing the
+weather provenance, clean-energy provenance, run metadata, or farm structure seen
+by another run.
+
+The engine now fails fast unless each strategy result echoes the current input
+date, strategy name, and shared daily clean-energy reference. Daily clean and
+actual energy must be finite. `OperationalQuantities` count fields must be
+non-negative integers, and continuous quantity/cost fields must be finite and
+non-negative. These checks make violations explicit before they can poison annual
+summaries or economic reconciliation.
+
 ## Non-Goals
 
 This decision does not implement reactive CV logic, drone operations, manual cleaning, coating physics, economics, sensitivity analysis, APIs, or dashboard behavior.

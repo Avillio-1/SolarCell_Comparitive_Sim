@@ -108,6 +108,7 @@ class PVWattsPowerModel:
             "azimuth_degrees": system_config.azimuth_degrees,
             "inverter_efficiency": system_config.inverter_efficiency,
             "dc_ac_ratio": system_config.dc_ac_ratio,
+            "gamma_pdc_per_c": system_config.gamma_pdc_per_c,
             "module_temperature_model": system_config.module_temperature_model,
             "weather_metadata": weather.metadata,
         }

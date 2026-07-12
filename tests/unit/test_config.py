@@ -7,7 +7,12 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from solarclean.config.loader import load_config
-from solarclean.config.models import SolarCleanConfig
+from solarclean.config.models import (
+    RainfallCleaningConfig,
+    ReactiveCVObserverConfig,
+    SoilingConfig,
+    SolarCleanConfig,
+)
 
 
 def test_loads_default_riyadh_site_from_yaml(tmp_path: Path) -> None:
@@ -124,3 +129,39 @@ def test_end_must_be_after_start() -> None:
                 },
             }
         )
+
+
+def test_site_and_simulation_timezones_must_match() -> None:
+    payload = load_config(Path("configs/default.yaml")).model_dump(mode="python")
+    payload["site"]["timezone"] = "UTC"
+
+    with pytest.raises(ValueError, match="site.timezone must equal simulation.target_timezone"):
+        SolarCleanConfig.model_validate(payload)
+
+
+@pytest.mark.parametrize("field", ["partial_rain_threshold_mm", "full_rain_cleaning_threshold_mm"])
+def test_zero_rain_threshold_is_rejected(field: str) -> None:
+    with pytest.raises(ValueError):
+        RainfallCleaningConfig.model_validate({field: 0.0})
+
+
+@pytest.mark.parametrize(
+    "multipliers",
+    [
+        {0: 1.0},
+        {13: 1.0},
+        {1: -1.0},
+        {1: float("inf")},
+    ],
+)
+def test_invalid_seasonal_multiplier_is_rejected(multipliers: dict[int, float]) -> None:
+    with pytest.raises(ValueError, match="seasonal multiplier"):
+        SoilingConfig(seasonal_multipliers=multipliers)
+
+
+def test_reactive_observer_default_matches_main_config_and_registry_central() -> None:
+    config = load_config(Path("configs/default.yaml"))
+    registry = Path("data/calibration/parameter_registry.yaml")
+    assert ReactiveCVObserverConfig().false_positive_rate == pytest.approx(0.08)
+    assert config.reactive_cv.observer.false_positive_rate == pytest.approx(0.08)
+    assert "central_value: 0.08" in registry.read_text(encoding="utf-8")

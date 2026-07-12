@@ -49,6 +49,18 @@ def test_supported_ranges_are_read_live_from_the_registry(registry) -> None:
     assert spec.high_value == reference.high_value
 
 
+def test_generic_economic_life_is_not_exposed_as_a_dead_sensitivity_axis(registry) -> None:
+    supported, unsupported = build_parameter_catalog(registry)
+    assert "economics.useful_life_years" not in {spec.name for spec in supported}
+    excluded = next(entry for entry in unsupported if entry.name == "economics.useful_life_years")
+    assert "no current scenario uses" in excluded.reason
+
+
+def test_coating_degradation_registry_path_resolves_to_runtime_field(registry) -> None:
+    parameter = registry.get("coating.annual_degradation_fraction")
+    assert parameter.configuration_path == "coating.physics.annual_degradation_fraction"
+
+
 def test_every_supported_config_override_applies_without_validation_error(
     registry, base_config
 ) -> None:

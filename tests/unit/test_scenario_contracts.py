@@ -175,6 +175,12 @@ def test_above_clean_reference_requires_explicit_opt_in() -> None:
     assert daily.energy_loss_kwh == pytest.approx(-0.1)
 
 
+@pytest.mark.parametrize("invalid_count", (True, 1.5, float("nan"), float("inf")))
+def test_operational_quantity_counts_require_integers(invalid_count: object) -> None:
+    with pytest.raises(TypeError, match="inspections_count"):
+        OperationalQuantities(inspections_count=invalid_count)  # type: ignore[arg-type]
+
+
 def test_scenario_specific_fields_survive_common_result_handling() -> None:
     result = ScenarioSimulationEngine(MockFutureStrategy()).run(_scenario_context(), random_seed=1)
 

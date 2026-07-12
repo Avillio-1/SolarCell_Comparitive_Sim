@@ -47,17 +47,43 @@ DEFAULT_TRIAL_COUNT = 100
 UNCERTAINTY_MODE = "stochastic_seed_only"
 
 
+def _freeze_check_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {str(key): _freeze_check_value(item) for key, item in value.items()}
+        )
+    if isinstance(value, list | tuple):
+        return tuple(_freeze_check_value(item) for item in value)
+    return value
+
+
+def _freeze_check_record(record: Mapping[str, object]) -> Mapping[str, object]:
+    return MappingProxyType({str(key): _freeze_check_value(value) for key, value in record.items()})
+
+
+def _copy_check_value(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {str(key): _copy_check_value(item) for key, item in value.items()}
+    if isinstance(value, list | tuple):
+        return [_copy_check_value(item) for item in value]
+    return value
+
+
+def _copy_check_record(record: Mapping[str, object]) -> dict[str, object]:
+    return {str(key): _copy_check_value(value) for key, value in record.items()}
+
+
 def _failed_reconciliation_checks(
     comparison: ComparisonResult,
 ) -> tuple[Mapping[str, object], ...]:
     failed = [
-        MappingProxyType(check.to_record())
+        _freeze_check_record(check.to_record())
         for check in comparison.reconciliation_report.checks
         if not check.passed
     ]
     if comparison.reconciliation_report.passed and not comparison.recommendation.calculation_valid:
         failed.append(
-            MappingProxyType(
+            _freeze_check_record(
                 {
                     "name": "recommendation_invalid",
                     "message": comparison.recommendation.message,
@@ -77,7 +103,7 @@ def _failed_check_messages(checks: Sequence[Mapping[str, object]]) -> tuple[str,
 
 
 def _check_records(checks: Sequence[Mapping[str, object]]) -> list[dict[str, object]]:
-    return [dict(check) for check in checks]
+    return [_copy_check_record(check) for check in checks]
 
 
 @dataclass(frozen=True)

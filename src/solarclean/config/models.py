@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -167,12 +168,26 @@ class SoilingConfig(StrictModel):
     def validate_dust_event_range(self) -> SoilingConfig:
         if self.dust_event_loss_max_fraction < self.dust_event_loss_min_fraction:
             raise ValueError("dust_event_loss_max_fraction must be >= min")
+        invalid_months = sorted(
+            month for month in self.seasonal_multipliers if month < 1 or month > 12
+        )
+        if invalid_months:
+            raise ValueError(f"seasonal multiplier months must be within 1..12: {invalid_months}")
+        invalid_values = {
+            month: multiplier
+            for month, multiplier in self.seasonal_multipliers.items()
+            if not math.isfinite(multiplier) or multiplier < 0.0
+        }
+        if invalid_values:
+            raise ValueError(
+                f"seasonal multipliers must be finite and non-negative: {invalid_values}"
+            )
         return self
 
 
 class RainfallCleaningConfig(StrictModel):
-    partial_rain_threshold_mm: float = Field(default=1.0, ge=0)
-    full_rain_cleaning_threshold_mm: float = Field(default=5.0, ge=0)
+    partial_rain_threshold_mm: float = Field(default=1.0, gt=0)
+    full_rain_cleaning_threshold_mm: float = Field(default=5.0, gt=0)
     partial_rain_cleaning_efficiency: float = Field(default=0.45, ge=0, le=1)
     full_rain_cleaning_efficiency: float = Field(default=0.95, ge=0, le=1)
 
@@ -225,7 +240,7 @@ class ReactiveDroneConfig(StrictModel):
 
 class ReactiveCVObserverConfig(StrictModel):
     recall_fraction: float = Field(default=0.80, ge=0, le=1)
-    false_positive_rate: float = Field(default=0.05, ge=0, le=1)
+    false_positive_rate: float = Field(default=0.08, ge=0, le=1)
     missed_image_fraction: float = Field(default=0.03, ge=0, le=1)
     base_confidence: float = Field(default=0.8, ge=0, le=1)
     confidence_std_fraction: float = Field(default=0.1, ge=0)
@@ -407,6 +422,11 @@ class SolarCleanConfig(StrictModel):
 
     @model_validator(mode="after")
     def validate_cross_section_consistency(self) -> SolarCleanConfig:
+        if self.site.timezone != self.simulation.target_timezone:
+            raise ValueError(
+                "site.timezone must equal simulation.target_timezone so weather and daily "
+                "aggregation use the configured site timezone"
+            )
         if self.pv_system.panel_count != self.farm.total_panels:
             raise ValueError("pv_system.panel_count must equal farm.total_panels")
         if self.pv_system.panel_capacity_w != self.farm.panel_capacity_w:

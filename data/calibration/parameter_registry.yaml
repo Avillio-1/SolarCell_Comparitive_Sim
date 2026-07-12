@@ -637,7 +637,7 @@ parameters:
     limitations: "Requires local humidity/dew observations and coating surface-energy data."
     responsible_module_or_owner: T3 coating/economics
   - name: coating.annual_degradation_fraction
-    configuration_path: coating.performance.annual_degradation_fraction
+    configuration_path: coating.physics.annual_degradation_fraction
     category: coating
     central_value: 0.05
     low_value: 0.01

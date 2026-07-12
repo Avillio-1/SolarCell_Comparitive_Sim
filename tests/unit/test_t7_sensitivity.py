@@ -85,17 +85,15 @@ def test_sensitivity_revalidates_completed_config_override(
         )
 
 
-def test_oneway_reports_unknown_parameter_names_as_skipped(tmp_path: Path) -> None:
+def test_oneway_rejects_unknown_parameter_names(tmp_path: Path) -> None:
     config = _fixture_config(tmp_path)
-    outcome = OneWaySensitivityExperiment(
-        config,
-        parameter_names=["soiling.base_daily_loss_fraction", "not.a.real.parameter"],
-        steps=3,
-        write_artifacts=False,
-    ).run()
-    result = outcome.result
-    assert result.skipped_parameters == ("not.a.real.parameter",)
-    assert len(result.parameter_results) == 1
+    with pytest.raises(ValueError, match="not.a.real.parameter"):
+        OneWaySensitivityExperiment(
+            config,
+            parameter_names=["soiling.base_daily_loss_fraction", "not.a.real.parameter"],
+            steps=3,
+            write_artifacts=False,
+        )
 
 
 def test_oneway_sweep_points_include_low_central_high(tmp_path: Path) -> None:
@@ -114,10 +112,24 @@ def test_oneway_sweep_points_include_low_central_high(tmp_path: Path) -> None:
     assert len(swept_values) == 5
 
 
+def test_sweep_point_count_is_exact_when_central_equals_endpoint(tmp_path: Path) -> None:
+    config = _fixture_config(tmp_path)
+    experiment = OneWaySensitivityExperiment(
+        config,
+        parameter_names=["economics.electricity_tariff_sar_per_kwh"],
+        steps=5,
+        write_artifacts=False,
+    )
+    spec = experiment._catalog_by_name["economics.electricity_tariff_sar_per_kwh"]
+    points = sensitivity_module._sweep_points(spec, 5)
+    assert len(points) == 5
+    assert {spec.low_value, spec.central_value, spec.high_value} <= set(points)
+
+
 def test_oneway_default_parameter_set_uses_full_supported_catalog(tmp_path: Path) -> None:
     config = _fixture_config(tmp_path)
     outcome = OneWaySensitivityExperiment(
-        config, parameter_names=None, steps=2, write_artifacts=False
+        config, parameter_names=None, steps=3, write_artifacts=False
     ).run()
     # Every registry parameter this catalog supports should have been swept exactly once.
     names = [r.spec.name for r in outcome.result.parameter_results]

@@ -395,6 +395,22 @@ def test_injected_clean_energy_skips_pvwatts_recalculation(
     ).run()
 
 
+def test_injected_clean_energy_rejects_gamma_pdc_mismatch(tmp_path: Path) -> None:
+    config = _fixture_config(tmp_path)
+    weather = FixtureWeatherProvider().load(comparison_module._weather_request(config))
+    clean = PVWattsPowerModel().calculate_hourly(weather, config.pv_system)
+    changed_system = config.pv_system.model_copy(update={"gamma_pdc_per_c": -0.01})
+    changed_config = config.model_copy(update={"pv_system": changed_system})
+
+    with pytest.raises(ValueError, match="gamma_pdc_per_c"):
+        CompareAllScenarios(
+            changed_config,
+            weather=weather,
+            clean_energy=clean,
+            write_artifacts=False,
+        ).run()
+
+
 def test_comparison_uses_common_t4_economic_engine(monkeypatch, tmp_path: Path) -> None:
     calls: list[tuple[str, ...]] = []
 
