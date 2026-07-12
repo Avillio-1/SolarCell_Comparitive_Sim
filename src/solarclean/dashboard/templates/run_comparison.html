@@ -27,6 +27,14 @@
 
 {% include "_provenance.html" %}
 
+{% if recommendation and recommendation.recommendation_tier %}
+<p class="warn-note"><strong>Recommendation evidence tier:</strong>
+  {{ recommendation.recommendation_tier|replace('_', ' ') }}.
+  Calculation valid: {{ recommendation.calculation_valid }};
+  decision grade: {{ recommendation.decision_grade }}.
+  Parameter status counts: {{ recommendation.parameter_status_counts }}.</p>
+{% endif %}
+
 {# Reconciliation comes first on purpose: nothing below it means anything if these fail. #}
 {% if reconciliation %}
 <section class="recon-strip {% if not reconciliation.passed %}recon-strip-failed{% endif %}">

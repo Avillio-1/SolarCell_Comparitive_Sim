@@ -802,7 +802,9 @@ class LaunchRequest(BaseModel):
 
 def _headline_cards(recommendation: dict[str, object] | None) -> list[dict[str, str]] | None:
     """Top-of-page cards from stored recommendation values (formatting only)."""
-    if not recommendation or not recommendation.get("valid"):
+    if not recommendation or not recommendation.get(
+        "calculation_valid", recommendation.get("valid", False)
+    ):
         return None
     winner = recommendation.get("winner")
     if not isinstance(winner, str):
@@ -811,7 +813,15 @@ def _headline_cards(recommendation: dict[str, object] | None) -> list[dict[str, 
     winner_kpis = snapshot.get(winner) if isinstance(snapshot, dict) else None
     if not isinstance(winner_kpis, dict):
         winner_kpis = {}
-    cards = [{"label": "Recommended strategy", "value": winner, "unit": ""}]
+    raw_tier = recommendation.get("recommendation_tier")
+    tier = str(raw_tier) if raw_tier is not None else "legacy"
+    winner_label = {
+        "decision_grade": "Decision-grade winner",
+        "calibrated": "Calibrated winner",
+        "exploratory": "Exploratory winner",
+        "legacy": "Recommended strategy",
+    }.get(tier, "Winner under assumptions")
+    cards = [{"label": winner_label, "value": winner, "unit": ""}]
     margin = recommendation.get("decisive_margin_sar")
     if isinstance(margin, int | float) and math.isfinite(margin):
         cards.append(

@@ -35,6 +35,10 @@ def test_partial_period_comparison_writes_package_but_blocks_ranking(tmp_path: P
     assert not comparison.reconciliation_report.passed
     assert comparison.ranking == ()
     assert not comparison.recommendation.valid
+    assert not comparison.recommendation.calculation_valid
+    assert comparison.recommendation.recommendation_tier == "exploratory"
+    assert not comparison.recommendation.decision_grade
+    assert comparison.recommendation.parameter_status_counts["validated"] == 0
     assert result.summary["reconciled"] is False
 
     check_by_name = {check.name: check for check in comparison.reconciliation_report.checks}
@@ -61,6 +65,8 @@ def test_partial_period_comparison_writes_package_but_blocks_ranking(tmp_path: P
     assert set(cost["scenario_id"]) == set(CANONICAL_SCENARIO_IDS)
     assert ranking["ranking"] == []
     assert recommendation["valid"] is False
+    assert recommendation["recommendation_tier"] == "exploratory"
+    assert recommendation["decision_grade"] is False
     assert reconciliation["passed"] is False
     assert annual["weather_checksum"].nunique() == 1
     assert annual["event_tape_checksum"].nunique() == 1
@@ -200,24 +206,28 @@ def test_inert_reactive_scenario_matches_baseline_with_cohort_variation(tmp_path
     )
 
 
-@pytest.mark.parametrize("perfect_information", [True, False])
-def test_comparison_reactive_strategy_honors_perfect_information_benchmark(
+def test_comparison_rejects_perfect_information_oracle_as_ranked_reactive(
     tmp_path: Path,
-    perfect_information: bool,
 ) -> None:
     config = _fixture_config(tmp_path)
     config = config.model_copy(
         update={
             "reactive_cv": config.reactive_cv.model_copy(
-                update={"perfect_information_benchmark": perfect_information}
+                update={"perfect_information_benchmark": True}
             )
         }
     )
 
+    with pytest.raises(ValueError, match="cannot replace the ranked reactive scenario"):
+        CompareAllScenarios(config, write_artifacts=False).run()
+
+
+def test_ranked_reactive_always_uses_statistical_observer(tmp_path: Path) -> None:
+    config = _fixture_config(tmp_path)
     strategy = comparison_module._build_strategy("reactive", config)
 
     assert isinstance(strategy, ReactiveCVStrategy)
-    assert strategy.perfect_information is perfect_information
+    assert strategy.perfect_information is False
     assert strategy.name == "reactive"
 
 

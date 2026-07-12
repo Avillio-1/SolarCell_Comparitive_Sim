@@ -124,6 +124,10 @@ class ScenarioRankingEntry:
 @dataclass(frozen=True)
 class Recommendation:
     valid: bool
+    calculation_valid: bool
+    recommendation_tier: str
+    decision_grade: bool
+    parameter_status_counts: Mapping[str, int]
     winner: str | None
     ordered_scenario_ids: tuple[str, ...]
     tied_winners: tuple[str, ...]
@@ -137,6 +141,10 @@ class Recommendation:
     def to_record(self) -> dict[str, object]:
         return {
             "valid": self.valid,
+            "calculation_valid": self.calculation_valid,
+            "recommendation_tier": self.recommendation_tier,
+            "decision_grade": self.decision_grade,
+            "parameter_status_counts": dict(self.parameter_status_counts),
             "winner": self.winner,
             "ordered_scenario_ids": list(self.ordered_scenario_ids),
             "tied_winners": list(self.tied_winners),
@@ -182,6 +190,9 @@ class ComparisonResult:
             "event_tape_checksum": self.event_tape_checksum,
             "ranking_count": 1 if self.ranking else 0,
             "winner": self.recommendation.winner,
+            "calculation_valid": self.recommendation.calculation_valid,
+            "recommendation_tier": self.recommendation.recommendation_tier,
+            "decision_grade": self.recommendation.decision_grade,
             "tied_winners": list(self.recommendation.tied_winners),
             "output_artifacts": list(self.output_artifacts),
         }
@@ -427,6 +438,9 @@ class CompareAllScenarios:
             warnings=warnings,
             traceability=traceability,
             reconciliation_report=reconciliation_report,
+            config=self.config,
+            registry=registry,
+            weather=weather,
         )
         daily_summaries = _daily_summaries(scenario_results)
         annual_summaries = _annual_summaries(
@@ -564,6 +578,11 @@ def _validate_comparison_config(
     config: SolarCleanConfig,
     registry: ParameterRegistry,
 ) -> None:
+    if config.reactive_cv.perfect_information_benchmark:
+        raise ValueError(
+            "perfect_information_benchmark cannot replace the ranked reactive scenario; "
+            "run the oracle only through the separate reactive benchmark use case"
+        )
     mitigation_enabled = config.reactive_cv.enabled or config.coating.enabled
     if mitigation_enabled and config.farm.representation != "cohort":
         raise ValueError(
@@ -1571,10 +1590,22 @@ def _build_recommendation(
     warnings: tuple[Mapping[str, object], ...],
     traceability: Mapping[str, object],
     reconciliation_report: ReconciliationReport,
+    config: SolarCleanConfig,
+    registry: ParameterRegistry,
+    weather: WeatherDataset,
 ) -> Recommendation:
+    tier, status_counts = _recommendation_evidence_tier(
+        config=config,
+        registry=registry,
+        weather=weather,
+    )
     if not reconciliation_report.passed or not ranking:
         return Recommendation(
             valid=False,
+            calculation_valid=False,
+            recommendation_tier=tier,
+            decision_grade=False,
+            parameter_status_counts=MappingProxyType(status_counts),
             winner=None,
             ordered_scenario_ids=(),
             tied_winners=(),
@@ -1583,7 +1614,7 @@ def _build_recommendation(
             assumptions=assumptions,
             warnings=warnings,
             traceability=traceability,
-            message="No recommendation produced because reconciliation failed.",
+            message="No recommendation produced because calculation reconciliation failed.",
         )
     top_value = ranking[0].net_annual_benefit_sar
     tied_winners = tuple(
@@ -1615,9 +1646,13 @@ def _build_recommendation(
     if winner is None:
         message = "Top scenarios are tied within the configured ranking tolerance."
     else:
-        message = f"Recommended scenario: {winner}."
+        message = f"{tier.replace('_', ' ').title()} winner under current assumptions: {winner}."
     return Recommendation(
-        valid=True,
+        valid=tier != "exploratory",
+        calculation_valid=True,
+        recommendation_tier=tier,
+        decision_grade=tier == "decision_grade",
+        parameter_status_counts=MappingProxyType(status_counts),
         winner=winner,
         ordered_scenario_ids=tuple(entry.scenario_id for entry in ranking),
         tied_winners=tied_winners,
@@ -1628,6 +1663,28 @@ def _build_recommendation(
         traceability=traceability,
         message=message,
     )
+
+
+def _recommendation_evidence_tier(
+    *,
+    config: SolarCleanConfig,
+    registry: ParameterRegistry,
+    weather: WeatherDataset,
+) -> tuple[str, dict[str, int]]:
+    """Grade evidence independently from arithmetic/reconciliation validity."""
+
+    counts = {status: 0 for status in ("validated", "provisional", "blocked", "unsourced")}
+    for parameter in registry.parameters:
+        counts[parameter.status] = counts.get(parameter.status, 0) + 1
+    full_year = _simulation_period_is_full_year(config)
+    credible_weather = config.weather.provider == "nasa_power" and not bool(
+        weather.metadata.get("test_only", False)
+    )
+    if counts["blocked"] or counts["unsourced"] or not full_year or not credible_weather:
+        return "exploratory", counts
+    if counts["provisional"]:
+        return "calibrated", counts
+    return "decision_grade", counts
 
 
 def _daily_summaries(
