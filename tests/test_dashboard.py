@@ -47,7 +47,7 @@ from solarclean.dashboard.app import (  # noqa: E402
     _kpi_table,
     app,
 )
-from solarclean.dashboard.jobs import Job, JobCancelled, JobRegistry  # noqa: E402
+from solarclean.dashboard.jobs import ActiveJobError, Job, JobCancelled, JobRegistry  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -700,6 +700,19 @@ def test_runs_table_shows_site_from_stored_config(
     assert "Dammam (humid coastal desert)" in page.text
 
 
+def test_run_entry_reads_current_created_at_timestamp(tmp_path: Path) -> None:
+    run_dir = tmp_path / "sample-compare-all-scenarios-20260711T000000Z-abc123"
+    run_dir.mkdir()
+    (run_dir / "metadata.json").write_text(
+        json.dumps({"created_at_utc": "2026-07-11T12:00:00+00:00"}), encoding="utf-8"
+    )
+
+    entries = artifacts_module.list_runs(tmp_path)
+
+    assert len(entries) == 1
+    assert entries[0].created == "2026-07-11T12:00:00+00:00"
+
+
 def test_compare_runs_renders_stored_provenance_and_kpis(
     client: TestClient, comparison_run: Path
 ) -> None:
@@ -752,6 +765,33 @@ def test_launch_form_offers_parameter_dropdowns(client: TestClient) -> None:
     # Options come from the T7-supported registry catalog with their ranges.
     assert 'value="economics.electricity_tariff_sar_per_kwh"' in page
     assert "registry range" in page
+
+
+def test_parameter_catalog_uses_registry_relative_to_custom_config_dir(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_dir = tmp_path / "deployment" / "configs"
+    registry_dir = config_dir / "registries"
+    registry_dir.mkdir(parents=True)
+    registry_path = registry_dir / "custom.yaml"
+    registry_path.write_text(
+        (Path("data/calibration/parameter_registry.yaml")).read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    payload = fixture_config().model_dump(mode="json")
+    payload["calibration"]["parameter_registry_path"] = "registries/custom.yaml"
+    config_path = config_dir / "custom.yaml"
+    config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+
+    catalog = dashboard_app._parameter_catalog(config_path)
+
+    assert catalog
+    assert dashboard_app._registry_path(config_path) == registry_path
+    assert any(item["name"] == "economics.electricity_tariff_sar_per_kwh" for item in catalog)
+    monkeypatch.setattr(dashboard_app, "_CONFIGS_DIR", config_dir)
+    response = client.get("/api/configs/custom.yaml/parameters")
+    assert response.status_code == 200
+    assert response.json() == catalog
 
 
 # --------------------------------------------------------------------------
@@ -1047,6 +1087,40 @@ def test_launch_rejects_concurrent_runs(client: TestClient, comparison_run: Path
     while job.status != "done" and time.time() < deadline:
         time.sleep(0.02)
     assert dashboard_app.jobs.delete(job.job_id) is not None
+
+
+def test_registry_idle_check_and_enqueue_are_atomic() -> None:
+    registry = JobRegistry()
+    submit_together = threading.Barrier(2)
+    release = threading.Event()
+    submitted: list[Job] = []
+    rejected: list[ActiveJobError] = []
+
+    def work(job: Job) -> Path:
+        release.wait(timeout=10)
+        return Path("outputs/fake")
+
+    def launch() -> None:
+        submit_together.wait(timeout=10)
+        try:
+            submitted.append(registry.submit("compare", "x.yaml", work, require_idle=True))
+        except ActiveJobError as exc:
+            rejected.append(exc)
+
+    threads = [threading.Thread(target=launch) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert len(submitted) == 1
+    assert len(rejected) == 1
+    assert rejected[0].job is submitted[0]
+    release.set()
+    deadline = time.time() + 10
+    while submitted[0].status != "done" and time.time() < deadline:
+        time.sleep(0.01)
+    assert submitted[0].status == "done"
 
 
 # --------------------------------------------------------------------------

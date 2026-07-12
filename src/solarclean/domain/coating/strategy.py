@@ -175,11 +175,9 @@ class CoatingStrategy:
                 replace(
                     cohort,
                     effectiveness_fraction=effectiveness,
-                    degradation_fraction=max(
-                        0.0,
-                        1.0
-                        - effectiveness
-                        / max(1e-12, self.coating.physics.initial_effectiveness_fraction),
+                    degradation_fraction=_degradation_fraction(
+                        effectiveness,
+                        self.coating.physics.initial_effectiveness_fraction,
                     ),
                     dust_soiling_ratio=dust_ratio,
                     bird_drop_coverage_fraction=coverage,
@@ -239,7 +237,10 @@ class CoatingStrategy:
                     cohort,
                     age_days=cohort.age_days + 1,
                     effectiveness_fraction=effectiveness,
-                    degradation_fraction=1.0 - effectiveness,
+                    degradation_fraction=_degradation_fraction(
+                        effectiveness,
+                        self.coating.physics.initial_effectiveness_fraction,
+                    ),
                     dust_soiling_ratio=dust_ratio,
                     bird_drop_coverage_fraction=bird.remaining_coverage_fraction,
                     bird_drop_loss_fraction=bird_loss,
@@ -265,6 +266,10 @@ class CoatingStrategy:
                             condensed_liters_per_m2=condensed_per_m2,
                             cohort=cohort,
                             effectiveness=effectiveness,
+                            degradation_fraction=_degradation_fraction(
+                                effectiveness,
+                                self.coating.physics.initial_effectiveness_fraction,
+                            ),
                             dust_ratio_before=dust_ratio_before_cleaning,
                             dust_ratio_after=dust_ratio,
                             restored=restored,
@@ -366,7 +371,7 @@ class CoatingStrategy:
         average_restored = total_restored / self.farm.total_panels
         average_bird_removed = total_bird_removed / self.farm.total_panels
         effectiveness = _average_effectiveness(energy_cohorts)
-        cooling_delta = _mean_cooling_delta(hourly, self.coating) * effectiveness
+        cooling_delta = day_water.mean_cooling_delta_c * effectiveness
         effective_optical = _effective_multiplier(
             effectiveness,
             self.coating.physics.optical_transmittance_multiplier,
@@ -489,6 +494,7 @@ class DailyWaterDiagnostics:
     coated_surface_temperature_c: float
     relative_humidity_pct: float
     max_wind_speed_m_s: float
+    mean_cooling_delta_c: float
 
 
 def _daily_water(
@@ -501,6 +507,7 @@ def _daily_water(
     representative_air_temperature = 0.0
     representative_relative_humidity = 0.0
     max_hourly_condensed = -1.0
+    cooling_deltas: list[float] = []
     for _, row in hourly.iterrows():
         air_temperature = float(row["temp_air_c"])
         relative_humidity = float(row["relative_humidity_pct"])
@@ -519,6 +526,8 @@ def _daily_water(
             area_m2=area_m2,
             water=coating.water,
         )
+        if float(row["ghi_w_m2"]) > 5.0:
+            cooling_deltas.append(max(0.0, air_temperature - surface))
         if water.condensed_liters > max_hourly_condensed:
             representative = water
             representative_air_temperature = air_temperature
@@ -546,22 +555,8 @@ def _daily_water(
         coated_surface_temperature_c=representative.surface_temperature_c,
         relative_humidity_pct=representative_relative_humidity,
         max_wind_speed_m_s=float(hourly["wind_speed_m_s"].max()),
+        mean_cooling_delta_c=float(np.mean(cooling_deltas)) if cooling_deltas else 0.0,
     )
-
-
-def _mean_cooling_delta(hourly: pd.DataFrame, coating: CoatingConfig) -> float:
-    deltas = []
-    for _, row in hourly.iterrows():
-        surface = calculate_surface_temperature_c(
-            air_temperature_c=float(row["temp_air_c"]),
-            relative_humidity_pct=float(row["relative_humidity_pct"]),
-            wind_speed_m_s=float(row["wind_speed_m_s"]),
-            irradiance_w_m2=float(row["ghi_w_m2"]),
-            physics=coating.physics,
-        )
-        if float(row["ghi_w_m2"]) > 5.0:
-            deltas.append(max(0.0, float(row["temp_air_c"]) - surface))
-    return float(np.mean(deltas)) if deltas else 0.0
 
 
 def _effectiveness_after_degradation(
@@ -577,6 +572,13 @@ def _effectiveness_after_degradation(
 def _effective_multiplier(effectiveness: float, configured_multiplier: float) -> float:
     bounded_effectiveness = min(1.0, max(0.0, effectiveness))
     return 1.0 + bounded_effectiveness * (configured_multiplier - 1.0)
+
+
+def _degradation_fraction(effectiveness: float, initial_effectiveness: float) -> float:
+    """Return effectiveness lost relative to the coating's initial value."""
+    if initial_effectiveness <= 0.0:
+        return 0.0
+    return float(min(1.0, max(0.0, 1.0 - effectiveness / initial_effectiveness)))
 
 
 def _average_dust(cohorts: tuple[CoatingCohortState, ...]) -> float:
@@ -626,6 +628,7 @@ def _passive_dust_cleaning_metadata(
     condensed_liters_per_m2: float,
     cohort: CoatingCohortState,
     effectiveness: float,
+    degradation_fraction: float,
     dust_ratio_before: float,
     dust_ratio_after: float,
     restored: float,
@@ -642,7 +645,7 @@ def _passive_dust_cleaning_metadata(
             "coating_age_days": cohort.age_days,
             "coating_effectiveness_fraction": effectiveness,
             "coating_degradation_multiplier": effectiveness,
-            "coating_degradation_fraction": max(0.0, 1.0 - effectiveness),
+            "coating_degradation_fraction": degradation_fraction,
             "dust_before": dust_before,
             "dust_removed": dust_removed,
             "dust_after": dust_after,

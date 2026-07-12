@@ -48,3 +48,7 @@ id_rsa*
 ptmp/
 ptf/
 pytest_tmp*/
+.pytest-tmp-*/
+.pytest_tmp_*/
+pytest_tmp_reg_*/
+.t/

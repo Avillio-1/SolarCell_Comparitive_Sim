@@ -37,14 +37,14 @@ T1 adds a frozen `MitigationStrategy` contract and `ScenarioSimulationEngine` so
 ## Windows PowerShell Installation
 
 ```powershell
-cd C:\Users\PC\Desktop\PersonalProj\SolarCell_Simulation
+cd C:\path\to\SolarCell_Comparitive_Sim
 python -m pip install -e ".[dev]"
 ```
 
 ## macOS/Linux Installation
 
 ```bash
-cd /path/to/SolarCell_Simulation
+cd /path/to/SolarCell_Comparitive_Sim
 python3 -m pip install -e ".[dev]"
 ```
 

@@ -11,6 +11,7 @@ class CoatingCohortState:
     applied: bool
     age_days: int
     effectiveness_fraction: float
+    # Fraction of the configured initial effectiveness that has been lost.
     degradation_fraction: float
     dust_soiling_ratio: float
     bird_drop_coverage_fraction: float

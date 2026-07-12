@@ -26,6 +26,7 @@ from solarclean.application.comparison import (
     CompareAllScenarios,
     ComparisonResult,
     ProgressCallback,
+    _load_weather,
 )
 from solarclean.config.models import SolarCleanConfig
 from solarclean.domain.calibration.parameter_overrides import (
@@ -35,6 +36,8 @@ from solarclean.domain.calibration.parameter_overrides import (
     build_parameter_catalog,
 )
 from solarclean.domain.calibration.registry import ParameterRegistry
+from solarclean.domain.environment.weather import WeatherDataset
+from solarclean.domain.pv.model import CleanEnergyProfile
 from solarclean.infrastructure.persistence.outputs import OutputWriter
 from solarclean.infrastructure.persistence.plots import (
     write_breakeven_plot,
@@ -42,6 +45,7 @@ from solarclean.infrastructure.persistence.plots import (
     write_winner_map_plot,
 )
 from solarclean.infrastructure.persistence.reports import write_json_report
+from solarclean.infrastructure.pvlib_adapter.pvwatts import PVWattsPowerModel
 
 DEFAULT_ONE_WAY_STEPS = 5
 DEFAULT_GRID_STEPS = 3
@@ -125,10 +129,14 @@ def _run_variant(
     config: SolarCleanConfig,
     registry: ParameterRegistry,
     scenario_order: Sequence[str] | None,
+    weather: WeatherDataset | None = None,
+    clean_energy: CleanEnergyProfile | None = None,
 ) -> VariantResult:
     comparison = (
         CompareAllScenarios(
             config,
+            weather=weather,
+            clean_energy=clean_energy,
             scenario_order=scenario_order,
             parameter_registry=registry,
             write_artifacts=False,
@@ -148,6 +156,13 @@ def _run_variant(
         reconciled=reconciled,
         failed_reconciliation_checks=_failed_reconciliation_checks(comparison),
     )
+
+
+def _prepare_shared_inputs(
+    config: SolarCleanConfig,
+) -> tuple[WeatherDataset, CleanEnergyProfile]:
+    weather = _load_weather(config)
+    return weather, PVWattsPowerModel().calculate_hourly(weather, config.pv_system)
 
 
 @dataclass(frozen=True)
@@ -299,8 +314,13 @@ class OneWaySensitivityExperiment:
         total = self._total_variant_count()
         completed = 0
         self._report_progress(completed, total, "Running base (central) comparison")
+        weather, clean_energy = _prepare_shared_inputs(self.config)
         base_variant = _run_variant(
-            config=self.config, registry=self.registry, scenario_order=self.scenario_order
+            config=self.config,
+            registry=self.registry,
+            scenario_order=self.scenario_order,
+            weather=weather,
+            clean_energy=clean_energy,
         )
         completed += 1
 
@@ -320,7 +340,15 @@ class OneWaySensitivityExperiment:
                 self._report_progress(base + done_points, total, f"Sweeping {spec_name}")
 
             self._report_progress(completed, total, f"Sweeping {swept_name}")
-            results.append(self._sweep_parameter(spec, base_variant, on_point=on_point))
+            results.append(
+                self._sweep_parameter(
+                    spec,
+                    base_variant,
+                    weather=weather,
+                    clean_energy=clean_energy,
+                    on_point=on_point,
+                )
+            )
             completed += len(_sweep_points(spec, self.steps))
         self._report_progress(total, total, "Sweeps complete; writing artifacts")
 
@@ -365,6 +393,8 @@ class OneWaySensitivityExperiment:
         self,
         spec: ParameterOverrideSpec,
         base_variant: VariantResult,
+        weather: WeatherDataset,
+        clean_energy: CleanEnergyProfile,
         on_point: Callable[[int], None] | None = None,
     ) -> OneWayParameterResult:
         points: list[SweepPoint] = []
@@ -373,7 +403,11 @@ class OneWaySensitivityExperiment:
                 base_config=self.config, base_registry=self.registry, spec=spec, value=value
             )
             variant = _run_variant(
-                config=config, registry=registry, scenario_order=self.scenario_order
+                config=config,
+                registry=registry,
+                scenario_order=self.scenario_order,
+                weather=weather,
+                clean_energy=clean_energy,
             )
             points.append(
                 SweepPoint(
@@ -575,6 +609,7 @@ class TwoWaySensitivityExperiment:
     def run(self) -> TwoWaySensitivityOutcome:
         values_a = _sweep_points(self.spec_a, self.grid_steps)
         values_b = _sweep_points(self.spec_b, self.grid_steps)
+        weather, clean_energy = _prepare_shared_inputs(self.config)
         total = len(values_a) * len(values_b)
         self._report_progress(0, total, f"Gridding {self.spec_a.name} x {self.spec_b.name}")
         grid: list[WinnerMapGridPoint] = []
@@ -590,7 +625,11 @@ class TwoWaySensitivityExperiment:
                     base_config=config_a, base_registry=registry_a, spec=self.spec_b, value=value_b
                 )
                 variant = _run_variant(
-                    config=config_ab, registry=registry_ab, scenario_order=self.scenario_order
+                    config=config_ab,
+                    registry=registry_ab,
+                    scenario_order=self.scenario_order,
+                    weather=weather,
+                    clean_energy=clean_energy,
                 )
                 grid.append(
                     WinnerMapGridPoint(
@@ -821,6 +860,7 @@ class BreakEvenExperiment:
         # against the max_evaluations budget and completes when the search ends
         # -- a truthful upper bound, never an invented completion estimate.
         self.progress_callback = progress_callback
+        self._shared_inputs: tuple[WeatherDataset, CleanEnergyProfile] | None = None
 
     def _report_progress(self, done: int, total: int, stage: str) -> None:
         if self.progress_callback is not None:
@@ -830,7 +870,16 @@ class BreakEvenExperiment:
         config, registry = _apply_override(
             base_config=self.config, base_registry=self.registry, spec=self.spec, value=value
         )
-        variant = _run_variant(config=config, registry=registry, scenario_order=None)
+        if self._shared_inputs is None:
+            raise RuntimeError("break-even shared inputs were not prepared")
+        weather, clean_energy = self._shared_inputs
+        variant = _run_variant(
+            config=config,
+            registry=registry,
+            scenario_order=None,
+            weather=weather,
+            clean_energy=clean_energy,
+        )
         margin = None
         if variant.reconciled:
             margin = (
@@ -1009,6 +1058,7 @@ class BreakEvenExperiment:
         return (lo + hi) / 2.0, remaining, None
 
     def run(self) -> BreakEvenOutcome:
+        self._shared_inputs = _prepare_shared_inputs(self.config)
         self._report_progress(
             0, self.max_evaluations, f"Scanning registry range of {self.spec.name}"
         )

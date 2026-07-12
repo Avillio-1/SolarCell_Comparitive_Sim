@@ -242,6 +242,7 @@ class CompareAllScenarios:
         config: SolarCleanConfig,
         *,
         weather: WeatherDataset | None = None,
+        clean_energy: CleanEnergyProfile | None = None,
         event_tape: ExogenousEventTape | None = None,
         scenario_order: Sequence[str] | None = None,
         parameter_registry_path: Path | None = None,
@@ -251,6 +252,9 @@ class CompareAllScenarios:
     ) -> None:
         self.config = config
         self.weather = weather
+        if clean_energy is not None and weather is None:
+            raise ValueError("clean_energy injection requires the matching weather dataset")
+        self.clean_energy = clean_energy
         self.event_tape = event_tape
         # Reports scenario-level completion to callers (e.g. the dashboard job
         # table). Purely observational: it never alters simulation behaviour,
@@ -277,7 +281,15 @@ class CompareAllScenarios:
         )
         _validate_comparison_config(self.config, registry)
         weather = self.weather if self.weather is not None else _load_weather(self.config)
-        profile = PVWattsPowerModel().calculate_hourly(weather, self.config.pv_system)
+        profile = self.clean_energy
+        if profile is None:
+            profile = PVWattsPowerModel().calculate_hourly(weather, self.config.pv_system)
+        else:
+            _validate_injected_clean_energy(
+                weather=weather,
+                profile=profile,
+                config=self.config,
+            )
         event_tape = self.event_tape or _generate_event_tape(self.config, profile)
         weather_checksum = _weather_checksum(weather)
         event_tape_checksum = event_tape.checksum()
@@ -520,6 +532,34 @@ def _load_weather(config: SolarCleanConfig) -> WeatherDataset:
     return _weather_provider(config).load(_weather_request(config))
 
 
+def _validate_injected_clean_energy(
+    *,
+    weather: WeatherDataset,
+    profile: CleanEnergyProfile,
+    config: SolarCleanConfig,
+) -> None:
+    """Reject a cached PV profile that does not belong to these static inputs."""
+    if not profile.hourly.index.equals(weather.hourly.index):
+        raise ValueError("injected clean_energy timestamps must match weather timestamps")
+    expected_metadata: dict[str, object] = {
+        "panel_count": config.pv_system.panel_count,
+        "panel_capacity_w": config.pv_system.panel_capacity_w,
+        "total_dc_capacity_w": config.pv_system.total_dc_capacity_w,
+        "tilt_degrees": config.pv_system.tilt_degrees,
+        "azimuth_degrees": config.pv_system.azimuth_degrees,
+        "inverter_efficiency": config.pv_system.inverter_efficiency,
+        "dc_ac_ratio": config.pv_system.dc_ac_ratio,
+        "module_temperature_model": config.pv_system.module_temperature_model,
+    }
+    mismatches = [
+        key for key, expected in expected_metadata.items() if profile.metadata.get(key) != expected
+    ]
+    if mismatches:
+        raise ValueError(
+            "injected clean_energy does not match pv_system fields: " + ", ".join(mismatches)
+        )
+
+
 def _validate_comparison_config(
     config: SolarCleanConfig,
     registry: ParameterRegistry,
@@ -539,6 +579,16 @@ def _validate_comparison_config(
             raise ValueError(
                 "riyadh_central_v2 coating dust_accumulation_multiplier must match the "
                 f"active parameter registry central value ({configured} != {registry_value})"
+            )
+    if config.calibration.assumption_set == "riyadh_central_v2" and config.reactive_cv.enabled:
+        panels_per_worker_hour = registry.get("cleaning.panels_per_worker_hour").central_value
+        expected_cleaning_minutes = 60.0 * config.farm.panels_per_cohort / panels_per_worker_hour
+        configured_cleaning_minutes = config.reactive_cv.crew.cleaning_minutes_per_cohort
+        if abs(configured_cleaning_minutes - expected_cleaning_minutes) > 1e-12:
+            raise ValueError(
+                "riyadh_central_v2 cleaning_minutes_per_cohort must match the active "
+                "parameter registry central panels-per-worker-hour calibration "
+                f"({configured_cleaning_minutes} != {expected_cleaning_minutes})"
             )
 
 
@@ -1656,9 +1706,7 @@ def _annual_water_balance_summary(result: AnnualScenarioResult) -> dict[str, obj
     unless the config enables collection efficiencies.
     """
     return {
-        "annual_condensed_water_liters": _sum_daily_extension(
-            result, "condensed_water_liters"
-        ),
+        "annual_condensed_water_liters": _sum_daily_extension(result, "condensed_water_liters"),
         "annual_collected_water_liters": _sum_daily_extension(
             result, "actually_collected_water_liters"
         ),

@@ -146,6 +146,20 @@ def test_named_central_assumption_set_rejects_registry_drift() -> None:
         CompareAllScenarios(config, write_artifacts=False).run()
 
 
+def test_named_central_assumption_set_rejects_crew_throughput_drift() -> None:
+    config = full_year_fixture_config()
+    crew = config.reactive_cv.crew.model_copy(update={"cleaning_minutes_per_cohort": 25.0})
+    config = config.model_copy(
+        update={
+            "reactive_cv": config.reactive_cv.model_copy(update={"crew": crew}),
+        }
+    )
+    registry = ParameterRegistry.from_yaml(config.calibration.parameter_registry_path)
+
+    with pytest.raises(ValueError, match="panels-per-worker-hour calibration"):
+        comparison_module._validate_comparison_config(config, registry)
+
+
 def test_disabled_mitigation_scenarios_are_zero_operation_baseline_pass_throughs(
     tmp_path: Path,
 ) -> None:
@@ -350,6 +364,25 @@ def test_each_strategy_receives_an_independent_initial_state(tmp_path: Path) -> 
     state_b = baseline_b.initial_state(context, np.random.default_rng(42))
     assert state_a is not state_b
     assert state_a.farm_state is not state_b.farm_state
+
+
+def test_injected_clean_energy_skips_pvwatts_recalculation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _fixture_config(tmp_path)
+    weather = FixtureWeatherProvider().load(comparison_module._weather_request(config))
+    clean = PVWattsPowerModel().calculate_hourly(weather, config.pv_system)
+
+    def fail_if_called(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("PVWatts should not run when clean_energy is injected")
+
+    monkeypatch.setattr(PVWattsPowerModel, "calculate_hourly", fail_if_called)
+    CompareAllScenarios(
+        config,
+        weather=weather,
+        clean_energy=clean,
+        write_artifacts=False,
+    ).run()
 
 
 def test_comparison_uses_common_t4_economic_engine(monkeypatch, tmp_path: Path) -> None:

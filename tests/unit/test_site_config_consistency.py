@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 from solarclean.config.loader import load_config
+from solarclean.config.models import ReactiveCrewConfig
 
 CONFIGS = Path("configs")
 # Fields that are allowed (and expected) to differ between the two site arms.
@@ -51,6 +52,13 @@ def test_site_configs_bill_crew_labour_like_the_central_calibration(config_name:
     assert site.reactive_cv.crew.cleaning_minutes_per_cohort == pytest.approx(
         default.reactive_cv.crew.cleaning_minutes_per_cohort
     )
+
+
+def test_reactive_crew_defaults_bill_worker_minutes_for_the_full_crew() -> None:
+    crew = ReactiveCrewConfig()
+
+    assert crew.setup_minutes_per_cohort == pytest.approx(16.0)
+    assert crew.cleaning_minutes_per_cohort == pytest.approx(50.0)
 
 
 def test_dry_and_humid_arms_differ_only_in_site_identity() -> None:

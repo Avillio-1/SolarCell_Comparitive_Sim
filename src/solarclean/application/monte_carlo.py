@@ -32,11 +32,16 @@ from solarclean.application.comparison import (
     CompareAllScenarios,
     ComparisonResult,
     ProgressCallback,
+    _load_weather,
 )
 from solarclean.config.models import SolarCleanConfig
+from solarclean.domain.calibration.registry import ParameterRegistry
+from solarclean.domain.environment.weather import WeatherDataset
+from solarclean.domain.pv.model import CleanEnergyProfile
 from solarclean.infrastructure.persistence.outputs import OutputWriter
 from solarclean.infrastructure.persistence.plots import write_monte_carlo_plots
 from solarclean.infrastructure.persistence.reports import write_json_report
+from solarclean.infrastructure.pvlib_adapter.pvwatts import PVWattsPowerModel
 
 DEFAULT_TRIAL_COUNT = 100
 UNCERTAINTY_MODE = "stochastic_seed_only"
@@ -233,11 +238,17 @@ class MonteCarloExperiment:
     def run(self) -> MonteCarloExperimentOutcome:
         total_units = 1 + self.trial_count  # central comparison + each seeded trial
         self._report_progress(0, total_units, "Running central comparison")
+        weather = _load_weather(self.config)
+        clean_energy = PVWattsPowerModel().calculate_hourly(weather, self.config.pv_system)
+        registry = ParameterRegistry.from_yaml(self.parameter_registry_path)
         central_comparison = (
             CompareAllScenarios(
                 self.config,
+                weather=weather,
+                clean_energy=clean_energy,
                 scenario_order=self.scenario_order,
                 parameter_registry_path=self.parameter_registry_path,
+                parameter_registry=registry,
                 write_artifacts=False,
             )
             .run()
@@ -256,7 +267,15 @@ class MonteCarloExperiment:
             self._report_progress(
                 1 + index, total_units, f"Running trial {index + 1} of {self.trial_count}"
             )
-            trial_list.append(self._run_trial(trial_index=index, seed=seed))
+            trial_list.append(
+                self._run_trial(
+                    trial_index=index,
+                    seed=seed,
+                    weather=weather,
+                    clean_energy=clean_energy,
+                    registry=registry,
+                )
+            )
         self._report_progress(total_units, total_units, "Trials complete; summarizing")
         trials = tuple(trial_list)
         reconciled_trials = tuple(trial for trial in trials if trial.reconciled)
@@ -300,15 +319,26 @@ class MonteCarloExperiment:
             result = _replace_artifacts(result, artifacts)
         return MonteCarloExperimentOutcome(output_directory=output_dir, result=result)
 
-    def _run_trial(self, *, trial_index: int, seed: int) -> MonteCarloTrialRecord:
+    def _run_trial(
+        self,
+        *,
+        trial_index: int,
+        seed: int,
+        weather: WeatherDataset,
+        clean_energy: CleanEnergyProfile,
+        registry: ParameterRegistry,
+    ) -> MonteCarloTrialRecord:
         trial_config = self.config.model_copy(
             update={"soiling": self.config.soiling.model_copy(update={"random_seed": seed})}
         )
         comparison = (
             CompareAllScenarios(
                 trial_config,
+                weather=weather,
+                clean_energy=clean_energy,
                 scenario_order=self.scenario_order,
                 parameter_registry_path=self.parameter_registry_path,
+                parameter_registry=registry,
                 write_artifacts=False,
             )
             .run()

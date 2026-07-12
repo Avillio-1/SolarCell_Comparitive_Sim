@@ -86,7 +86,9 @@ def list_runs(outputs_dir: Path) -> list[RunEntry]:
             run_dir / "comparison_metadata.json"
         )
         if metadata is not None:
-            created = str(metadata.get("created_utc", ""))
+            # All current writers use ``created_at_utc``. Keep the legacy key
+            # as a fallback so older run directories remain readable.
+            created = str(metadata.get("created_at_utc") or metadata.get("created_utc", ""))
         entries.append(
             RunEntry(
                 run_id=run_dir.name,

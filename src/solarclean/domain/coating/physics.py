@@ -54,7 +54,7 @@ def calculate_surface_temperature_c(
         # cooling declines continuously from the dry reference instead of
         # holding full strength until a threshold.
         span = 100.0 - physics.humidity_cooling_dry_reference_pct
-        humidity_factor = (
+        humidity_factor = float(
             min(
                 1.0,
                 max(0.0, (100.0 - relative_humidity_pct) / span),

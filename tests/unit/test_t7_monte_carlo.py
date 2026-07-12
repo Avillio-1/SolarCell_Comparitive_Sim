@@ -8,6 +8,7 @@ import pandas as pd
 import pytest
 from tests.config_factory import fixture_config
 
+import solarclean.application.monte_carlo as monte_carlo_module
 from solarclean.application.comparison import CANONICAL_SCENARIO_IDS
 from solarclean.application.monte_carlo import (
     MonteCarloExperiment,
@@ -23,6 +24,29 @@ def _fixture_config(output_dir: Path):
 def test_monte_carlo_requires_at_least_two_trials(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="at least 2"):
         MonteCarloExperiment(_fixture_config(tmp_path), trial_count=1)
+
+
+def test_monte_carlo_prepares_weather_and_pv_profile_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _fixture_config(tmp_path)
+    original_load = monte_carlo_module._load_weather
+    original_calculate = monte_carlo_module.PVWattsPowerModel.calculate_hourly
+    calls = {"weather": 0, "pv": 0}
+
+    def counted_load(config_arg):
+        calls["weather"] += 1
+        return original_load(config_arg)
+
+    def counted_calculate(model, weather, system=None):
+        calls["pv"] += 1
+        return original_calculate(model, weather, system)
+
+    monkeypatch.setattr(monte_carlo_module, "_load_weather", counted_load)
+    monkeypatch.setattr(monte_carlo_module.PVWattsPowerModel, "calculate_hourly", counted_calculate)
+    MonteCarloExperiment(config, trial_count=2, write_artifacts=False).run()
+
+    assert calls == {"weather": 1, "pv": 1}
 
 
 def test_majority_winner_requires_a_unique_absolute_majority() -> None:

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from datetime import date, timedelta
 
+import numpy as np
 import pandas as pd
 import pytest
 from tests.config_factory import fixture_config, paper_calibration_config
@@ -17,8 +19,11 @@ from solarclean.domain.coating.strategy import (
     _effectiveness_after_degradation,
 )
 from solarclean.domain.events.tape import generate_event_tape
-from solarclean.domain.scenario.contracts import ScenarioContext
-from solarclean.domain.simulation.scenario_engine import ScenarioSimulationEngine
+from solarclean.domain.scenario.contracts import DailyScenarioInput, ScenarioContext
+from solarclean.domain.simulation.scenario_engine import (
+    ScenarioSimulationEngine,
+    _daily_environment,
+)
 from solarclean.infrastructure.pvlib_adapter.pvwatts import PVWattsPowerModel
 from solarclean.infrastructure.weather.csv_provider import CsvWeatherProvider
 from solarclean.infrastructure.weather.fixture import FixtureWeatherProvider
@@ -205,6 +210,54 @@ def test_degradation_scales_dust_optical_and_cooling_mechanisms_to_neutral() -> 
     assert effectiveness == 0.0
     assert _effective_multiplier(effectiveness, 0.2) == pytest.approx(1.0)
     assert _effective_multiplier(effectiveness, 1.1) == pytest.approx(1.0)
+
+
+def test_degradation_fraction_is_relative_to_initial_effectiveness_everywhere() -> None:
+    config = paper_calibration_config(
+        overrides={
+            "coating": {
+                "physics": {
+                    "initial_effectiveness_fraction": 0.8,
+                    "annual_degradation_fraction": 0.5,
+                    "passive_cleaning_base_efficiency": 0.55,
+                }
+            }
+        }
+    )
+    context = _context(config)
+    strategy = _strategy(config)
+    rng = np.random.default_rng(42)
+    initial = strategy.initial_state(context, rng)
+    aged = replace(
+        initial,
+        cohorts=tuple(replace(cohort, age_days=365) for cohort in initial.cohorts),
+    )
+    day = initial.date
+    clean_energy = float(context.clean_energy.daily.iloc[0]["clean_ac_energy_kwh"])
+    step = strategy.simulate_day(
+        DailyScenarioInput(
+            date=day,
+            clean_energy_kwh=clean_energy,
+            clean_energy_per_panel_kwh=clean_energy / config.farm.total_panels,
+            environment=_daily_environment(context.weather.hourly)[day],
+            event_inputs=(
+                context.event_tape.to_daily_inputs(day) if context.event_tape is not None else None
+            ),
+            day_index=0,
+        ),
+        aged,
+        context,
+        rng,
+    )
+
+    # Absolute effectiveness falls from 0.8 to 0.4, which is a 50% loss of
+    # initial effectiveness (not an absolute degradation fraction of 0.6).
+    assert all(cohort.effectiveness_fraction == pytest.approx(0.4) for cohort in step.state.cohorts)
+    assert all(cohort.degradation_fraction == pytest.approx(0.5) for cohort in step.state.cohorts)
+    cleaning = next(
+        event for event in step.result.events if event.event_type == "coating_passive_dust_cleaning"
+    )
+    assert cleaning.metadata["coating_degradation_fraction"] == pytest.approx(0.5)
 
 
 def test_coating_bird_removal_events_include_bounded_metadata() -> None:

@@ -240,8 +240,9 @@ class ReactiveDispatchConfig(StrictModel):
 
 class ReactiveCrewConfig(StrictModel):
     daily_capacity_cohorts: int = Field(default=6, gt=0)
-    setup_minutes_per_cohort: float = Field(default=8.0, ge=0)
-    cleaning_minutes_per_cohort: float = Field(default=25.0, ge=0)
+    # Worker-minutes billed across the full two-person crew, not elapsed minutes.
+    setup_minutes_per_cohort: float = Field(default=16.0, ge=0)
+    cleaning_minutes_per_cohort: float = Field(default=50.0, ge=0)
     water_liters_per_cohort: float = Field(default=150.0, ge=0)
     dust_removal_efficiency: float = Field(default=0.92, ge=0, le=1)
     bird_removal_efficiency: float = Field(default=0.95, ge=0, le=1)

@@ -22,6 +22,29 @@ def _fixture_config(output_dir: Path):
     return fixture_config(overrides={"output": {"base_directory": output_dir}})
 
 
+def test_oneway_prepares_weather_and_pv_profile_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = _fixture_config(tmp_path)
+    original_prepare = sensitivity_module._prepare_shared_inputs
+    calls = 0
+
+    def counted_prepare(config_arg):
+        nonlocal calls
+        calls += 1
+        return original_prepare(config_arg)
+
+    monkeypatch.setattr(sensitivity_module, "_prepare_shared_inputs", counted_prepare)
+    OneWaySensitivityExperiment(
+        config,
+        parameter_names=("coating.useful_life_years",),
+        steps=3,
+        write_artifacts=False,
+    ).run()
+
+    assert calls == 1
+
+
 # --- One-way ----------------------------------------------------------------
 
 

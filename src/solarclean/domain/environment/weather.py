@@ -98,6 +98,11 @@ class WeatherDataset:
             (numeric["relative_humidity_pct"] < 0) | (numeric["relative_humidity_pct"] > 100)
         ).any():
             raise ValueError("relative humidity must be within 0..100 percent")
+        if ((numeric["temp_air_c"] < -90.0) | (numeric["temp_air_c"] > 70.0)).any():
+            raise ValueError(
+                "air temperature must be within -90..70 deg C; "
+                "check for provider fill values such as -999"
+            )
         self.hourly = numeric
 
     def to_timezone(self, timezone: str) -> WeatherDataset:

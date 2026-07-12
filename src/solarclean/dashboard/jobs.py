@@ -41,6 +41,14 @@ class JobCancelled(Exception):
     """Raised inside a worker thread when the user deleted a running job."""
 
 
+class ActiveJobError(Exception):
+    """Raised when an atomic idle-only submission finds an active job."""
+
+    def __init__(self, job: Job) -> None:
+        self.job = job
+        super().__init__(f"job {job.job_id} is already {job.status}")
+
+
 @dataclass
 class Job:
     job_id: str
@@ -177,9 +185,22 @@ class JobRegistry:
         kind: str,
         config_name: str,
         work: Callable[[Job], Path],
+        *,
+        require_idle: bool = False,
     ) -> Job:
         job = Job(job_id=uuid.uuid4().hex[:12], kind=kind, config_name=config_name)
         with self._lock:
+            if require_idle:
+                active = next(
+                    (
+                        existing
+                        for existing in self._jobs.values()
+                        if not existing.hidden and existing.status in ("queued", "running")
+                    ),
+                    None,
+                )
+                if active is not None:
+                    raise ActiveJobError(active)
             self._jobs[job.job_id] = job
 
         def _run() -> None:

@@ -35,10 +35,39 @@
   var configSelect = document.getElementById("config");
   var configLink = document.getElementById("config-link");
   if (configSelect && configLink) {
+    var updateParameterCatalog = function (parameters) {
+      ["parameters", "parameter-a", "parameter-b", "be-parameter"].forEach(function (id) {
+        var select = document.getElementById(id);
+        if (!select) return;
+        var chosen = new Set(Array.from(select.selectedOptions).map(function (option) {
+          return option.value;
+        }));
+        select.replaceChildren();
+        parameters.forEach(function (parameter, index) {
+          var option = document.createElement("option");
+          option.value = parameter.name;
+          option.textContent = parameter.name + " (" + parameter.unit + ")";
+          option.title = "registry range " + parameter.low + " – " + parameter.central +
+            " – " + parameter.high + " " + parameter.unit;
+          option.selected = chosen.has(parameter.name) ||
+            (id === "parameter-b" && chosen.size === 0 && index === 1);
+          select.appendChild(option);
+        });
+      });
+    };
     var updateConfigLink = function () {
       configLink.href = "/config/" + encodeURIComponent(configSelect.value);
     };
-    configSelect.addEventListener("change", updateConfigLink);
+    configSelect.addEventListener("change", function () {
+      updateConfigLink();
+      fetch("/api/configs/" + encodeURIComponent(configSelect.value) + "/parameters")
+        .then(function (response) {
+          if (!response.ok) throw new Error("HTTP " + response.status);
+          return response.json();
+        })
+        .then(updateParameterCatalog)
+        .catch(function () { /* launch endpoint will report the registry error */ });
+    });
     updateConfigLink();
   }
 

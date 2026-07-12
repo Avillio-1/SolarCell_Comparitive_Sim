@@ -41,7 +41,7 @@ from solarclean.application.sensitivity import (
 )
 from solarclean.config.loader import load_config
 from solarclean.dashboard import artifacts
-from solarclean.dashboard.jobs import JOB_KINDS, Job, JobRegistry
+from solarclean.dashboard.jobs import JOB_KINDS, ActiveJobError, Job, JobRegistry
 from solarclean.domain.calibration.parameter_overrides import build_parameter_catalog
 from solarclean.domain.calibration.registry import ParameterRegistry
 
@@ -371,15 +371,32 @@ def _annual_cost_bars(header: list[str], rows: list[list[str]]) -> dict[str, obj
     return {"scenarios": [row[scenario_col] for row in rows], "metrics": series}
 
 
-def _parameter_catalog() -> list[dict[str, object]]:
+def _registry_path(config_path: Path) -> Path:
+    """Resolve the registry selected by a dashboard configuration.
+
+    Absolute paths are deployment-friendly. Relative paths first follow the
+    config file (useful with ``SOLARCLEAN_CONFIGS_DIR``), then retain the
+    repository-root semantics used by the bundled configurations.
+    """
+    configured = load_config(config_path).calibration.parameter_registry_path
+    if configured.is_absolute():
+        return configured
+    beside_config = config_path.parent / configured
+    if beside_config.is_file():
+        return beside_config
+    return _REPO_ROOT / configured
+
+
+def _parameter_catalog(config_path: Path | None = None) -> list[dict[str, object]]:
     """T7-supported sensitivity parameters for the launch-form dropdowns.
 
     Listing only: names and registry ranges pass through so users pick from a
     menu instead of hand-typing registry keys. Empty on any load failure — the
     launch endpoint will then produce the real error.
     """
-    registry_path = _REPO_ROOT / "data" / "calibration" / "parameter_registry.yaml"
     try:
+        selected_config = config_path or _config_path(DEFAULT_CONFIG_NAME)
+        registry_path = _registry_path(selected_config)
         supported, _ = build_parameter_catalog(ParameterRegistry.from_yaml(registry_path))
     except Exception:
         return []
@@ -762,6 +779,12 @@ def config_page(request: Request, name: str) -> HTMLResponse:
 # --------------------------------------------------------------------------
 
 
+@app.get("/api/configs/{name}/parameters")
+def config_parameters(name: str) -> JSONResponse:
+    """Return the sensitivity catalog selected by one dashboard config."""
+    return JSONResponse(_parameter_catalog(_config_path(name)))
+
+
 class LaunchRequest(BaseModel):
     kind: str
     config: str = "default.yaml"
@@ -820,10 +843,15 @@ def _make_work(options: LaunchRequest, config_path: Path) -> Callable[[Job], Pat
 
     def work(job: Job) -> Path:
         config = load_config(config_path)
+        parameter_registry_path = _registry_path(config_path)
         if options.kind == "compare":
             job.detail = "Running baseline, reactive, and coating against one event tape"
             return (
-                CompareAllScenarios(config, progress_callback=job.report_progress)
+                CompareAllScenarios(
+                    config,
+                    progress_callback=job.report_progress,
+                    parameter_registry_path=parameter_registry_path,
+                )
                 .run()
                 .output_directory
             )
@@ -834,6 +862,7 @@ def _make_work(options: LaunchRequest, config_path: Path) -> Callable[[Job], Pat
                 trial_count=options.trials,
                 base_seed=options.base_seed,
                 progress_callback=job.report_progress,
+                parameter_registry_path=parameter_registry_path,
             ).run()
             return mc_outcome.result.output_directory
         if options.kind == "sensitivity-oneway":
@@ -843,6 +872,7 @@ def _make_work(options: LaunchRequest, config_path: Path) -> Callable[[Job], Pat
                 parameter_names=options.parameters or None,
                 steps=options.steps,
                 progress_callback=job.report_progress,
+                parameter_registry_path=parameter_registry_path,
             ).run()
             return oneway_outcome.result.output_directory
         if options.kind == "winner-map":
@@ -855,6 +885,7 @@ def _make_work(options: LaunchRequest, config_path: Path) -> Callable[[Job], Pat
                 parameter_name_b=options.parameter_b,
                 grid_steps=options.grid_steps,
                 progress_callback=job.report_progress,
+                parameter_registry_path=parameter_registry_path,
             ).run()
             return grid_outcome.result.output_directory
         # break-even
@@ -870,37 +901,34 @@ def _make_work(options: LaunchRequest, config_path: Path) -> Callable[[Job], Pat
             scenario_a=options.scenario_a,
             scenario_b=options.scenario_b,
             progress_callback=job.report_progress,
+            parameter_registry_path=parameter_registry_path,
         ).run()
         return break_even_outcome.result.output_directory
 
     return work
 
 
-def _reject_if_busy() -> None:
-    """Serialize heavy runs: one active session at a time.
-
-    Simulations are CPU-bound; two concurrent full-year runs just slow each
-    other down and confuse progress ETAs. 409 tells the user to wait or cancel.
-    """
-    active = [job for job in jobs.all() if job.status in ("queued", "running")]
-    if active:
-        busy = active[0]
+def _submit_if_idle(kind: str, config_name: str, work: Callable[[Job], Path]) -> Job:
+    """Atomically reject an active run or enqueue this one."""
+    try:
+        return jobs.submit(kind, config_name, work, require_idle=True)
+    except ActiveJobError as exc:
+        busy = exc.job
         raise HTTPException(
             status_code=409,
             detail=(
                 f"A {busy.kind} run is already {busy.status} (session {busy.job_id}). "
                 "Wait for it to finish or delete its session, then launch again."
             ),
-        )
+        ) from exc
 
 
 @app.post("/api/runs")
 def launch_run(body: LaunchRequest) -> JSONResponse:
     if body.kind not in JOB_KINDS:
         raise HTTPException(status_code=400, detail=f"kind must be one of {JOB_KINDS}")
-    _reject_if_busy()
     config_path = _config_path(body.config)
-    job = jobs.submit(body.kind, body.config, _make_work(body, config_path))
+    job = _submit_if_idle(body.kind, body.config, _make_work(body, config_path))
     return JSONResponse(job.to_record(), status_code=202)
 
 
@@ -986,9 +1014,8 @@ def rerun(run_id: str) -> JSONResponse:
         raise HTTPException(
             status_code=409, detail="Run has no config_resolved.yaml to re-run from."
         )
-    _reject_if_busy()
     options = _rerun_options(kind, run_dir)
-    job = jobs.submit(kind, f"re-run of {run_id}", _make_work(options, config_path))
+    job = _submit_if_idle(kind, f"re-run of {run_id}", _make_work(options, config_path))
     return JSONResponse(job.to_record(), status_code=202)
 
 

@@ -82,6 +82,16 @@ def test_weather_dataset_rejects_duplicate_timestamps() -> None:
         WeatherDataset(hourly=_canonical_frame(index), metadata={"provider": "test"})
 
 
+@pytest.mark.parametrize("temperature_c", [-999.0, -90.1, 70.1])
+def test_weather_dataset_rejects_implausible_air_temperatures(temperature_c: float) -> None:
+    index = pd.date_range("2025-01-01", periods=2, freq="h", tz="Asia/Riyadh")
+    frame = _canonical_frame(index)
+    frame.loc[index[1], "temp_air_c"] = temperature_c
+
+    with pytest.raises(ValueError, match="air temperature.*provider fill values"):
+        WeatherDataset(hourly=frame, metadata={"provider": "test"})
+
+
 def test_fixture_provider_returns_requested_timezone_and_columns() -> None:
     dataset = FixtureWeatherProvider().load(_request())
 
