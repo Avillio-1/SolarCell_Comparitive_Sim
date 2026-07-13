@@ -105,10 +105,29 @@ class PVSystemConfig(StrictModel):
     dc_ac_ratio: float = Field(default=1.15, gt=0)
     gamma_pdc_per_c: float = -0.0035
     module_temperature_model: Literal["pvsyst_cell", "sapm_open_rack_glass_glass"] = "pvsyst_cell"
+    loss_wiring_fraction: float = Field(default=0.02, ge=0, le=0.2)
+    loss_mismatch_fraction: float = Field(default=0.02, ge=0, le=0.2)
+    loss_connections_fraction: float = Field(default=0.005, ge=0, le=0.2)
+    loss_nameplate_fraction: float = Field(default=0.01, ge=0, le=0.2)
+    loss_lid_fraction: float = Field(default=0.015, ge=0, le=0.2)
+    loss_availability_fraction: float = Field(default=0.03, ge=0, le=0.2)
 
     @property
     def total_dc_capacity_w(self) -> float:
         return float(self.panel_count) * self.panel_capacity_w
+
+    @property
+    def combined_system_loss_multiplier(self) -> float:
+        return math.prod(
+            (
+                1.0 - self.loss_wiring_fraction,
+                1.0 - self.loss_mismatch_fraction,
+                1.0 - self.loss_connections_fraction,
+                1.0 - self.loss_nameplate_fraction,
+                1.0 - self.loss_lid_fraction,
+                1.0 - self.loss_availability_fraction,
+            )
+        )
 
 
 class FarmConfig(StrictModel):

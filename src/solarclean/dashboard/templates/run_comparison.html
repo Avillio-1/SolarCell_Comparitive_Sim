@@ -13,6 +13,37 @@
   <span id="rerun-status" class="hint" role="status"></span>
 </div>
 
+{% if validation_status %}
+<aside class="warn-note validation-banner" role="note" aria-label="Parameter evidence quality">
+  <strong>Parameter evidence quality</strong>
+  <p>{{ validation_status.disclaimer }}</p>
+  <p class="validation-counts">
+    <span>Status:</span>
+    {% for status, count in validation_status.parameter_counts_by_status.items() %}
+      {{ count }} {{ status }}{% if not loop.last %} /{% endif %}
+    {% endfor %}
+    <span>Evidence:</span>
+    {% for evidence_type, count in validation_status.parameter_counts_by_evidence_type.items() %}
+      {{ count }} {{ evidence_type }}{% if not loop.last %} /{% endif %}
+    {% endfor %}
+  </p>
+  {% if validation_status.key_uncertain_parameters %}
+  <details>
+    <summary>Most uncertain parameters</summary>
+    <ul>
+      {% for parameter in validation_status.key_uncertain_parameters %}
+      <li><span class="mono">{{ parameter.name }}</span>:
+        low {{ parameter.low_value | display_number }},
+        central {{ parameter.central_value | display_number }},
+        high {{ parameter.high_value | display_number }}
+        ({{ parameter.confidence }} confidence, {{ parameter.status }})</li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+</aside>
+{% endif %}
+
 {% if headline %}
 <section class="headline-cards">
   {% for card in headline %}
@@ -39,6 +70,12 @@
 {% if reconciliation %}
 <section class="recon-strip {% if not reconciliation.passed %}recon-strip-failed{% endif %}">
   <span class="recon-title">Reconciliation</span>
+  {% set failed_checks = reconciliation.checks | rejectattr("passed") | list %}
+  {% if reconciliation.passed %}
+  <strong class="recon-verdict recon-verdict-pass">✓ all {{ reconciliation.checks | length }} checks passed</strong>
+  {% else %}
+  <strong class="recon-verdict recon-verdict-fail">✕ {{ failed_checks | length }} of {{ reconciliation.checks | length }} checks failed</strong>
+  {% endif %}
   {% for check in reconciliation.checks %}
     <span class="chip {{ 'chip-pass' if check.passed else 'chip-fail' }}"
           title="{{ check.message }}">{{ check.name }}</span>
@@ -137,39 +174,105 @@ run. Failure messages are in <code>reconciliation_report.json</code>.</p>
 {% endif %}
 
 {% if daily_energy %}
-<section class="panel">
-  <h2>Daily AC energy by scenario</h2>
-  <canvas id="daily-energy-chart" height="110"></canvas>
-  <p class="hint">The dashed clean-reference curve shows weather-driven potential before
-    contamination and mitigation effects. Event markers identify rainfall, cleaning,
-    inspections, coating activity, and contamination. Hover a date for its diagnostic summary.</p>
-</section>
-{% endif %}
+<section class="panel energy-explorer" id="energy-explorer">
+  <div class="energy-explorer-heading">
+    <div>
+      <h2>Daily energy explorer</h2>
+      <p>Focus on one strategy or deliberately compare all three. Hover to explore; click a date
+        to keep its explanation open.</p>
+    </div>
+    <div class="scenario-picker" role="group" aria-label="Energy scenario">
+      <button type="button" class="scenario-choice active" data-energy-scenario="baseline"
+        aria-pressed="true">Baseline</button>
+      <button type="button" class="scenario-choice" data-energy-scenario="reactive"
+        aria-pressed="false">Reactive</button>
+      <button type="button" class="scenario-choice" data-energy-scenario="coating"
+        aria-pressed="false">Coating</button>
+      <button type="button" class="scenario-choice" data-energy-scenario="compare"
+        aria-pressed="false">Compare</button>
+    </div>
+  </div>
 
-{% if daily_rainfall %}
-<section class="panel">
-  <h2>Daily rainfall</h2>
-  <canvas id="daily-rainfall-chart" height="110"></canvas>
-  <p class="hint">Columns show the shared daily precipitation input stored in the baseline rows of
-    <a href="/api/runs/{{ run_id }}/artifact/scenario_daily_summary.csv">scenario_daily_summary.csv</a>.
-    Rain often coincides with lower same-day irradiance while also cleaning accumulated dust for
-    following days.</p>
-</section>
-{% endif %}
+  <div class="energy-explorer-layout">
+    <div class="energy-explorer-charts">
+      <div class="energy-main-chart">
+        <canvas id="daily-energy-chart" height="115"></canvas>
+      </div>
 
-{% if daily_weather %}
-<section class="panel">
-  <h2>Daily solar irradiation (GHI)</h2>
-  <canvas id="daily-ghi-chart" height="110"></canvas>
-  <p class="hint">Daily global horizontal irradiation is the sum of stored hourly GHI values,
-    expressed as kWh/m²/day. It is usually the strongest weather driver of daily PV energy.</p>
-</section>
+      <div class="context-tracks" aria-label="Weather and event context aligned by date">
+        {% if daily_weather %}
+        <div class="context-track">
+          <div class="context-track-label"><strong>GHI</strong><span>kWh/m²/day</span></div>
+          <div class="context-track-chart"><canvas id="daily-ghi-chart" height="42"></canvas></div>
+        </div>
+        <div class="context-track">
+          <div class="context-track-label"><strong>Temperature</strong><span>ambient / cell °C</span></div>
+          <div class="context-track-chart"><canvas id="daily-temperature-chart" height="42"></canvas></div>
+        </div>
+        {% endif %}
+        {% if daily_rainfall %}
+        <div class="context-track">
+          <div class="context-track-label"><strong>Rainfall</strong><span>mm/day</span></div>
+          <div class="context-track-chart"><canvas id="daily-rainfall-chart" height="38"></canvas></div>
+        </div>
+        {% endif %}
+        <div class="context-track context-track-events">
+          <div class="context-track-label"><strong>Events</strong><span>stored actions</span></div>
+          <div class="context-track-chart"><canvas id="daily-events-chart" height="64"></canvas></div>
+        </div>
+      </div>
+    </div>
 
-<section class="panel">
-  <h2>Daylight ambient and module temperature</h2>
-  <canvas id="daily-temperature-chart" height="110"></canvas>
-  <p class="hint">Means include generating hours where GHI exceeds 20 W/m². Module/cell
-    temperature is from the clean-reference pvlib temperature model.</p>
+    <aside class="selected-day-panel" aria-live="polite" aria-label="Selected day explanation">
+      <div class="selected-day-heading">
+        <div>
+          <span class="eyebrow">Selected day</span>
+          <h3 id="selected-day-date">–</h3>
+        </div>
+        <button type="button" id="follow-hover-button" class="follow-hover" disabled>
+          Following hover
+        </button>
+      </div>
+
+      <div class="selected-reference">
+        <span>Weather-driven clean reference</span>
+        <strong id="selected-clean-reference">–</strong>
+      </div>
+
+      <table class="selected-scenario-table">
+        <thead><tr><th>Scenario</th><th>Actual</th><th>Loss</th><th>Cleanliness</th></tr></thead>
+        <tbody>
+          {% for scenario in ["baseline", "reactive", "coating"] %}
+          <tr data-selected-scenario="{{ scenario }}">
+            <th>{{ scenario }}</th>
+            <td data-selected-field="actual">–</td>
+            <td data-selected-field="loss">–</td>
+            <td data-selected-field="cleanliness">–</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      <p id="selected-day-summary" class="selected-day-summary"></p>
+
+      <div class="selected-weather-grid">
+        <div><span>GHI</span><strong id="selected-ghi">–</strong></div>
+        <div><span>Ambient</span><strong id="selected-ambient-temperature">–</strong></div>
+        <div><span>Module/cell</span><strong id="selected-cell-temperature">–</strong></div>
+        <div><span>Rainfall</span><strong id="selected-rainfall">–</strong></div>
+      </div>
+
+      <div class="selected-events">
+        <h4>Events on this date</h4>
+        <div id="selected-event-list" class="selected-event-list"></div>
+      </div>
+      <p class="selected-day-note">Clean reference contains the modeled weather and temperature
+        effects. Scenario loss is the exact stored gap between that reference and actual energy;
+        environmental values are context, not independent causal attribution.</p>
+    </aside>
+  </div>
+  <p class="hint">All values come from stored comparison artifacts. The aligned cursor connects
+    energy with GHI, daylight temperature, rainfall, and scenario events for the same date.</p>
 </section>
 {% endif %}
 

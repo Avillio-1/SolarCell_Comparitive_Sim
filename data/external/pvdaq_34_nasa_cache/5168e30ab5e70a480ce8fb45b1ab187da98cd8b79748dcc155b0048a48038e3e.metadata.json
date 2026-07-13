@@ -1,0 +1,52 @@
+{
+  "checksum": "d5b0fd3b7519eb0243c4449018a38d20fb195bf8c37bb1c4cb1f3e2723c2c9c2",
+  "coordinates": {
+    "latitude": 36.1952,
+    "longitude": -115.1582
+  },
+  "date_range": {
+    "end": "2019-02-28T23:00:00-08:00",
+    "start": "2019-01-01T00:00:00-08:00"
+  },
+  "index_freq": null,
+  "index_name": null,
+  "index_timezone": "America/Los_Angeles",
+  "nasa_parameters": {
+    "dhi_w_m2": "ALLSKY_SFC_SW_DIFF",
+    "dni_w_m2": "ALLSKY_SFC_SW_DNI",
+    "ghi_w_m2": "ALLSKY_SFC_SW_DWN",
+    "precipitation_mm": "PRECTOTCORR",
+    "relative_humidity_pct": "RH2M",
+    "temp_air_c": "T2M",
+    "wind_speed_m_s": "WS2M"
+  },
+  "normalized_units": {
+    "dhi_w_m2": "W/m2",
+    "dni_w_m2": "W/m2",
+    "ghi_w_m2": "W/m2",
+    "precipitation_mm": "mm/hour",
+    "relative_humidity_pct": "%",
+    "temp_air_c": "deg C",
+    "wind_speed_m_s": "m/s"
+  },
+  "provider": "nasa_power",
+  "retrieval_timestamp": "2026-07-13T20:00:27.990859+00:00",
+  "source_units": {
+    "ALLSKY_SFC_SW_DIFF": "W/m2",
+    "ALLSKY_SFC_SW_DNI": "W/m2",
+    "ALLSKY_SFC_SW_DWN": "W/m2",
+    "PRECTOTCORR": "mm/day",
+    "RH2M": "%",
+    "T2M": "deg C",
+    "WS2M": "m/s"
+  },
+  "variables": [
+    "ghi_w_m2",
+    "dni_w_m2",
+    "dhi_w_m2",
+    "temp_air_c",
+    "wind_speed_m_s",
+    "relative_humidity_pct",
+    "precipitation_mm"
+  ]
+}

@@ -44,6 +44,19 @@
   var configSelect = document.getElementById("config");
   var configLink = document.getElementById("config-link");
   if (configSelect && configLink) {
+    var updateSimulationPeriod = function () {
+      var option = configSelect.selectedOptions[0];
+      if (!option) return;
+      var startInput = document.getElementById("start-date");
+      var endInput = document.getElementById("end-date");
+      var note = document.getElementById("period-note");
+      if (startInput) startInput.value = option.dataset.start || "";
+      if (endInput) endInput.value = option.dataset.end || "";
+      if (note) {
+        note.textContent = "Whole days in " + (option.dataset.timezone || "the site timezone") +
+          "; this run-only override does not edit the YAML.";
+      }
+    };
     var updateParameterCatalog = function (parameters) {
       ["parameters", "parameter-a", "parameter-b", "be-parameter"].forEach(function (id) {
         var select = document.getElementById(id);
@@ -69,6 +82,7 @@
     };
     configSelect.addEventListener("change", function () {
       updateConfigLink();
+      updateSimulationPeriod();
       fetch("/api/configs/" + encodeURIComponent(configSelect.value) + "/parameters")
         .then(function (response) {
           if (!response.ok) throw new Error("HTTP " + response.status);
@@ -78,6 +92,7 @@
         .catch(function () { /* launch endpoint will report the registry error */ });
     });
     updateConfigLink();
+    updateSimulationPeriod();
   }
 
   // --- launching runs -----------------------------------------------------
@@ -89,6 +104,18 @@
       errorEl.textContent = "";
 
       var body = { kind: kindSelect.value, config: configSelect.value };
+      var startDate = document.getElementById("start-date").value;
+      var endDate = document.getElementById("end-date").value;
+      if (!startDate || !endDate) {
+        errorEl.textContent = "Choose both a start date and an end date.";
+        return;
+      }
+      if (endDate < startDate) {
+        errorEl.textContent = "End date must be on or after start date.";
+        return;
+      }
+      body.start_date = startDate;
+      body.end_date = endDate;
       if (body.kind === "monte-carlo") {
         body.trials = parseInt(document.getElementById("trials").value, 10) || 25;
         var seed = document.getElementById("base-seed").value;
@@ -187,9 +214,17 @@
     if (progressCell) {
       if (job.progress_percent !== null && job.progress_percent !== undefined) {
         var pct = Math.round(job.progress_percent);
-        progressCell.innerHTML =
-          '<div class="progress-track"><div class="progress-fill" style="width: ' + pct +
-          '%"></div></div><span class="progress-label mono">' + pct + "%</span>";
+        var fill = progressCell.querySelector(".progress-fill");
+        var label = progressCell.querySelector(".progress-label");
+        if (fill && label) {
+          // Update in place so the CSS width transition can animate the fill.
+          fill.style.width = pct + "%";
+          label.textContent = pct + "%";
+        } else {
+          progressCell.innerHTML =
+            '<div class="progress-track"><div class="progress-fill" style="width: ' + pct +
+            '%"></div></div><span class="progress-label mono">' + pct + "%</span>";
+        }
       } else {
         // No honest unit counts for this analysis kind: show no percentage.
         progressCell.innerHTML = '<span class="progress-label mono">–</span>';
@@ -667,6 +702,13 @@
   // --- charts ---------------------------------------------------------
 
   var liveCharts = [];
+  var explorerCharts = [];
+  var energyExplorerChart = null;
+  var explorerEventChart = null;
+  var explorerPayload = null;
+  var explorerIndex = -1;
+  var explorerLocked = false;
+  var explorerScenario = "baseline";
 
   function cssVar(name, fallback) {
     var value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -675,6 +717,16 @@
 
   function chartInk() { return cssVar("--muted", "#5b6770"); }
   function chartGrid() { return cssVar("--line", "#d4d9d6"); }
+
+  // Charts speak the console's language: axis ticks, legends, and tooltips
+  // use the same mono stack as the tables. Chart.js loads after this file,
+  // so defaults are applied lazily by the draw entry points.
+  function applyChartTypography() {
+    if (typeof Chart === "undefined") return;
+    Chart.defaults.font.family = cssVar(
+      "--mono", 'ui-monospace, "Cascadia Mono", Consolas, "Liberation Mono", Menlo, monospace'
+    );
+  }
   function scenarioColor(scenario) {
     return cssVar("--chart-" + scenario, cssVar("--ink", "#333"));
   }
@@ -717,6 +769,9 @@
         if (scale.title) scale.title.color = ink;
       });
       chart.data.datasets.forEach(function (dataset) {
+        if (dataset._kind === "reference") {
+          dataset.borderColor = ink;
+        }
         if (dataset._scenario) {
           var color = scenarioColor(dataset._scenario);
           dataset.borderColor = color;
@@ -795,90 +850,243 @@
     return Array.isArray(data.values) ? data.values[index] : null;
   }
 
-  function diagnosticTooltip(payload) {
-    return function (contexts) {
-      if (!contexts || !contexts.length) return [];
-      var date = contexts[0].label;
-      var lines = ["", "Why this day was low or high:"];
-      var weather = payload.dailyWeather;
-      var weatherIndex = weather && Array.isArray(weather.dates) ? weather.dates.indexOf(date) : -1;
-      if (weatherIndex >= 0) {
-        lines.push(
-          "GHI: " + finiteDisplay(weather.daily_ghi_irradiation_kwh_m2[weatherIndex], 2) +
-          " kWh/m²/day"
-        );
-        lines.push(
-          "Daylight temperature: ambient " +
-          finiteDisplay(weather.daylight_mean_ambient_temperature_c[weatherIndex], 1) +
-          "°C; module/cell " +
-          finiteDisplay(weather.daylight_mean_cell_temperature_c[weatherIndex], 1) + "°C"
-        );
-      }
-      lines.push(
-        "Rainfall: " + finiteDisplay(valueOnDate(payload.dailyRainfall, date), 2) + " mm"
-      );
-      ["baseline", "reactive", "coating"].forEach(function (scenario) {
-        var cleanliness = valueOnDate(payload.dailySoiling, date, scenario);
-        var loss = valueOnDate(payload.dailyLoss, date, scenario);
-        lines.push(
-          scenario + ": cleanliness " + finiteDisplay(cleanliness, 4) +
-          "; energy loss " + finiteDisplay(loss, 1) + " kWh"
-        );
-      });
-      var events = (payload.dailyEventMarkers || []).filter(function (event) {
-        return event.date === date;
-      });
-      if (events.length) {
-        lines.push("Events: " + events.map(function (event) {
-          return event.scenario + " " + event.category + " ×" + event.count;
-        }).join("; "));
-      }
-      return lines;
-    };
+  function setExplorerText(id, value) {
+    var element = document.getElementById(id);
+    if (element) element.textContent = value;
   }
 
-  function markerDatasets(payload) {
-    var energy = payload.dailyEnergy;
-    var reference = payload.dailyCleanReference;
-    var grouped = {};
-    var styles = {
-      rainfall: { label: "Rainfall", color: "#2f7fa3", pointStyle: "rectRot" },
-      cleaning: { label: "Cleaning", color: "#2f7d5c", pointStyle: "triangle" },
-      inspection: { label: "Inspection", color: "#c07f0e", pointStyle: "circle" },
-      coating: { label: "Coating activity", color: "#7b5aa6", pointStyle: "rect" },
-      contamination: { label: "Contamination", color: "#a3453c", pointStyle: "crossRot" },
-    };
+  function friendlyDate(value) {
+    var parsed = new Date(value + "T00:00:00");
+    return isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString(undefined, {
+      day: "numeric", month: "long", year: "numeric",
+    });
+  }
 
+  function energyDisplay(value) {
+    return finiteDisplay(value, 1) + " kWh";
+  }
+
+  var explorerCursorPlugin = {
+    id: "solarcleanExplorerCursor",
+    afterDatasetsDraw: function (chart) {
+      if (typeof chart.$explorerIndex !== "number" || !chart.scales.x) return;
+      var x = chart.scales.x.getPixelForValue(chart.$explorerIndex);
+      var area = chart.chartArea;
+      if (!area || !isFinite(x)) return;
+      chart.ctx.save();
+      chart.ctx.beginPath();
+      chart.ctx.moveTo(x, area.top);
+      chart.ctx.lineTo(x, area.bottom);
+      chart.ctx.lineWidth = 1;
+      chart.ctx.strokeStyle = cssVar("--sun-deep", "#c07f0e");
+      chart.ctx.setLineDash([3, 3]);
+      chart.ctx.stroke();
+      chart.ctx.restore();
+    },
+  };
+
+  function registerExplorerChart(chart) {
+    explorerCharts.push(chart);
+    return registerChart(chart);
+  }
+
+  function eventStyle(category) {
+    return {
+      rainfall: { color: "#2f7fa3", pointStyle: "rectRot", label: "Rain" },
+      cleaning: { color: "#2f7d5c", pointStyle: "triangle", label: "Clean" },
+      inspection: { color: "#c07f0e", pointStyle: "circle", label: "Inspect" },
+      coating: { color: "#7b5aa6", pointStyle: "rect", label: "Coating" },
+      contamination: { color: "#a3453c", pointStyle: "crossRot", label: "Contamination" },
+    }[category];
+  }
+
+  function renderSelectedEvents(date) {
+    var container = document.getElementById("selected-event-list");
+    if (!container || !explorerPayload) return;
+    container.replaceChildren();
+    var rainfall = valueOnDate(explorerPayload.dailyRainfall, date);
+    var displayEvents = (explorerPayload.dailyEventMarkers || []).filter(function (event) {
+      return event.date === date &&
+        (explorerScenario === "compare" || event.scenario === explorerScenario);
+    });
+    if (rainfall > 0) {
+      displayEvents.unshift({ category: "rainfall", count: 1, rainfall_mm: rainfall });
+    }
+    if (!displayEvents.length) {
+      var empty = document.createElement("span");
+      empty.className = "hint";
+      empty.textContent = "No stored events.";
+      container.appendChild(empty);
+      return;
+    }
+    displayEvents.forEach(function (event) {
+      var pill = document.createElement("span");
+      pill.className = "event-pill event-pill-" + event.category;
+      if (event.category === "rainfall") {
+        pill.textContent = "Rain " + finiteDisplay(event.rainfall_mm, 2) + " mm";
+      } else {
+        pill.textContent = (explorerScenario === "compare" ? event.scenario + " · " : "") +
+          event.category + " ×" + event.count;
+      }
+      container.appendChild(pill);
+    });
+  }
+
+  function renderSelectedDay() {
+    if (!explorerPayload || explorerIndex < 0) return;
+    var date = explorerPayload.dailyEnergy.dates[explorerIndex];
+    setExplorerText("selected-day-date", friendlyDate(date));
+    setExplorerText(
+      "selected-clean-reference",
+      energyDisplay(valueOnDate(explorerPayload.dailyCleanReference, date))
+    );
+
+    var scenarios = ["baseline", "reactive", "coating"];
+    scenarios.forEach(function (scenario) {
+      var row = document.querySelector('[data-selected-scenario="' + scenario + '"]');
+      if (!row) return;
+      row.hidden = explorerScenario !== "compare" && scenario !== explorerScenario;
+      var actual = row.querySelector('[data-selected-field="actual"]');
+      var loss = row.querySelector('[data-selected-field="loss"]');
+      var cleanliness = row.querySelector('[data-selected-field="cleanliness"]');
+      if (actual) actual.textContent = finiteDisplay(
+        valueOnDate(explorerPayload.dailyEnergy, date, scenario), 1
+      );
+      if (loss) loss.textContent = finiteDisplay(
+        valueOnDate(explorerPayload.dailyLoss, date, scenario), 1
+      );
+      if (cleanliness) cleanliness.textContent = finiteDisplay(
+        valueOnDate(explorerPayload.dailySoiling, date, scenario), 4
+      );
+    });
+
+    var reference = valueOnDate(explorerPayload.dailyCleanReference, date);
+    if (explorerScenario === "compare") {
+      setExplorerText(
+        "selected-day-summary",
+        "The clean reference is shared. Compare each scenario's exact loss and cleanliness gap."
+      );
+    } else {
+      var actualValue = valueOnDate(explorerPayload.dailyEnergy, date, explorerScenario);
+      var lossValue = valueOnDate(explorerPayload.dailyLoss, date, explorerScenario);
+      setExplorerText(
+        "selected-day-summary",
+        explorerScenario + " delivered " + energyDisplay(actualValue) + " from " +
+        energyDisplay(reference) + " of modeled clean potential; the stored scenario gap was " +
+        energyDisplay(lossValue) + "."
+      );
+    }
+
+    var weather = explorerPayload.dailyWeather;
+    var weatherIndex = weather && Array.isArray(weather.dates) ? weather.dates.indexOf(date) : -1;
+    setExplorerText(
+      "selected-ghi",
+      weatherIndex >= 0 ? finiteDisplay(weather.daily_ghi_irradiation_kwh_m2[weatherIndex], 2) +
+        " kWh/m²" : "–"
+    );
+    setExplorerText(
+      "selected-ambient-temperature",
+      weatherIndex >= 0 ? finiteDisplay(
+        weather.daylight_mean_ambient_temperature_c[weatherIndex], 1
+      ) + " °C" : "–"
+    );
+    setExplorerText(
+      "selected-cell-temperature",
+      weatherIndex >= 0 ? finiteDisplay(
+        weather.daylight_mean_cell_temperature_c[weatherIndex], 1
+      ) + " °C" : "–"
+    );
+    setExplorerText(
+      "selected-rainfall",
+      finiteDisplay(valueOnDate(explorerPayload.dailyRainfall, date), 2) + " mm"
+    );
+    renderSelectedEvents(date);
+  }
+
+  function updateFollowHoverButton() {
+    var button = document.getElementById("follow-hover-button");
+    if (!button) return;
+    button.disabled = !explorerLocked;
+    button.textContent = explorerLocked ? "Resume hover" : "Following hover";
+  }
+
+  function setExplorerIndex(index, lockSelection) {
+    if (!explorerPayload || !explorerPayload.dailyEnergy || explorerLocked && !lockSelection) return;
+    var lastIndex = explorerPayload.dailyEnergy.dates.length - 1;
+    var nextIndex = Math.max(0, Math.min(lastIndex, Math.round(index)));
+    if (lockSelection) explorerLocked = true;
+    if (nextIndex === explorerIndex && !lockSelection) return;
+    explorerIndex = nextIndex;
+    explorerCharts.forEach(function (chart) {
+      chart.$explorerIndex = nextIndex;
+      chart.draw();
+    });
+    updateFollowHoverButton();
+    renderSelectedDay();
+  }
+
+  function explorerIndexFromEvent(chart, event) {
+    if (!chart.scales.x || typeof event.x !== "number") return null;
+    var value = chart.scales.x.getValueForPixel(event.x);
+    return typeof value === "number" && isFinite(value) ? value : null;
+  }
+
+  function wireExplorerInteraction(options, showTooltip) {
+    options.maintainAspectRatio = false;
+    options.plugins.tooltip = options.plugins.tooltip || {};
+    options.plugins.tooltip.enabled = showTooltip;
+    options.onHover = function (event, _elements, chart) {
+      var index = explorerIndexFromEvent(chart, event);
+      if (index !== null) setExplorerIndex(index, false);
+    };
+    options.onClick = function (event, _elements, chart) {
+      var index = explorerIndexFromEvent(chart, event);
+      if (index !== null) setExplorerIndex(index, true);
+    };
+    if (options.scales.y) {
+      options.scales.y.afterFit = function (scale) { scale.width = 58; };
+    }
+    return options;
+  }
+
+  function trackOptions(showDates) {
+    var options = wireExplorerInteraction(baseOptions(""), false);
+    options.plugins.legend.display = false;
+    options.scales.x.ticks.display = showDates;
+    options.scales.x.grid.display = false;
+    options.scales.y.ticks.maxTicksLimit = 3;
+    return options;
+  }
+
+  function eventTrackDatasets(payload) {
+    var grouped = {};
     (payload.dailyEventMarkers || []).forEach(function (event) {
-      var y = valueOnDate(energy, event.date, event.scenario);
-      if (typeof y !== "number") y = valueOnDate(reference, event.date);
-      if (typeof y !== "number" || !styles[event.category]) return;
-      grouped[event.category] = grouped[event.category] || [];
-      grouped[event.category].push({ x: event.date, y: y, _event: event });
+      var style = eventStyle(event.category);
+      if (!style) return;
+      var key = event.scenario + "|" + event.category;
+      grouped[key] = grouped[key] || {
+        category: event.category, scenario: event.scenario, points: [],
+      };
+      grouped[key].points.push({ x: event.date, y: style.label });
     });
     if (payload.dailyRainfall && Array.isArray(payload.dailyRainfall.dates)) {
+      grouped["shared|rainfall"] = { category: "rainfall", scenario: null, points: [] };
       payload.dailyRainfall.dates.forEach(function (date, index) {
-        var rainfall = payload.dailyRainfall.values[index];
-        if (!(rainfall > 0)) return;
-        var y = valueOnDate(energy, date, "baseline");
-        if (typeof y !== "number") y = valueOnDate(reference, date);
-        grouped.rainfall = grouped.rainfall || [];
-        grouped.rainfall.push({
-          x: date,
-          y: y,
-          _event: { category: "rainfall", count: 1, rainfall_mm: rainfall },
-        });
+        if (payload.dailyRainfall.values[index] > 0) {
+          grouped["shared|rainfall"].points.push({ x: date, y: "Rain" });
+        }
       });
     }
-    return Object.keys(grouped).map(function (category) {
-      var style = styles[category];
+    return Object.keys(grouped).map(function (key) {
+      var group = grouped[key];
+      var style = eventStyle(group.category);
       return {
-        type: "line",
         label: style.label,
-        data: grouped[category],
+        _filterScenario: group.scenario,
+        data: group.points,
         showLine: false,
         pointRadius: 4,
-        pointHoverRadius: 7,
+        pointHoverRadius: 5,
         pointStyle: style.pointStyle,
         borderColor: style.color,
         backgroundColor: style.color,
@@ -886,18 +1094,129 @@
     });
   }
 
-  function drawEnergyDiagnostics(payload) {
+  function drawContextTracks(payload) {
+    var dates = payload.dailyEnergy.dates;
+    var weather = payload.dailyWeather;
+    var ghiCanvas = document.getElementById("daily-ghi-chart");
+    if (weather && ghiCanvas) {
+      var ghiOptions = trackOptions(false);
+      ghiOptions.scales.y.beginAtZero = true;
+      registerExplorerChart(new Chart(ghiCanvas, {
+        type: "bar",
+        data: { labels: dates, datasets: [{
+          label: "Daily GHI",
+          data: weather.daily_ghi_irradiation_kwh_m2,
+          backgroundColor: cssVar("--sun-deep", "#c07f0e"),
+          borderWidth: 0,
+          barPercentage: 1,
+          categoryPercentage: 1,
+        }] },
+        options: ghiOptions,
+        plugins: [explorerCursorPlugin],
+      }));
+    }
+
+    var temperatureCanvas = document.getElementById("daily-temperature-chart");
+    if (weather && temperatureCanvas) {
+      registerExplorerChart(new Chart(temperatureCanvas, {
+        type: "line",
+        data: { labels: dates, datasets: [
+          {
+            label: "Ambient",
+            data: weather.daylight_mean_ambient_temperature_c,
+            borderColor: "#2f7fa3",
+            backgroundColor: "transparent",
+            pointRadius: 0,
+            borderWidth: 1.25,
+          },
+          {
+            label: "Module/cell",
+            data: weather.daylight_mean_cell_temperature_c,
+            borderColor: "#a3453c",
+            backgroundColor: "transparent",
+            pointRadius: 0,
+            borderWidth: 1.25,
+          },
+        ] },
+        options: trackOptions(false),
+        plugins: [explorerCursorPlugin],
+      }));
+    }
+
+    var rainfallCanvas = document.getElementById("daily-rainfall-chart");
+    if (payload.dailyRainfall && rainfallCanvas) {
+      var rainfallOptions = trackOptions(false);
+      rainfallOptions.scales.y.beginAtZero = true;
+      registerExplorerChart(new Chart(rainfallCanvas, {
+        type: "bar",
+        data: { labels: dates, datasets: [{
+          label: "Rainfall",
+          data: payload.dailyRainfall.values,
+          backgroundColor: "#2f7fa3",
+          borderWidth: 0,
+          barPercentage: 1,
+          categoryPercentage: 1,
+        }] },
+        options: rainfallOptions,
+        plugins: [explorerCursorPlugin],
+      }));
+    }
+
+    var eventCanvas = document.getElementById("daily-events-chart");
+    if (eventCanvas) {
+      var eventOptions = trackOptions(true);
+      eventOptions.scales.y.type = "category";
+      eventOptions.scales.y.labels = ["Rain", "Clean", "Inspect", "Coating", "Contamination"];
+      eventOptions.scales.y.ticks.display = false;
+      explorerEventChart = registerExplorerChart(new Chart(eventCanvas, {
+        type: "line",
+        data: { labels: dates, datasets: eventTrackDatasets(payload) },
+        options: eventOptions,
+        plugins: [explorerCursorPlugin],
+      }));
+    }
+  }
+
+  function applyExplorerScenario(scenario) {
+    explorerScenario = scenario;
+    document.querySelectorAll("[data-energy-scenario]").forEach(function (button) {
+      var selected = button.getAttribute("data-energy-scenario") === scenario;
+      button.classList.toggle("active", selected);
+      button.setAttribute("aria-pressed", selected ? "true" : "false");
+    });
+    if (energyExplorerChart) {
+      energyExplorerChart.data.datasets.forEach(function (dataset) {
+        if (dataset._kind === "actual") {
+          dataset.hidden = scenario !== "compare" && dataset._scenario !== scenario;
+        }
+      });
+      energyExplorerChart.update();
+    }
+    if (explorerEventChart) {
+      explorerEventChart.data.datasets.forEach(function (dataset) {
+        dataset.hidden = dataset._filterScenario && scenario !== "compare" &&
+          dataset._filterScenario !== scenario;
+      });
+      explorerEventChart.update();
+    }
+    renderSelectedDay();
+  }
+
+  function drawEnergyExplorer(payload) {
     var data = payload.dailyEnergy;
     var canvas = document.getElementById("daily-energy-chart");
     if (!data || !data.series || !canvas || typeof Chart === "undefined") return;
+    explorerPayload = payload;
     var datasets = Object.keys(data.series).map(function (scenario) {
       return {
         label: scenario + " actual",
+        _kind: "actual",
         _scenario: scenario,
+        hidden: scenario !== "baseline",
         data: data.series[scenario],
         borderColor: scenarioColor(scenario),
         backgroundColor: "transparent",
-        borderWidth: 1.5,
+        borderWidth: 1.8,
         pointRadius: 0,
         tension: 0,
       };
@@ -905,119 +1224,51 @@
     if (payload.dailyCleanReference && Array.isArray(payload.dailyCleanReference.values)) {
       datasets.push({
         label: "Clean reference",
+        _kind: "reference",
         data: payload.dailyCleanReference.values,
         borderColor: chartInk(),
         backgroundColor: "transparent",
         borderDash: [7, 4],
-        borderWidth: 1.5,
+        borderWidth: 1.4,
         pointRadius: 0,
         tension: 0,
       });
     }
-    datasets = datasets.concat(markerDatasets(payload));
-    var options = baseOptions("AC energy (kWh/day)");
-    options.plugins.tooltip = {
-      callbacks: {
-        label: function (context) {
-          var event = context.raw && context.raw._event;
-          if (!event) return context.dataset.label + ": " + finiteDisplay(context.parsed.y, 1);
-          if (event.category === "rainfall") {
-            return "Rainfall: " + finiteDisplay(event.rainfall_mm, 2) + " mm";
-          }
-          return context.dataset.label + ": " + event.scenario + " ×" + event.count;
-        },
-        afterBody: diagnosticTooltip(payload),
+    var options = wireExplorerInteraction(baseOptions("AC energy (kWh/day)"), true);
+    options.plugins.tooltip.callbacks = {
+      label: function (context) {
+        return context.dataset.label + ": " + energyDisplay(context.parsed.y);
       },
     };
-    registerChart(new Chart(canvas, {
+    energyExplorerChart = registerExplorerChart(new Chart(canvas, {
       type: "line",
       data: { labels: data.dates, datasets: datasets },
       options: options,
+      plugins: [explorerCursorPlugin],
     }));
-  }
-
-  function drawWeatherDiagnostics(data) {
-    if (!data || !Array.isArray(data.dates) || typeof Chart === "undefined") return;
-    var ghiCanvas = document.getElementById("daily-ghi-chart");
-    if (ghiCanvas) {
-      var ghiOptions = baseOptions("GHI irradiation (kWh/m²/day)");
-      ghiOptions.scales.y.beginAtZero = true;
-      registerChart(new Chart(ghiCanvas, {
-        type: "bar",
-        data: {
-          labels: data.dates,
-          datasets: [{
-            label: "Daily GHI",
-            data: data.daily_ghi_irradiation_kwh_m2,
-            backgroundColor: "#c07f0e",
-            borderWidth: 0,
-            barPercentage: 1,
-            categoryPercentage: 1,
-          }],
-        },
-        options: ghiOptions,
-      }));
+    drawContextTracks(payload);
+    document.querySelectorAll("[data-energy-scenario]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        applyExplorerScenario(button.getAttribute("data-energy-scenario"));
+      });
+    });
+    var followButton = document.getElementById("follow-hover-button");
+    if (followButton) {
+      followButton.addEventListener("click", function () {
+        explorerLocked = false;
+        updateFollowHoverButton();
+      });
     }
-    var temperatureCanvas = document.getElementById("daily-temperature-chart");
-    if (temperatureCanvas) {
-      registerChart(new Chart(temperatureCanvas, {
-        type: "line",
-        data: {
-          labels: data.dates,
-          datasets: [
-            {
-              label: "Ambient",
-              data: data.daylight_mean_ambient_temperature_c,
-              borderColor: "#2f7fa3",
-              backgroundColor: "transparent",
-              pointRadius: 0,
-              borderWidth: 1.5,
-            },
-            {
-              label: "Module/cell",
-              data: data.daylight_mean_cell_temperature_c,
-              borderColor: "#a3453c",
-              backgroundColor: "transparent",
-              pointRadius: 0,
-              borderWidth: 1.5,
-            },
-          ],
-        },
-        options: baseOptions("Temperature (°C)"),
-      }));
-    }
-  }
-
-  function drawRainfallBars(data) {
-    var canvas = document.getElementById("daily-rainfall-chart");
-    if (!data || !Array.isArray(data.values) || !canvas || typeof Chart === "undefined") return;
-    var options = baseOptions("Rainfall (mm/day)");
-    options.scales.y.beginAtZero = true;
-    registerChart(new Chart(canvas, {
-      type: "bar",
-      data: {
-        labels: data.dates,
-        datasets: [{
-          label: "Rainfall",
-          _scenario: "reactive",
-          data: data.values,
-          borderWidth: 0,
-          backgroundColor: scenarioColor("reactive"),
-          barPercentage: 1,
-          categoryPercentage: 1,
-        }],
-      },
-      options: options,
-    }));
+    applyExplorerScenario("baseline");
+    setExplorerIndex(0, false);
   }
 
   // Called from the comparison template after Chart.js loads. Data comes
   // straight from the run's stored CSV artifacts via the server.
   window.drawComparisonCharts = function () {
+    applyChartTypography();
     var payload = window.solarcleanCharts || {};
-    drawEnergyDiagnostics(payload);
-    drawRainfallBars(payload.dailyRainfall);
-    drawWeatherDiagnostics(payload.dailyWeather);
+    drawEnergyExplorer(payload);
     drawScenarioLines("daily-loss-chart", payload.dailyLoss, "Energy loss (kWh/day)");
     drawScenarioLines(
       "daily-soiling-chart", payload.dailySoiling, "Dust / contamination cleanliness (1 = clean)"
@@ -1051,6 +1302,7 @@
   // Analysis results pages: charts of stored artifact values only.
   window.drawAnalysisCharts = function () {
     if (typeof Chart === "undefined") return;
+    applyChartTypography();
     drawMonteCarloSummaryCharts(window.solarcleanMonteCarlo);
     drawMcTrialsChart(window.solarcleanMcTrials);
     drawTornadoChart(window.solarcleanTornado);

@@ -21,9 +21,10 @@ from __future__ import annotations
 import random
 import statistics
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
+from typing import Literal
 
 import pandas as pd
 
@@ -35,6 +36,12 @@ from solarclean.application.comparison import (
     _load_weather,
 )
 from solarclean.config.models import SolarCleanConfig
+from solarclean.domain.calibration.parameter_overrides import (
+    ParameterOverrideSpec,
+    apply_config_override,
+    apply_economics_override,
+    build_parameter_catalog,
+)
 from solarclean.domain.calibration.registry import ParameterRegistry
 from solarclean.domain.environment.weather import WeatherDataset
 from solarclean.domain.pv.model import CleanEnergyProfile
@@ -44,7 +51,8 @@ from solarclean.infrastructure.persistence.reports import write_json_report
 from solarclean.infrastructure.pvlib_adapter.pvwatts import PVWattsPowerModel
 
 DEFAULT_TRIAL_COUNT = 100
-UNCERTAINTY_MODE = "stochastic_seed_only"
+UncertaintyMode = Literal["stochastic_seed_only", "parameters_and_seed"]
+DEFAULT_UNCERTAINTY_MODE: UncertaintyMode = "stochastic_seed_only"
 
 
 def _freeze_check_value(value: object) -> object:
@@ -116,6 +124,7 @@ class MonteCarloTrialRecord:
     annual_actual_energy_kwh: Mapping[str, float]
     energy_gain_vs_baseline_kwh: Mapping[str, float]
     failed_reconciliation_checks: tuple[Mapping[str, object], ...] = ()
+    sampled_parameters: Mapping[str, float] = field(default_factory=lambda: MappingProxyType({}))
 
     def to_flat_record(self) -> dict[str, object]:
         record: dict[str, object] = {
@@ -145,6 +154,8 @@ class MonteCarloTrialRecord:
     def to_record(self) -> dict[str, object]:
         record = self.to_flat_record()
         record["failed_reconciliation_checks"] = _check_records(self.failed_reconciliation_checks)
+        if self.sampled_parameters:
+            record["sampled_parameters"] = dict(self.sampled_parameters)
         return record
 
 
@@ -156,9 +167,17 @@ class ScenarioMonteCarloSummary:
     std_net_annual_benefit_sar: float
     median_net_annual_benefit_sar: float
     p5_net_annual_benefit_sar: float
+    p25_net_annual_benefit_sar: float
+    p50_net_annual_benefit_sar: float
+    p75_net_annual_benefit_sar: float
     p95_net_annual_benefit_sar: float
     min_net_annual_benefit_sar: float
     max_net_annual_benefit_sar: float
+    p5_energy_gain_vs_baseline_kwh: float
+    p25_energy_gain_vs_baseline_kwh: float
+    p50_energy_gain_vs_baseline_kwh: float
+    p75_energy_gain_vs_baseline_kwh: float
+    p95_energy_gain_vs_baseline_kwh: float
     win_probability: float
 
     def to_record(self) -> dict[str, object]:
@@ -169,9 +188,17 @@ class ScenarioMonteCarloSummary:
             "std_net_annual_benefit_sar": self.std_net_annual_benefit_sar,
             "median_net_annual_benefit_sar": self.median_net_annual_benefit_sar,
             "p5_net_annual_benefit_sar": self.p5_net_annual_benefit_sar,
+            "p25_net_annual_benefit_sar": self.p25_net_annual_benefit_sar,
+            "p50_net_annual_benefit_sar": self.p50_net_annual_benefit_sar,
+            "p75_net_annual_benefit_sar": self.p75_net_annual_benefit_sar,
             "p95_net_annual_benefit_sar": self.p95_net_annual_benefit_sar,
             "min_net_annual_benefit_sar": self.min_net_annual_benefit_sar,
             "max_net_annual_benefit_sar": self.max_net_annual_benefit_sar,
+            "p5_energy_gain_vs_baseline_kwh": self.p5_energy_gain_vs_baseline_kwh,
+            "p25_energy_gain_vs_baseline_kwh": self.p25_energy_gain_vs_baseline_kwh,
+            "p50_energy_gain_vs_baseline_kwh": self.p50_energy_gain_vs_baseline_kwh,
+            "p75_energy_gain_vs_baseline_kwh": self.p75_energy_gain_vs_baseline_kwh,
+            "p95_energy_gain_vs_baseline_kwh": self.p95_energy_gain_vs_baseline_kwh,
             "win_probability": self.win_probability,
         }
 
@@ -190,7 +217,7 @@ class MonteCarloResult:
     central_t6_reconciled: bool
     central_t6_failed_reconciliation_checks: tuple[Mapping[str, object], ...]
     majority_trial_winner: str | None
-    uncertainty_mode: str
+    uncertainty_mode: UncertaintyMode
     output_artifacts: tuple[str, ...]
 
     def to_record(self) -> dict[str, object]:
@@ -198,8 +225,8 @@ class MonteCarloResult:
             "run_id": self.run_id,
             "base_seed": self.base_seed,
             "uncertainty_mode": self.uncertainty_mode,
-            "sampled_parameter_uncertainty": False,
-            "seed_only": True,
+            "sampled_parameter_uncertainty": self.uncertainty_mode == "parameters_and_seed",
+            "seed_only": self.uncertainty_mode == "stochastic_seed_only",
             "trial_count": self.trial_count,
             "reconciled_trial_count": self.reconciled_trial_count,
             "failed_trial_count": self.failed_trial_count,
@@ -234,11 +261,14 @@ class MonteCarloExperiment:
         base_seed: int | None = None,
         scenario_order: Sequence[str] | None = None,
         parameter_registry_path: Path | None = None,
+        uncertainty_mode: UncertaintyMode = DEFAULT_UNCERTAINTY_MODE,
         write_artifacts: bool = True,
         progress_callback: ProgressCallback | None = None,
     ) -> None:
         if trial_count < 2:
             raise ValueError("trial_count must be at least 2 to compute a spread")
+        if uncertainty_mode not in ("stochastic_seed_only", "parameters_and_seed"):
+            raise ValueError(f"unsupported uncertainty_mode: {uncertainty_mode}")
         self.config = config
         self.trial_count = trial_count
         self.base_seed = base_seed if base_seed is not None else config.soiling.random_seed
@@ -246,6 +276,7 @@ class MonteCarloExperiment:
         self.parameter_registry_path = (
             parameter_registry_path or config.calibration.parameter_registry_path
         )
+        self.uncertainty_mode = uncertainty_mode
         self.write_artifacts = write_artifacts
         # Trial-level progress reporting for callers such as the dashboard.
         # One unit = the central comparison or one seeded trial; observational only.
@@ -267,6 +298,9 @@ class MonteCarloExperiment:
         weather = _load_weather(self.config)
         clean_energy = PVWattsPowerModel().calculate_hourly(weather, self.config.pv_system)
         registry = ParameterRegistry.from_yaml(self.parameter_registry_path)
+        parameter_catalog: tuple[ParameterOverrideSpec, ...] = ()
+        if self.uncertainty_mode == "parameters_and_seed":
+            parameter_catalog, _ = build_parameter_catalog(registry)
         central_comparison = (
             CompareAllScenarios(
                 self.config,
@@ -300,6 +334,7 @@ class MonteCarloExperiment:
                     weather=weather,
                     clean_energy=clean_energy,
                     registry=registry,
+                    parameter_catalog=parameter_catalog,
                 )
             )
         self._report_progress(total_units, total_units, "Trials complete; summarizing")
@@ -333,7 +368,7 @@ class MonteCarloExperiment:
             central_t6_reconciled=central_reconciled,
             central_t6_failed_reconciliation_checks=central_failed_checks,
             majority_trial_winner=majority_trial_winner,
-            uncertainty_mode=UNCERTAINTY_MODE,
+            uncertainty_mode=self.uncertainty_mode,
             output_artifacts=(),
         )
 
@@ -353,9 +388,24 @@ class MonteCarloExperiment:
         weather: WeatherDataset,
         clean_energy: CleanEnergyProfile,
         registry: ParameterRegistry,
+        parameter_catalog: tuple[ParameterOverrideSpec, ...],
     ) -> MonteCarloTrialRecord:
-        trial_config = self.config.model_copy(
-            update={"soiling": self.config.soiling.model_copy(update={"random_seed": seed})}
+        trial_config = self.config
+        trial_registry = registry
+        sampled_parameters: dict[str, float] = {}
+        if self.uncertainty_mode == "parameters_and_seed":
+            parameter_rng = random.Random(f"{self.base_seed}-params-{trial_index}")
+            for spec in parameter_catalog:
+                value = _sample_parameter(parameter_rng, spec)
+                sampled_parameters[spec.name] = value
+                trial_config, trial_registry = _apply_parameter_override(
+                    config=trial_config,
+                    registry=trial_registry,
+                    spec=spec,
+                    value=value,
+                )
+        trial_config = trial_config.model_copy(
+            update={"soiling": trial_config.soiling.model_copy(update={"random_seed": seed})}
         )
         comparison = (
             CompareAllScenarios(
@@ -364,7 +414,7 @@ class MonteCarloExperiment:
                 clean_energy=clean_energy,
                 scenario_order=self.scenario_order,
                 parameter_registry_path=self.parameter_registry_path,
-                parameter_registry=registry,
+                parameter_registry=trial_registry,
                 write_artifacts=False,
             )
             .run()
@@ -389,6 +439,8 @@ class MonteCarloExperiment:
             comparison.reconciliation_report.passed and comparison.recommendation.calculation_valid
         )
         winner = comparison.recommendation.winner if reconciled else None
+        if reconciled and self.uncertainty_mode == "parameters_and_seed":
+            winner = _unique_net_benefit_winner(net_benefit)
         return MonteCarloTrialRecord(
             trial_index=trial_index,
             seed=seed,
@@ -398,7 +450,34 @@ class MonteCarloExperiment:
             annual_actual_energy_kwh=MappingProxyType(actual_energy),
             energy_gain_vs_baseline_kwh=MappingProxyType(energy_gain),
             failed_reconciliation_checks=_failed_reconciliation_checks(comparison),
+            sampled_parameters=MappingProxyType(sampled_parameters),
         )
+
+
+def _sample_parameter(rng: random.Random, spec: ParameterOverrideSpec) -> float:
+    if spec.low_value == spec.high_value:
+        return spec.central_value
+    return rng.triangular(spec.low_value, spec.high_value, spec.central_value)
+
+
+def _apply_parameter_override(
+    *,
+    config: SolarCleanConfig,
+    registry: ParameterRegistry,
+    spec: ParameterOverrideSpec,
+    value: float,
+) -> tuple[SolarCleanConfig, ParameterRegistry]:
+    if spec.kind == "config":
+        updated = apply_config_override(config, spec, value)
+        validated = SolarCleanConfig.model_validate(updated.model_dump(mode="python"))
+        return validated, registry
+    return config, apply_economics_override(registry, spec, value)
+
+
+def _unique_net_benefit_winner(net_benefit: Mapping[str, float]) -> str | None:
+    highest = max(net_benefit.values())
+    winners = [scenario_id for scenario_id, value in net_benefit.items() if value == highest]
+    return winners[0] if len(winners) == 1 else None
 
 
 def _as_float(value: object) -> float:
@@ -413,6 +492,7 @@ def _summarize_scenario(
     reconciled_trials: tuple[MonteCarloTrialRecord, ...],
 ) -> ScenarioMonteCarloSummary:
     values = [trial.net_annual_benefit_sar[scenario_id] for trial in reconciled_trials]
+    energy_gains = [trial.energy_gain_vs_baseline_kwh[scenario_id] for trial in reconciled_trials]
     if not values:
         return ScenarioMonteCarloSummary(
             scenario_id=scenario_id,
@@ -421,9 +501,17 @@ def _summarize_scenario(
             std_net_annual_benefit_sar=0.0,
             median_net_annual_benefit_sar=0.0,
             p5_net_annual_benefit_sar=0.0,
+            p25_net_annual_benefit_sar=0.0,
+            p50_net_annual_benefit_sar=0.0,
+            p75_net_annual_benefit_sar=0.0,
             p95_net_annual_benefit_sar=0.0,
             min_net_annual_benefit_sar=0.0,
             max_net_annual_benefit_sar=0.0,
+            p5_energy_gain_vs_baseline_kwh=0.0,
+            p25_energy_gain_vs_baseline_kwh=0.0,
+            p50_energy_gain_vs_baseline_kwh=0.0,
+            p75_energy_gain_vs_baseline_kwh=0.0,
+            p95_energy_gain_vs_baseline_kwh=0.0,
             win_probability=0.0,
         )
     wins = sum(1 for trial in reconciled_trials if trial.winner == scenario_id)
@@ -434,9 +522,17 @@ def _summarize_scenario(
         std_net_annual_benefit_sar=statistics.stdev(values) if len(values) > 1 else 0.0,
         median_net_annual_benefit_sar=statistics.median(values),
         p5_net_annual_benefit_sar=_percentile(values, 0.05),
+        p25_net_annual_benefit_sar=_percentile(values, 0.25),
+        p50_net_annual_benefit_sar=_percentile(values, 0.50),
+        p75_net_annual_benefit_sar=_percentile(values, 0.75),
         p95_net_annual_benefit_sar=_percentile(values, 0.95),
         min_net_annual_benefit_sar=min(values),
         max_net_annual_benefit_sar=max(values),
+        p5_energy_gain_vs_baseline_kwh=_percentile(energy_gains, 0.05),
+        p25_energy_gain_vs_baseline_kwh=_percentile(energy_gains, 0.25),
+        p50_energy_gain_vs_baseline_kwh=_percentile(energy_gains, 0.50),
+        p75_energy_gain_vs_baseline_kwh=_percentile(energy_gains, 0.75),
+        p95_energy_gain_vs_baseline_kwh=_percentile(energy_gains, 0.95),
         win_probability=wins / len(reconciled_trials),
     )
 
@@ -506,17 +602,29 @@ def _write_monte_carlo_package(
     )
     artifacts.append("monte_carlo_trials.csv")
 
+    if result.uncertainty_mode == "parameters_and_seed":
+        parameter_samples_frame = pd.DataFrame.from_records(
+            [_parameter_sample_record(trial) for trial in result.trials]
+        )
+        parameter_samples_frame.to_csv(
+            output_dir / "monte_carlo_parameter_samples.csv",
+            index=False,
+            float_format=config.output.csv_float_format,
+        )
+        artifacts.append("monte_carlo_parameter_samples.csv")
+
     write_json_report(output_dir / "monte_carlo_summary.json", result.to_record())
     artifacts.append("monte_carlo_summary.json")
 
-    plot_paths = write_monte_carlo_plots(output_dir=output_dir, trials_frame=trials_frame)
-    artifacts.extend(path.name for path in plot_paths)
+    if result.uncertainty_mode == "stochastic_seed_only":
+        plot_paths = write_monte_carlo_plots(output_dir=output_dir, trials_frame=trials_frame)
+        artifacts.extend(path.name for path in plot_paths)
 
     summary: dict[str, object] = {
         "command": "monte-carlo",
         "run_id": result.run_id,
         "uncertainty_mode": result.uncertainty_mode,
-        "sampled_parameter_uncertainty": False,
+        "sampled_parameter_uncertainty": result.uncertainty_mode == "parameters_and_seed",
         "trial_count": result.trial_count,
         "reconciled_trial_count": result.reconciled_trial_count,
         "failed_trial_count": result.failed_trial_count,
@@ -532,3 +640,14 @@ def _write_monte_carlo_package(
     writer.write_text_summary(output_dir, summary)
     artifacts.extend(["summary.json", "summary.txt"])
     return tuple(artifacts)
+
+
+def _parameter_sample_record(trial: MonteCarloTrialRecord) -> dict[str, object]:
+    record: dict[str, object] = {
+        "trial_index": trial.trial_index,
+        **trial.sampled_parameters,
+    }
+    for scenario_id in CANONICAL_SCENARIO_IDS:
+        record[f"{scenario_id}_net_annual_benefit_sar"] = trial.net_annual_benefit_sar[scenario_id]
+    record["winner"] = trial.winner
+    return record

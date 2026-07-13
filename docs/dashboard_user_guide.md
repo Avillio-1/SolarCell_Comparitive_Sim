@@ -71,16 +71,24 @@ Notes and known limits:
 
 ## Home page
 
-**Configuration.** Every run uses the **Default** configuration
-(`configs/default.yaml`): the Riyadh site with **live NASA POWER weather**
-(`weather.provider: nasa_power`) over the 2025 site-year, with the central-v2
-calibration set. Because the provider is live, the site coordinates genuinely
-drive the simulation — see "Map location picker" below. The first run for a
-given location fetches the weather from NASA POWER (internet required) and
-caches it under `data/cache/weather`; later runs reuse the cache. There is
-intentionally no config picker; "view / edit config" opens the Default in the
-editor, where it can be validated and saved. It is the only runtime YAML in
-`configs/`; deterministic test variants are created in Python.
+**Configuration and period.** The bundled **Default** configuration
+(`configs/default.yaml`) starts with the Riyadh site, **live NASA POWER weather**
+(`weather.provider: nasa_power`), the 2025 site-year, and the central-v2
+calibration set. The 2025 dates are the validated reference preset, not an
+engine restriction. The launch form's start and end fields can override them
+with any whole-day range for one run; the selected YAML remains unchanged and
+the resolved dates are recorded in that run's `config_resolved.yaml`.
+
+Partial-year and multi-year periods are useful for simulation experiments, but
+annual-labelled output fields then represent the configured period total. The
+comparison intentionally blocks an economic recommendation unless the period
+is exactly one Jan 1–Dec 31 site-year. Live NASA POWER runs also depend on the
+requested dates being available from the provider.
+
+Because the provider is live, the site coordinates genuinely drive the
+simulation — see "Map location picker" below. The first run for a given
+location and period fetches the weather from NASA POWER (internet required)
+and caches it under `data/cache/weather`; later runs reuse the cache.
 
 **Analyses.** The launch panel offers the same five analyses as the CLI:
 

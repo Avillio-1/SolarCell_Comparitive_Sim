@@ -28,6 +28,13 @@ pv_system:
   azimuth_degrees: 180
   inverter_efficiency: 0.96
   dc_ac_ratio: 1.15
+  # PVWatts-style non-soiling losses; soiling is separate and shading/snow are assumed zero.
+  loss_wiring_fraction: 0.02
+  loss_mismatch_fraction: 0.02
+  loss_connections_fraction: 0.005
+  loss_nameplate_fraction: 0.01
+  loss_lid_fraction: 0.015
+  loss_availability_fraction: 0.03
 farm:
   representation: cohort
   total_panels: 10000

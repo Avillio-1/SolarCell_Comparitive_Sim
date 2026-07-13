@@ -15,6 +15,8 @@ from solarclean.application.monte_carlo import (
     MonteCarloTrialRecord,
     _majority_winner,
 )
+from solarclean.domain.calibration.parameter_overrides import build_parameter_catalog
+from solarclean.domain.calibration.registry import ParameterRegistry
 
 
 def _fixture_config(output_dir: Path):
@@ -81,6 +83,26 @@ def test_monte_carlo_is_reproducible_for_a_fixed_base_seed(tmp_path: Path) -> No
     benefits_first = [trial.net_annual_benefit_sar for trial in first.result.trials]
     benefits_second = [trial.net_annual_benefit_sar for trial in second.result.trials]
     assert benefits_first == benefits_second
+
+
+def test_seed_only_default_matches_explicit_legacy_mode(tmp_path: Path) -> None:
+    config = _fixture_config(tmp_path)
+    implicit = MonteCarloExperiment(
+        config, trial_count=2, base_seed=17, write_artifacts=False
+    ).run()
+    explicit = MonteCarloExperiment(
+        config,
+        trial_count=2,
+        base_seed=17,
+        uncertainty_mode="stochastic_seed_only",
+        write_artifacts=False,
+    ).run()
+
+    assert [trial.seed for trial in implicit.result.trials] == [1120951905, 889418966]
+    assert [trial.to_record() for trial in implicit.result.trials] == [
+        trial.to_record() for trial in explicit.result.trials
+    ]
+    assert implicit.result.scenario_summaries == explicit.result.scenario_summaries
 
 
 def test_monte_carlo_different_base_seeds_can_produce_different_trial_seeds(
@@ -163,3 +185,83 @@ def test_monte_carlo_separates_central_t6_and_majority_trial_winners(tmp_path: P
         record = trial.to_record()
         assert "failed_reconciliation_check_names" in record
         assert "failed_reconciliation_checks" in record
+
+
+def test_parameter_and_seed_mode_is_deterministic_and_within_catalog_bounds(
+    tmp_path: Path,
+) -> None:
+    config = _fixture_config(tmp_path)
+    first = MonteCarloExperiment(
+        config,
+        trial_count=4,
+        base_seed=73,
+        uncertainty_mode="parameters_and_seed",
+        write_artifacts=False,
+    ).run()
+    second = MonteCarloExperiment(
+        config,
+        trial_count=4,
+        base_seed=73,
+        uncertainty_mode="parameters_and_seed",
+        write_artifacts=False,
+    ).run()
+    registry = ParameterRegistry.from_yaml(config.calibration.parameter_registry_path)
+    catalog, _ = build_parameter_catalog(registry)
+    specs = {spec.name: spec for spec in catalog}
+
+    assert [dict(trial.sampled_parameters) for trial in first.result.trials] == [
+        dict(trial.sampled_parameters) for trial in second.result.trials
+    ]
+    assert first.result.scenario_summaries == second.result.scenario_summaries
+    first_record = first.result.to_record()
+    second_record = second.result.to_record()
+    first_record.pop("run_id")
+    second_record.pop("run_id")
+    assert first_record == second_record
+    for trial in first.result.trials:
+        assert set(trial.sampled_parameters) == set(specs)
+        for name, value in trial.sampled_parameters.items():
+            spec = specs[name]
+            assert spec.low_value <= value <= spec.high_value
+
+
+def test_parameter_and_seed_mode_writes_samples_and_extended_summary(tmp_path: Path) -> None:
+    config = _fixture_config(tmp_path)
+    outcome = MonteCarloExperiment(
+        config,
+        trial_count=4,
+        base_seed=91,
+        uncertainty_mode="parameters_and_seed",
+    ).run()
+    result = outcome.result
+    registry = ParameterRegistry.from_yaml(config.calibration.parameter_registry_path)
+    catalog, _ = build_parameter_catalog(registry)
+    parameter_names = {spec.name for spec in catalog}
+
+    samples_path = result.output_directory / "monte_carlo_parameter_samples.csv"
+    assert samples_path.exists()
+    samples = pd.read_csv(samples_path)
+    assert len(samples) == 4
+    assert parameter_names <= set(samples.columns)
+    for scenario_id in CANONICAL_SCENARIO_IDS:
+        assert f"{scenario_id}_net_annual_benefit_sar" in samples.columns
+
+    summary = json.loads(
+        (result.output_directory / "monte_carlo_summary.json").read_text(encoding="utf-8")
+    )
+    assert summary["uncertainty_mode"] == "parameters_and_seed"
+    assert summary["sampled_parameter_uncertainty"] is True
+    for scenario_summary in summary["scenario_summaries"].values():
+        for percentile in (5, 25, 50, 75, 95):
+            assert f"p{percentile}_net_annual_benefit_sar" in scenario_summary
+            assert f"p{percentile}_energy_gain_vs_baseline_kwh" in scenario_summary
+        assert "win_probability" in scenario_summary
+
+    total_probability = sum(
+        scenario_summary["win_probability"]
+        for scenario_summary in summary["scenario_summaries"].values()
+    )
+    if result.reconciled_trial_count:
+        assert total_probability == pytest.approx(1.0)
+    else:
+        assert total_probability == 0.0

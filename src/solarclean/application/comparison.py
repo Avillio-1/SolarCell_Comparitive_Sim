@@ -12,7 +12,7 @@ from typing import Any, cast
 import pandas as pd
 
 from solarclean.config.models import SolarCleanConfig
-from solarclean.domain.calibration.registry import ParameterRegistry
+from solarclean.domain.calibration.registry import ParameterRegistry, build_validation_status
 from solarclean.domain.coating.strategy import CoatingStrategy
 from solarclean.domain.contamination.soiling import KimberStyleSoilingModel
 from solarclean.domain.economics import (
@@ -174,6 +174,7 @@ class ComparisonResult:
     energy_gain_vs_baseline: Mapping[str, Mapping[str, object]]
     ranking: tuple[ScenarioRankingEntry, ...]
     recommendation: Recommendation
+    validation_status: Mapping[str, object]
     warnings: tuple[Mapping[str, object], ...]
     assumptions: tuple[Mapping[str, object], ...]
     traceability: Mapping[str, object]
@@ -194,6 +195,7 @@ class ComparisonResult:
             "recommendation_tier": self.recommendation.recommendation_tier,
             "decision_grade": self.recommendation.decision_grade,
             "tied_winners": list(self.recommendation.tied_winners),
+            "validation_status": _json_safe_mapping(self.validation_status),
             "output_artifacts": list(self.output_artifacts),
         }
 
@@ -230,6 +232,7 @@ class ComparisonResult:
             },
             "ranking": [entry.to_record() for entry in self.ranking],
             "recommendation": self.recommendation.to_record(),
+            "validation_status": _json_safe_mapping(self.validation_status),
             "warnings": [_json_safe_mapping(warning) for warning in self.warnings],
             "assumptions": [_json_safe_mapping(assumption) for assumption in self.assumptions],
             "traceability": _json_safe_mapping(self.traceability),
@@ -353,6 +356,7 @@ class CompareAllScenarios:
             registry_path=self.parameter_registry_path,
             registry=registry,
         )
+        validation_status = build_validation_status(registry)
 
         writer = OutputWriter(self.config)
         if self.write_artifacts:
@@ -473,6 +477,7 @@ class CompareAllScenarios:
                 cost_reconciliation_checks=cost_reconciliation_checks,
                 ranking=ranking,
                 recommendation=recommendation,
+                validation_status=validation_status,
                 reconciliation_report=reconciliation_report,
                 traceability=traceability,
             )
@@ -492,6 +497,7 @@ class CompareAllScenarios:
             energy_gain_vs_baseline=MappingProxyType(dict(energy_gain)),
             ranking=ranking,
             recommendation=recommendation,
+            validation_status=MappingProxyType(validation_status),
             warnings=warnings,
             assumptions=assumptions,
             traceability=traceability,
@@ -1600,6 +1606,11 @@ def _build_recommendation(
         registry=registry,
         weather=weather,
     )
+    caveat = (
+        " This recommendation rests on provisional calibration parameters; see validation_status."
+        if any(parameter.status != "validated" for parameter in registry.parameters)
+        else ""
+    )
     if not reconciliation_report.passed or not ranking:
         return Recommendation(
             valid=False,
@@ -1615,7 +1626,9 @@ def _build_recommendation(
             assumptions=assumptions,
             warnings=warnings,
             traceability=traceability,
-            message="No recommendation produced because calculation reconciliation failed.",
+            message=(
+                "No recommendation produced because calculation reconciliation failed." + caveat
+            ),
         )
     top_value = ranking[0].net_annual_benefit_sar
     tied_winners = tuple(
@@ -1648,6 +1661,7 @@ def _build_recommendation(
         message = "Top scenarios are tied within the configured ranking tolerance."
     else:
         message = f"{tier.replace('_', ' ').title()} winner under current assumptions: {winner}."
+    message += caveat
     return Recommendation(
         valid=tier != "exploratory",
         calculation_valid=True,
@@ -1927,6 +1941,7 @@ def _write_comparison_package(
     cost_reconciliation_checks: Mapping[str, tuple[CostReconciliationCheck, ...]],
     ranking: tuple[ScenarioRankingEntry, ...],
     recommendation: Recommendation,
+    validation_status: Mapping[str, object],
     reconciliation_report: ReconciliationReport,
     traceability: Mapping[str, object],
 ) -> tuple[str, ...]:
@@ -1994,7 +2009,9 @@ def _write_comparison_package(
         },
     )
     artifacts.append("scenario_ranking.json")
-    write_json_report(output_dir / "recommendation.json", recommendation.to_record())
+    recommendation_record = recommendation.to_record()
+    recommendation_record["validation_status"] = _json_safe_mapping(validation_status)
+    write_json_report(output_dir / "recommendation.json", recommendation_record)
     artifacts.append("recommendation.json")
     write_json_report(output_dir / "reconciliation_report.json", reconciliation_report.to_record())
     artifacts.append("reconciliation_report.json")

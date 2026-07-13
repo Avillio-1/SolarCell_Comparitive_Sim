@@ -64,6 +64,7 @@ def test_authoritative_parameter_registry_is_complete_and_queryable() -> None:
             "inferred",
             "quoted",
             "assumed",
+            "literature",
         }
         assert parameter.confidence in {"high", "medium", "low"}
         assert parameter.status in {"validated", "provisional", "blocked", "unsourced"}

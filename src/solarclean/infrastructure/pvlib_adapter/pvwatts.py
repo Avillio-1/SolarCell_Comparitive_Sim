@@ -66,7 +66,11 @@ class PVWattsPowerModel:
             pdc0=system_config.total_dc_capacity_w,
             gamma_pdc=system_config.gamma_pdc_per_c,
         )
-        dc_power = pd.Series(dc_power, index=index).clip(lower=0.0).fillna(0.0)
+        dc_power = (
+            (pd.Series(dc_power, index=index) * system_config.combined_system_loss_multiplier)
+            .clip(lower=0.0)
+            .fillna(0.0)
+        )
         inverter_pdc0 = system_config.total_dc_capacity_w / system_config.dc_ac_ratio
         ac_power = pvlib.inverter.pvwatts(
             pdc=dc_power,
@@ -110,6 +114,13 @@ class PVWattsPowerModel:
             "dc_ac_ratio": system_config.dc_ac_ratio,
             "gamma_pdc_per_c": system_config.gamma_pdc_per_c,
             "module_temperature_model": system_config.module_temperature_model,
+            "loss_wiring_fraction": system_config.loss_wiring_fraction,
+            "loss_mismatch_fraction": system_config.loss_mismatch_fraction,
+            "loss_connections_fraction": system_config.loss_connections_fraction,
+            "loss_nameplate_fraction": system_config.loss_nameplate_fraction,
+            "loss_lid_fraction": system_config.loss_lid_fraction,
+            "loss_availability_fraction": system_config.loss_availability_fraction,
+            "combined_system_loss_multiplier": system_config.combined_system_loss_multiplier,
             "weather_metadata": weather.metadata,
         }
         return CleanEnergyProfile(

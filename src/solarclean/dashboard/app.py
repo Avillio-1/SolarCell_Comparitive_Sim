@@ -23,14 +23,17 @@ import tempfile
 import time
 import zipfile
 from collections.abc import Awaitable, Callable
+from datetime import date, datetime
+from datetime import time as datetime_time
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import yaml
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 from solarclean.application.comparison import CompareAllScenarios
 from solarclean.application.monte_carlo import MonteCarloExperiment
@@ -40,6 +43,7 @@ from solarclean.application.sensitivity import (
     TwoWaySensitivityExperiment,
 )
 from solarclean.config.loader import load_config
+from solarclean.config.models import SolarCleanConfig
 from solarclean.dashboard import artifacts
 from solarclean.dashboard.jobs import JOB_KINDS, ActiveJobError, Job, JobRegistry
 from solarclean.domain.calibration.parameter_overrides import build_parameter_catalog
@@ -163,6 +167,22 @@ def _config_path(name: str) -> Path:
 def _config_names() -> list[str]:
     """Names of the YAML configurations available for new dashboard runs."""
     return sorted(path.name for path in _CONFIGS_DIR.glob("*.yaml"))
+
+
+def _config_periods(config_names: list[str]) -> dict[str, dict[str, str]]:
+    """Date defaults used to populate the launch form for each valid config."""
+    periods: dict[str, dict[str, str]] = {}
+    for name in config_names:
+        try:
+            simulation = load_config(_config_path(name)).simulation
+        except Exception:
+            continue
+        periods[name] = {
+            "start_date": simulation.start.date().isoformat(),
+            "end_date": simulation.end.date().isoformat(),
+            "timezone": simulation.target_timezone,
+        }
+    return periods
 
 
 def _run_dir_or_404(run_id: str) -> Path:
@@ -643,6 +663,7 @@ def _provenance(run_dir: Path) -> dict[str, object] | None:
 
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
+    config_names = _config_names()
     runs = []
     for run in artifacts.list_runs(_OUTPUTS_DIR):
         site = _resolved_config_section(run.path, "site").get("name")
@@ -663,7 +684,8 @@ def index(request: Request) -> HTMLResponse:
         {
             "default_config_name": DEFAULT_CONFIG_NAME,
             "default_config_label": DEFAULT_CONFIG_LABEL,
-            "configs": _config_names(),
+            "configs": config_names,
+            "config_periods": _config_periods(config_names),
             "runs": runs,
             "jobs": visible_jobs,
             "parameters": _parameter_catalog(),
@@ -689,10 +711,16 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
 
     if kind == "compare-all-scenarios":
         recommendation = artifacts.load_json(run_dir / "recommendation.json")
+        raw_validation_status = (
+            recommendation.get("validation_status") if recommendation is not None else None
+        )
         context.update(
             {
                 "ranking": artifacts.load_json(run_dir / "scenario_ranking.json"),
                 "recommendation": recommendation,
+                "validation_status": (
+                    raw_validation_status if isinstance(raw_validation_status, dict) else None
+                ),
                 "reconciliation": artifacts.load_json(run_dir / "reconciliation_report.json"),
                 "headline": _headline_cards(recommendation),
                 "daily_energy": artifacts.daily_energy_series(run_dir),
@@ -793,6 +821,8 @@ def config_parameters(name: str) -> JSONResponse:
 class LaunchRequest(BaseModel):
     kind: str
     config: str = "default.yaml"
+    start_date: date | None = None
+    end_date: date | None = None
     trials: int = 25
     base_seed: int | None = None
     steps: int = 5
@@ -803,6 +833,32 @@ class LaunchRequest(BaseModel):
     parameter: str | None = None
     scenario_a: str = "coating"
     scenario_b: str = "baseline"
+
+    @model_validator(mode="after")
+    def validate_period_override(self) -> LaunchRequest:
+        if (self.start_date is None) != (self.end_date is None):
+            raise ValueError("start_date and end_date must be supplied together")
+        if (
+            self.start_date is not None
+            and self.end_date is not None
+            and self.end_date < self.start_date
+        ):
+            raise ValueError("end_date must be on or after start_date")
+        return self
+
+
+def _load_run_config(config_path: Path, options: LaunchRequest) -> SolarCleanConfig:
+    """Load a config with an optional whole-local-day launch override."""
+    config = load_config(config_path)
+    if options.start_date is None or options.end_date is None:
+        return config
+    timezone = ZoneInfo(config.simulation.target_timezone)
+    start = datetime.combine(options.start_date, datetime_time.min, tzinfo=timezone)
+    end = datetime.combine(options.end_date, datetime_time(hour=23), tzinfo=timezone)
+    return load_config(
+        config_path,
+        overrides={"simulation": {"start": start, "end": end}},
+    )
 
 
 def _headline_cards(recommendation: dict[str, object] | None) -> list[dict[str, str]] | None:
@@ -857,7 +913,7 @@ def _make_work(options: LaunchRequest, config_path: Path) -> Callable[[Job], Pat
     """Build the background work function for a launch or re-run request."""
 
     def work(job: Job) -> Path:
-        config = load_config(config_path)
+        config = _load_run_config(config_path, options)
         parameter_registry_path = _registry_path(config_path)
         if options.kind == "compare":
             job.detail = "Running baseline, reactive, and coating against one event tape"

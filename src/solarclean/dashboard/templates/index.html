@@ -5,9 +5,9 @@
 <section class="dashboard-hero">
   <div>
     <span class="eyebrow">Simulation workspace</span>
-    <h1>Compare solar-cleaning strategies with confidence</h1>
-    <p>Configure an analysis, run every scenario against shared conditions, and review traceable
-       energy, cost, and uncertainty results.</p>
+    <h1>Three cleaning strategies, one shared year of weather</h1>
+    <p>Run baseline, reactive cleaning, and coating against identical conditions, then trace
+       every energy, cost, and uncertainty figure back to the file it came from.</p>
   </div>
   <div class="hero-facts" aria-label="Project facts">
     <span><strong>10,000</strong> panels</span>
@@ -43,12 +43,22 @@
         <span class="field-copy"><strong>Configuration</strong><small>Site, weather, assumptions, and costs</small></span>
         <select id="config" name="config">
           {% for config_name in configs %}
-          <option value="{{ config_name }}"{% if config_name == default_config_name %} selected{% endif %}>{{ config_name }}</option>
+          {% set period = config_periods.get(config_name) %}
+          <option value="{{ config_name }}"{% if config_name == default_config_name %} selected{% endif %}
+                  data-start="{{ period.start_date if period else '' }}"
+                  data-end="{{ period.end_date if period else '' }}"
+                  data-timezone="{{ period.timezone if period else '' }}">{{ config_name }}</option>
           {% endfor %}
         </select>
       </label>
     </div>
     <div id="analysis-summary" class="analysis-summary" aria-live="polite"></div>
+
+    <div class="field-row advanced-options" id="simulation-period">
+      <label><span>Start date</span><input id="start-date" type="date" required></label>
+      <label><span>End date</span><input id="end-date" type="date" required></label>
+      <span class="hint" id="period-note">Whole days in the configured site timezone.</span>
+    </div>
 
     <details class="analysis-help">
       <summary>Advanced analysis guide</summary>
@@ -123,11 +133,20 @@
       <span id="launch-error" class="error-text" role="alert"></span>
     </div>
   </form>
-  <p class="hint">Choose the configuration for this run, then view it before starting if needed.
-     The default configuration can be edited here; other listed configurations are read-only.
-     NASA POWER weather is fetched for the configured site — the first run per location needs
-     internet, after which the weather is cached. One run executes at a time. Parameter ranges
-     come from the selected configuration's calibration registry (hover an option to see them).</p>
+  <details class="run-notes">
+    <summary>Notes on dates, weather, and configurations</summary>
+    <ul>
+      <li>Start and end dates apply to this run only — the saved YAML is never edited.
+          Non-calendar-year periods are useful for experiments, but the comparison deliberately
+          withholds an economic recommendation unless the run covers Jan 1–Dec 31.</li>
+      <li>NASA POWER weather is fetched for the configured site on first use, then cached —
+          only the first run per location needs internet.</li>
+      <li>The default configuration is editable here; the other listed configurations are
+          read-only.</li>
+      <li>Parameter ranges come from the selected configuration's calibration registry — hover
+          an option to see its range.</li>
+    </ul>
+  </details>
 </section>
 
 <section class="panel" id="jobs-panel" {% if not jobs %}hidden{% endif %}>
@@ -197,7 +216,17 @@
   <p class="hint">Deleting a run permanently removes its directory under <code>outputs/</code> —
      download the .zip first if you need the exports.</p>
   {% else %}
-  <p class="empty">No runs yet. Choose a configuration above to start one.</p>
+  <div class="first-run">
+    <p class="first-run-lead">No runs yet. Your first comparison simulates three strategies
+       against the same weather and the same events:</p>
+    <div class="first-run-scenarios">
+      <div><strong>baseline</strong><span>no mitigation — only rain cleans the panels</span></div>
+      <div><strong>reactive</strong><span>drone inspections trigger crew cleaning once losses
+        cross the threshold</span></div>
+      <div><strong>coating</strong><span>an anti-soiling coating slows dust accumulation</span></div>
+    </div>
+    <p class="hint">Pick a configuration above and press “Start analysis”.</p>
+  </div>
   {% endif %}
 </section>
 

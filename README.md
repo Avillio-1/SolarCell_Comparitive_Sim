@@ -195,7 +195,7 @@ python -m pytest tests/integration/test_nasa_power_live.py -q
 
 - Soiling rates, rainfall thresholds, dust-event distributions, bird-dropping rates, and loss mapping are provisional assumptions awaiting site calibration.
 - Low, medium, and high Riyadh soiling presets are clearly labelled provisional and must not be treated as validated Saudi measurements.
-- The PV model uses an initial pvlib PVWatts path with configurable fixed tilt, azimuth, inverter efficiency, DC/AC ratio, and temperature coefficient.
+- The PV model uses an initial pvlib PVWatts path with configurable fixed tilt, azimuth, inverter efficiency, DC/AC ratio, temperature coefficient, and a multiplicative non-soiling loss chain.
 - The bird-dropping model is sparse, stochastic, and cohort-level only. It is not a detailed bypass-diode or per-cell electrical model.
 - The offline fixture is deterministic test data.
 - Real NASA POWER retrieval depends on network access and API availability.

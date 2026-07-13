@@ -18,7 +18,7 @@ import json
 import threading
 import time
 import zipfile
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -75,11 +75,51 @@ def test_index_offers_available_configurations(client: TestClient) -> None:
     assert 'value="dammam_humid_desert.yaml"' in response.text
     assert 'value="riyadh_dry_desert.yaml"' in response.text
     assert "Configuration" in response.text
+    assert 'id="start-date"' in response.text
+    assert 'id="end-date"' in response.text
+    assert 'data-start="2025-01-01"' in response.text
 
 
 def test_launch_rejects_unknown_kind(client: TestClient) -> None:
     response = client.post("/api/runs", json={"kind": "warp-drive"})
     assert response.status_code == 400
+
+
+def test_launch_period_override_uses_whole_days_in_config_timezone(tmp_path: Path) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        yaml.safe_dump(fixture_config().model_dump(mode="json"), sort_keys=False),
+        encoding="utf-8",
+    )
+    options = dashboard_app.LaunchRequest(
+        kind="compare",
+        start_date=date(2024, 2, 1),
+        end_date=date(2024, 2, 29),
+    )
+
+    resolved = dashboard_app._load_run_config(config_path, options)
+
+    assert resolved.simulation.start.isoformat() == "2024-02-01T00:00:00+03:00"
+    assert resolved.simulation.end.isoformat() == "2024-02-29T23:00:00+03:00"
+    assert resolved.simulation.target_timezone == "Asia/Riyadh"
+
+
+def test_launch_period_override_requires_two_ordered_dates(client: TestClient) -> None:
+    missing_end = client.post(
+        "/api/runs",
+        json={"kind": "compare", "start_date": "2024-01-01"},
+    )
+    reversed_period = client.post(
+        "/api/runs",
+        json={
+            "kind": "compare",
+            "start_date": "2024-02-01",
+            "end_date": "2024-01-01",
+        },
+    )
+
+    assert missing_end.status_code == 422
+    assert reversed_period.status_code == 422
 
 
 def test_launch_runs_selected_config_and_reports_progress(
@@ -367,9 +407,17 @@ def test_charts_replace_static_plot_grid(client: TestClient, comparison_run: Pat
     page = client.get(f"/run/{comparison_run.name}").text
     # Interactive charts fed from stored CSV columns ...
     assert "daily-energy-chart" in page
+    assert 'id="energy-explorer"' in page
+    assert 'data-energy-scenario="baseline"' in page
+    assert 'data-energy-scenario="compare"' in page
     assert "daily-ghi-chart" in page
     assert "daily-temperature-chart" in page
     assert "daily-rainfall-chart" in page
+    assert "daily-events-chart" in page
+    assert 'class="selected-day-panel"' in page
+    assert 'id="selected-day-date"' in page
+    assert 'id="follow-hover-button"' in page
+    assert "environmental values are context, not independent causal attribution" in page
     assert "daily-loss-chart" in page
     assert "daily-soiling-chart" in page
     assert "Daily contamination cleanliness by scenario" in page
@@ -400,7 +448,10 @@ def test_charts_replace_static_plot_grid(client: TestClient, comparison_run: Pat
     assert "dailyWeather:" in page
     assert "dailyEventMarkers:" in page
     dashboard_js = Path(dashboard_app.__file__).parent / "static" / "dashboard.js"
-    assert "Why this day was low or high:" in dashboard_js.read_text(encoding="utf-8")
+    dashboard_script = dashboard_js.read_text(encoding="utf-8")
+    assert "drawEnergyExplorer" in dashboard_script
+    assert "applyExplorerScenario" in dashboard_script
+    assert "Resume hover" in dashboard_script
     assert "annual-cost-chart" in page
     # ... and no inline <img> plot grid on the comparison page. PNGs stay
     # downloadable from the artifact list.
@@ -983,6 +1034,54 @@ def test_comparison_page_shows_headline_cards(client: TestClient, comparison_run
         assert "734,918" in page  # stored value, formatted for reading
     finally:
         _delete_run(client, run_dir)
+
+
+def test_comparison_page_validation_banner_is_optional_for_old_runs(
+    client: TestClient,
+) -> None:
+    current = Path("outputs") / "test-dashboard-compare-all-scenarios-validation-current"
+    old = Path("outputs") / "test-dashboard-compare-all-scenarios-validation-old"
+    current.mkdir(parents=True, exist_ok=True)
+    old.mkdir(parents=True, exist_ok=True)
+    validation_status = {
+        "absolute_outputs_field_validated": False,
+        "parameter_counts_by_status": {"provisional": 2, "validated": 1},
+        "parameter_counts_by_evidence_type": {"assumed": 1, "quoted": 2},
+        "lowest_confidence": "low",
+        "key_uncertain_parameters": [
+            {
+                "name": "economics.test_cost",
+                "central_value": 10.0,
+                "low_value": 2.0,
+                "high_value": 30.0,
+                "confidence": "low",
+                "status": "provisional",
+            }
+        ],
+        "disclaimer": (
+            "Internally verified simulation calibrated to literature and provisional "
+            "assumptions; absolute energy, cost, and ROI outputs have not been validated "
+            "against measured production data from an operating site."
+        ),
+    }
+    (current / "recommendation.json").write_text(
+        json.dumps({"validation_status": validation_status}), encoding="utf-8"
+    )
+    (old / "recommendation.json").write_text(json.dumps({"valid": False}), encoding="utf-8")
+    try:
+        current_page = client.get(f"/run/{current.name}")
+        assert current_page.status_code == 200
+        assert "Internally verified simulation calibrated" in current_page.text
+        assert 'class="warn-note validation-banner"' in current_page.text
+        assert "economics.test_cost" in current_page.text
+
+        old_page = client.get(f"/run/{old.name}")
+        assert old_page.status_code == 200
+        assert 'class="warn-note validation-banner"' not in old_page.text
+        assert "Internally verified simulation calibrated" not in old_page.text
+    finally:
+        _delete_run(client, current)
+        _delete_run(client, old)
 
 
 def test_kpi_glossary_is_plain_english(client: TestClient, comparison_run: Path) -> None:

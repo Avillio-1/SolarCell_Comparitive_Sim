@@ -11,6 +11,12 @@ import yaml
 
 from solarclean.config.models import RainfallCleaningConfig, SoilingConfig
 
+VALIDATION_DISCLAIMER = (
+    "Internally verified simulation calibrated to literature and provisional assumptions; "
+    "absolute energy, cost, and ROI outputs have not been validated against measured "
+    "production data from an operating site."
+)
+
 
 @dataclass(frozen=True)
 class CalibrationParameter:
@@ -76,7 +82,14 @@ class CalibrationParameter:
         return parameter
 
     def validate(self) -> None:
-        if self.evidence_type not in {"measured", "calculated", "inferred", "quoted", "assumed"}:
+        if self.evidence_type not in {
+            "measured",
+            "calculated",
+            "inferred",
+            "quoted",
+            "assumed",
+            "literature",
+        }:
             raise ValueError(f"invalid evidence_type for {self.name}: {self.evidence_type}")
         if self.confidence not in {"high", "medium", "low"}:
             raise ValueError(f"invalid confidence for {self.name}: {self.confidence}")
@@ -157,6 +170,55 @@ class ParameterRegistry:
             updated if parameter.name == name else parameter for parameter in self.parameters
         )
         return type(self)(metadata=self.metadata, parameters=parameters)
+
+
+def build_validation_status(registry: ParameterRegistry) -> dict[str, object]:
+    """Summarize the evidence quality of every parameter in a registry."""
+
+    status_counts: dict[str, int] = {}
+    evidence_counts: dict[str, int] = {}
+    confidence_rank = {"high": 2, "medium": 1, "low": 0}
+    lowest_confidence: str | None = None
+    uncertain_parameters: list[tuple[float, CalibrationParameter]] = []
+
+    for parameter in registry.parameters:
+        status_counts[parameter.status] = status_counts.get(parameter.status, 0) + 1
+        evidence_counts[parameter.evidence_type] = (
+            evidence_counts.get(parameter.evidence_type, 0) + 1
+        )
+        if (
+            lowest_confidence is None
+            or confidence_rank[parameter.confidence] < confidence_rank[lowest_confidence]
+        ):
+            lowest_confidence = parameter.confidence
+        if parameter.central_value != 0:
+            relative_range = (parameter.high_value - parameter.low_value) / abs(
+                parameter.central_value
+            )
+            uncertain_parameters.append((relative_range, parameter))
+
+    uncertain_parameters.sort(key=lambda item: (-item[0], item[1].name))
+    key_uncertain_parameters = [
+        {
+            "name": parameter.name,
+            "central_value": parameter.central_value,
+            "low_value": parameter.low_value,
+            "high_value": parameter.high_value,
+            "confidence": parameter.confidence,
+            "status": parameter.status,
+        }
+        for _, parameter in uncertain_parameters[:5]
+    ]
+    return {
+        # This must remain false until the validate-field harness is run against measured
+        # production from an operating site and establishes an accepted validation result.
+        "absolute_outputs_field_validated": False,
+        "parameter_counts_by_status": status_counts,
+        "parameter_counts_by_evidence_type": evidence_counts,
+        "lowest_confidence": lowest_confidence,
+        "key_uncertain_parameters": key_uncertain_parameters,
+        "disclaimer": VALIDATION_DISCLAIMER,
+    }
 
 
 @dataclass(frozen=True)

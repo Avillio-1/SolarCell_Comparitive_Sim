@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -25,6 +26,18 @@ from solarclean.infrastructure.weather.fixture import FixtureWeatherProvider
 
 def _fixture_config(output_dir: Path):
     return fixture_config(overrides={"output": {"base_directory": output_dir}})
+
+
+def _assert_validation_status_outputs(
+    summary: dict[str, Any], recommendation: dict[str, Any]
+) -> None:
+    assert recommendation["valid"] is False
+    assert recommendation["validation_status"]["absolute_outputs_field_validated"] is False
+    assert recommendation["validation_status"]["key_uncertain_parameters"]
+    assert "provisional calibration parameters" in recommendation["message"]
+    assert summary["command"] == "compare-all-scenarios"
+    assert summary["reconciled"] is False
+    assert summary["validation_status"] == recommendation["validation_status"]
 
 
 def test_partial_period_comparison_writes_package_but_blocks_ranking(tmp_path: Path) -> None:
@@ -57,6 +70,7 @@ def test_partial_period_comparison_writes_package_but_blocks_ranking(tmp_path: P
     recommendation = json.loads(
         (result.output_directory / "recommendation.json").read_text(encoding="utf-8")
     )
+    summary = json.loads((result.output_directory / "summary.json").read_text(encoding="utf-8"))
     reconciliation = json.loads(
         (result.output_directory / "reconciliation_report.json").read_text(encoding="utf-8")
     )
@@ -77,6 +91,7 @@ def test_partial_period_comparison_writes_package_but_blocks_ranking(tmp_path: P
     assert recommendation["valid"] is False
     assert recommendation["recommendation_tier"] == "exploratory"
     assert recommendation["decision_grade"] is False
+    _assert_validation_status_outputs(summary, recommendation)
     assert reconciliation["passed"] is False
     assert annual["weather_checksum"].nunique() == 1
     assert annual["event_tape_checksum"].nunique() == 1

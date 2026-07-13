@@ -1,10 +1,10 @@
 {
   "fixture_name": "offline_fixture_2025_01_01_to_2025_01_21_phase_3_5",
   "description": "Deterministic multi-week Phase 3.5 golden regression using the shared persistent-state cohort variation model and FixtureWeatherProvider. Test-only synthetic weather, not representative Riyadh data.",
-  "annual_clean_energy_kwh": 298643.00218400103,
-  "annual_actual_energy_kwh": 282365.28561875335,
-  "soiling_loss_percent": 5.450560182628554,
-  "specific_yield_kwh_per_kwp": 74.66075054600026,
-  "capacity_factor_percent": 14.813640981349257,
+  "annual_clean_energy_kwh": 269706.0613254644,
+  "annual_actual_energy_kwh": 255005.36617116712,
+  "soiling_loss_percent": 5.450635807757172,
+  "specific_yield_kwh_per_kwp": 67.4265153313661,
+  "capacity_factor_percent": 13.378276851461527,
   "event_tape_checksum": "26d6bc02c97e4b2bfa99c98026ba63415e20d484f78a827e0aad8c8df38102d6"
 }

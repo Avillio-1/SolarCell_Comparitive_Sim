@@ -876,3 +876,99 @@ parameters:
     rationale: "Provides a common horizon for coating, equipment, and O&M sensitivity."
     limitations: "T3 should split PV plant life, drone life, battery life, and coating life when implemented."
     responsible_module_or_owner: T3 coating/economics
+  - name: pv_system.loss_wiring_fraction
+    configuration_path: pv_system.loss_wiring_fraction
+    category: pv_system
+    central_value: 0.02
+    low_value: 0.01
+    high_value: 0.03
+    unit: fraction
+    source: "NREL PVWatts Version 5 Manual (Dobos 2014), https://www.nrel.gov/docs/fy14osti/62641.pdf"
+    evidence_type: literature
+    source_geography_and_climate: "Generic PV balance-of-system evidence; not specific to Riyadh or hot-arid operation."
+    applicability_to_saudi_conditions: "Applicable as a provisional wiring-loss assumption pending site electrical design and measurements."
+    confidence: medium
+    status: provisional
+    rationale: "Represents resistive losses in DC wiring separately from the existing soiling model."
+    limitations: "Requires site cable lengths and conductor sizing; soiling, shading, and snow are intentionally excluded."
+    responsible_module_or_owner: T1/core baseline
+  - name: pv_system.loss_mismatch_fraction
+    configuration_path: pv_system.loss_mismatch_fraction
+    category: pv_system
+    central_value: 0.02
+    low_value: 0.01
+    high_value: 0.03
+    unit: fraction
+    source: "NREL PVWatts Version 5 Manual (Dobos 2014), https://www.nrel.gov/docs/fy14osti/62641.pdf"
+    evidence_type: literature
+    source_geography_and_climate: "Generic PV module and string mismatch evidence; not specific to Riyadh or hot-arid operation."
+    applicability_to_saudi_conditions: "Applicable provisionally to a Saudi utility array pending module binning and string-level performance data."
+    confidence: medium
+    status: provisional
+    rationale: "Represents electrical mismatch among modules and strings without duplicating contamination losses."
+    limitations: "Requires as-built module and string characterization; soiling, shading, and snow are intentionally excluded."
+    responsible_module_or_owner: T1/core baseline
+  - name: pv_system.loss_connections_fraction
+    configuration_path: pv_system.loss_connections_fraction
+    category: pv_system
+    central_value: 0.005
+    low_value: 0.003
+    high_value: 0.01
+    unit: fraction
+    source: "NREL PVWatts Version 5 Manual (Dobos 2014), https://www.nrel.gov/docs/fy14osti/62641.pdf"
+    evidence_type: literature
+    source_geography_and_climate: "Generic PV connector and termination evidence; not specific to Riyadh or hot-arid operation."
+    applicability_to_saudi_conditions: "Applicable provisionally, with Saudi heat and dust making installation quality and inspection relevant."
+    confidence: medium
+    status: provisional
+    rationale: "Represents losses at connectors and electrical terminations in the DC system."
+    limitations: "Requires commissioning measurements and maintenance history; soiling, shading, and snow are intentionally excluded."
+    responsible_module_or_owner: T1/core baseline
+  - name: pv_system.loss_nameplate_fraction
+    configuration_path: pv_system.loss_nameplate_fraction
+    category: pv_system
+    central_value: 0.01
+    low_value: 0.0
+    high_value: 0.02
+    unit: fraction
+    source: "NREL PVWatts Version 5 Manual (Dobos 2014), https://www.nrel.gov/docs/fy14osti/62641.pdf"
+    evidence_type: literature
+    source_geography_and_climate: "Generic PV module nameplate-rating evidence; not climate-specific."
+    applicability_to_saudi_conditions: "Applicable provisionally until procured-module flash-test distributions are available."
+    confidence: medium
+    status: provisional
+    rationale: "Represents the aggregate difference between installed module output and nominal nameplate capacity."
+    limitations: "Requires procurement and flash-test records; soiling, shading, and snow are intentionally excluded."
+    responsible_module_or_owner: T1/core baseline
+  - name: pv_system.loss_lid_fraction
+    configuration_path: pv_system.loss_lid_fraction
+    category: pv_system
+    central_value: 0.015
+    low_value: 0.005
+    high_value: 0.03
+    unit: fraction
+    source: "NREL PVWatts Version 5 Manual (Dobos 2014), https://www.nrel.gov/docs/fy14osti/62641.pdf"
+    evidence_type: literature
+    source_geography_and_climate: "Generic crystalline-silicon light-induced degradation evidence; not specific to Riyadh."
+    applicability_to_saudi_conditions: "Applicable provisionally, subject to the selected module technology and supplier guarantees."
+    confidence: medium
+    status: provisional
+    rationale: "Represents initial light-induced module degradation as a distinct non-soiling loss."
+    limitations: "Module technology and stabilization history can change this loss; soiling, shading, and snow are intentionally excluded."
+    responsible_module_or_owner: T1/core baseline
+  - name: pv_system.loss_availability_fraction
+    configuration_path: pv_system.loss_availability_fraction
+    category: pv_system
+    central_value: 0.03
+    low_value: 0.01
+    high_value: 0.06
+    unit: fraction
+    source: "NREL PVWatts Version 5 Manual (Dobos 2014), https://www.nrel.gov/docs/fy14osti/62641.pdf"
+    evidence_type: literature
+    source_geography_and_climate: "Generic utility PV availability evidence; not specific to Saudi operating conditions."
+    applicability_to_saudi_conditions: "Applicable as a planning assumption pending site-specific outage and maintenance records."
+    confidence: medium
+    status: provisional
+    rationale: "Represents production unavailable during equipment outages and maintenance."
+    limitations: "Requires an operations availability target and outage history; soiling, shading, and snow are intentionally excluded."
+    responsible_module_or_owner: T1/core baseline

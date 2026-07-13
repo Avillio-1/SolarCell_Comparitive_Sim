@@ -342,6 +342,27 @@ def write_monte_carlo_plots(
     return paths
 
 
+def write_multi_year_net_benefit_plot(path: Path, frame: pd.DataFrame) -> None:
+    """Plot annual net benefit for each scenario across successful weather years."""
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    for scenario_id, scenario_frame in frame.groupby("scenario_id", sort=True):
+        ordered = scenario_frame.sort_values("year")
+        ax.plot(
+            ordered["year"],
+            ordered["net_annual_benefit_sar"],
+            marker="o",
+            label=str(scenario_id),
+        )
+    ax.set_xlabel("Weather year")
+    ax.set_ylabel("Net annual benefit (SAR/year)")
+    ax.set_title("Multi-year net annual benefit by scenario")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(path, dpi=140)
+    plt.close(fig)
+
+
 def _write_monte_carlo_outcome_distributions_plot(path: Path, trials_frame: pd.DataFrame) -> None:
     reconciled = trials_frame.loc[trials_frame["reconciled"]]
     scenario_ids = [

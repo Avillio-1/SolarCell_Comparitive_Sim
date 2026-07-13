@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
 from typing import Annotated
 
 import typer
 
 from solarclean.application.comparison import CompareAllScenarios
-from solarclean.application.monte_carlo import DEFAULT_TRIAL_COUNT, MonteCarloExperiment
+from solarclean.application.field_validation import FieldValidationHarness
+from solarclean.application.monte_carlo import (
+    DEFAULT_TRIAL_COUNT,
+    DEFAULT_UNCERTAINTY_MODE,
+    MonteCarloExperiment,
+    UncertaintyMode,
+)
+from solarclean.application.multi_year import run_multi_year_comparison
 from solarclean.application.phase35 import Phase35Validator, validate_weather_dataset
 from solarclean.application.sensitivity import (
     DEFAULT_GRID_STEPS,
@@ -31,6 +39,7 @@ from solarclean.infrastructure.persistence.reports import write_json_report
 
 app = typer.Typer(help="SolarClean-DT Phase 1-3 command line tools.")
 ConfigPath = Annotated[Path, typer.Option("--config", "-c", exists=True, readable=True)]
+MeasuredCsvPath = Annotated[Path, typer.Option("--measured-csv", exists=True, readable=True)]
 
 
 @app.command("fetch-weather")
@@ -69,15 +78,39 @@ def compare_all_scenarios(config: ConfigPath) -> None:
     typer.echo(f"Scenario comparison written to {result.output_directory}")
 
 
+@app.command("compare-multi-year")
+def compare_multi_year(
+    config: Annotated[
+        Path,
+        typer.Option("--config", "-c", exists=True, readable=True),
+    ] = Path("configs/default.yaml"),
+    start_year: Annotated[int, typer.Option("--start-year")] = 2019,
+    end_year: Annotated[int, typer.Option("--end-year")] = 2025,
+) -> None:
+    """Compare scenario robustness across a range of historical weather years."""
+
+    result = run_multi_year_comparison(load_config(config), start_year, end_year)
+    typer.echo(
+        f"Multi-year comparison ({len(result.year_results)}/{len(result.years_requested)} "
+        f"years succeeded) written to {result.output_directory}"
+    )
+
+
 @app.command("monte-carlo")
 def monte_carlo(
     config: ConfigPath,
     trials: Annotated[int, typer.Option("--trials", "-n")] = DEFAULT_TRIAL_COUNT,
     base_seed: Annotated[int | None, typer.Option("--base-seed")] = None,
+    uncertainty_mode: Annotated[
+        UncertaintyMode, typer.Option("--uncertainty-mode")
+    ] = DEFAULT_UNCERTAINTY_MODE,
 ) -> None:
     """Repeat compare-all-scenarios across many seeded trials to quantify stochastic uncertainty."""
     outcome = MonteCarloExperiment(
-        load_config(config), trial_count=trials, base_seed=base_seed
+        load_config(config),
+        trial_count=trials,
+        base_seed=base_seed,
+        uncertainty_mode=uncertainty_mode,
     ).run()
     result = outcome.result
     typer.echo(
@@ -176,6 +209,16 @@ def validate_weather(config: ConfigPath) -> None:
 def validate_phase_3_5(config: ConfigPath) -> None:
     result = Phase35Validator(load_config(config)).run()
     typer.echo(f"Phase 3.5 validation written to {result.output_directory}")
+
+
+@app.command("validate-field")
+def validate_field(
+    config: ConfigPath,
+    measured_csv: MeasuredCsvPath,
+    holdout_start: Annotated[date, typer.Option("--holdout-start")],
+) -> None:
+    result = FieldValidationHarness(load_config(config), measured_csv, holdout_start).run()
+    typer.echo(f"Field validation written to {result.output_directory}")
 
 
 @app.command("profile-full-year")
