@@ -140,6 +140,36 @@ run. Failure messages are in <code>reconciliation_report.json</code>.</p>
 <section class="panel">
   <h2>Daily AC energy by scenario</h2>
   <canvas id="daily-energy-chart" height="110"></canvas>
+  <p class="hint">The dashed clean-reference curve shows weather-driven potential before
+    contamination and mitigation effects. Event markers identify rainfall, cleaning,
+    inspections, coating activity, and contamination. Hover a date for its diagnostic summary.</p>
+</section>
+{% endif %}
+
+{% if daily_rainfall %}
+<section class="panel">
+  <h2>Daily rainfall</h2>
+  <canvas id="daily-rainfall-chart" height="110"></canvas>
+  <p class="hint">Columns show the shared daily precipitation input stored in the baseline rows of
+    <a href="/api/runs/{{ run_id }}/artifact/scenario_daily_summary.csv">scenario_daily_summary.csv</a>.
+    Rain often coincides with lower same-day irradiance while also cleaning accumulated dust for
+    following days.</p>
+</section>
+{% endif %}
+
+{% if daily_weather %}
+<section class="panel">
+  <h2>Daily solar irradiation (GHI)</h2>
+  <canvas id="daily-ghi-chart" height="110"></canvas>
+  <p class="hint">Daily global horizontal irradiation is the sum of stored hourly GHI values,
+    expressed as kWh/m²/day. It is usually the strongest weather driver of daily PV energy.</p>
+</section>
+
+<section class="panel">
+  <h2>Daylight ambient and module temperature</h2>
+  <canvas id="daily-temperature-chart" height="110"></canvas>
+  <p class="hint">Means include generating hours where GHI exceeds 20 W/m². Module/cell
+    temperature is from the clean-reference pvlib temperature model.</p>
 </section>
 {% endif %}
 
@@ -268,11 +298,15 @@ run. Failure messages are in <code>reconciliation_report.json</code>.</p>
 
 {% endblock %}
 {% block scripts %}
-{% if daily_energy or daily_loss or daily_soiling or daily_dew or daily_cementation or daily_cumgain or annual_cost_bars %}
+{% if daily_energy or daily_rainfall or daily_weather or daily_loss or daily_soiling or daily_dew or daily_cementation or daily_cumgain or annual_cost_bars %}
 <script src="/static/chart.umd.js"></script>
 <script>
   window.solarcleanCharts = {
     dailyEnergy: {{ daily_energy | tojson if daily_energy else 'null' }},
+    dailyCleanReference: {{ daily_clean_reference | tojson if daily_clean_reference else 'null' }},
+    dailyRainfall: {{ daily_rainfall | tojson if daily_rainfall else 'null' }},
+    dailyWeather: {{ daily_weather | tojson if daily_weather else 'null' }},
+    dailyEventMarkers: {{ daily_event_markers | tojson }},
     dailyLoss: {{ daily_loss | tojson if daily_loss else 'null' }},
     dailySoiling: {{ daily_soiling | tojson if daily_soiling else 'null' }},
     dailyDew: {{ daily_dew | tojson if daily_dew else 'null' }},

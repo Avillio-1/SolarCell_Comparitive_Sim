@@ -50,6 +50,31 @@
     </div>
     <div id="analysis-summary" class="analysis-summary" aria-live="polite"></div>
 
+    <details class="analysis-help">
+      <summary>Advanced analysis guide</summary>
+      <div class="analysis-help-body">
+        <div class="analysis-help-group">
+          <strong>Monte Carlo</strong>
+          <p><span>Trials</span> are repeated simulations using different random seeds.</p>
+        </div>
+        <div class="analysis-help-group">
+          <strong>One-way sensitivity</strong>
+          <p><span>Steps per parameter</span> sets how many values are tested across each range.
+            <span>Parameters</span> are the assumptions to test; select none to test all.</p>
+        </div>
+        <div class="analysis-help-group">
+          <strong>Winner map</strong>
+          <p><span>Parameter A and B</span> are two assumptions varied together.
+            <span>Grid steps</span> sets the grid size; 5 means 5 × 5 = 25 comparisons.</p>
+        </div>
+        <div class="analysis-help-group">
+          <strong>Break-even</strong>
+          <p><span>Scenario A and B</span> are compared to find where their net annual benefits are equal.
+            Baseline has no mitigation; Reactive detects then cleans; Coating uses coating-based mitigation.</p>
+        </div>
+      </div>
+    </details>
+
     <div class="field-row kind-opts advanced-options" data-kind="monte-carlo" hidden>
       <label><span>Trials</span><input id="trials" type="number" min="2" max="500" value="25"></label>
       <label><span>Base seed (optional)</span><input id="base-seed" type="number" placeholder="registry default"></label>
@@ -133,9 +158,8 @@
       {% endfor %}
     </tbody>
   </table>
-  <p class="hint">Finished sessions are kept across server restarts. Deleting a running session asks
-     it to stop at its next checkpoint; deleting a finished one only removes the row — run
-     directories under <code>outputs/</code> stay until deleted from the list below.</p>
+  <p class="hint">Successful sessions move to Completed runs automatically. Failed sessions remain
+     here for diagnosis. Deleting a running session asks it to stop at its next checkpoint.</p>
 </section>
 
 <section class="panel">

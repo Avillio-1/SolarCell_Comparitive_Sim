@@ -49,6 +49,7 @@ def test_partial_period_comparison_writes_package_but_blocks_ranking(tmp_path: P
 
     annual = pd.read_csv(result.output_directory / "scenario_annual_summary.csv")
     daily = pd.read_csv(result.output_directory / "scenario_daily_summary.csv")
+    weather_diagnostics = pd.read_csv(result.output_directory / "daily_weather_diagnostics.csv")
     cost = pd.read_csv(result.output_directory / "scenario_cost_summary.csv")
     ranking = json.loads(
         (result.output_directory / "scenario_ranking.json").read_text(encoding="utf-8")
@@ -63,6 +64,15 @@ def test_partial_period_comparison_writes_package_but_blocks_ranking(tmp_path: P
     assert set(annual["scenario_id"]) == set(CANONICAL_SCENARIO_IDS)
     assert set(daily["scenario_id"]) == set(CANONICAL_SCENARIO_IDS)
     assert set(cost["scenario_id"]) == set(CANONICAL_SCENARIO_IDS)
+    assert {
+        "date",
+        "daily_ghi_irradiation_kwh_m2",
+        "daylight_mean_ambient_temperature_c",
+        "daylight_mean_cell_temperature_c",
+        "rainfall_mm",
+    } <= set(weather_diagnostics.columns)
+    assert len(weather_diagnostics) == daily["date"].nunique()
+    assert (weather_diagnostics["daily_ghi_irradiation_kwh_m2"] >= 0.0).all()
     assert ranking["ranking"] == []
     assert recommendation["valid"] is False
     assert recommendation["recommendation_tier"] == "exploratory"
@@ -87,6 +97,7 @@ def test_partial_period_comparison_writes_package_but_blocks_ranking(tmp_path: P
         "recommendation.json",
         "reconciliation_report.json",
         "scenario_events.csv",
+        "daily_weather_diagnostics.csv",
         "event_tape.json",
         "comparison_daily_energy.png",
         "comparison_normalized_performance.png",

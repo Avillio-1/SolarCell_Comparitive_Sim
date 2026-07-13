@@ -214,23 +214,46 @@
   // the page again and swap in the fresh rows so the new run appears without
   // a manual reload (Jinja stays the only place that renders run rows).
   function refreshCompletedRuns() {
-    fetch("/")
+    return fetch("/")
       .then(function (r) { return r.ok ? r.text() : null; })
       .then(function (html) {
-        if (!html) return;
+        if (!html) return false;
         var doc = new DOMParser().parseFromString(html, "text/html");
         var freshBody = doc.querySelector("#runs-table tbody");
         var currentBody = document.querySelector("#runs-table tbody");
         if (freshBody && currentBody) {
           currentBody.innerHTML = freshBody.innerHTML;
           updateBulkDeleteState();
+          return true;
         } else if (freshBody && !currentBody) {
           // First completed run ever: the empty-state panel has no table to
           // swap into, so take the one-off full reload.
           window.location.reload();
+          return true;
         }
+        return false;
       })
-      .catch(function () { /* transient fetch issue: next completion retries */ });
+      .catch(function () { return false; });
+  }
+
+  function removeJobRow(row) {
+    row.remove();
+    var tbody = document.querySelector("#jobs-table tbody");
+    if (tbody && tbody.children.length === 0) {
+      document.getElementById("jobs-panel").hidden = true;
+    }
+  }
+
+  function promoteCompletedJob(row, attemptsRemaining) {
+    refreshCompletedRuns().then(function (refreshed) {
+      if (refreshed) {
+        removeJobRow(row);
+      } else if (attemptsRemaining > 1) {
+        setTimeout(function () {
+          promoteCompletedJob(row, attemptsRemaining - 1);
+        }, 1000);
+      }
+    });
   }
 
   function pollJob(jobId) {
@@ -252,7 +275,7 @@
             row.querySelector(".job-result").innerHTML =
               '<a href="/run/' + job.run_id + '">' + job.run_id + "</a>";
             clearInterval(timer);
-            refreshCompletedRuns();
+            promoteCompletedJob(row, 3);
           } else if (job.status === "failed") {
             var resultCell = row.querySelector(".job-result");
             resultCell.textContent = job.error || "failed";
@@ -287,11 +310,7 @@
         .then(function (r) {
           if (!r.ok) throw new Error("HTTP " + r.status);
           var row = document.querySelector('tr[data-job="' + jobId + '"]');
-          if (row) row.remove();
-          var tbody = document.querySelector("#jobs-table tbody");
-          if (tbody && tbody.children.length === 0) {
-            document.getElementById("jobs-panel").hidden = true;
-          }
+          if (row) removeJobRow(row);
         })
         .catch(function () { button.disabled = false; });
     });
@@ -762,11 +781,243 @@
     );
   }
 
+  function finiteDisplay(value, digits) {
+    return typeof value === "number" && isFinite(value) ? value.toFixed(digits) : "–";
+  }
+
+  function valueOnDate(data, date, seriesName) {
+    if (!data || !Array.isArray(data.dates)) return null;
+    var index = data.dates.indexOf(date);
+    if (index < 0) return null;
+    if (seriesName && data.series && Array.isArray(data.series[seriesName])) {
+      return data.series[seriesName][index];
+    }
+    return Array.isArray(data.values) ? data.values[index] : null;
+  }
+
+  function diagnosticTooltip(payload) {
+    return function (contexts) {
+      if (!contexts || !contexts.length) return [];
+      var date = contexts[0].label;
+      var lines = ["", "Why this day was low or high:"];
+      var weather = payload.dailyWeather;
+      var weatherIndex = weather && Array.isArray(weather.dates) ? weather.dates.indexOf(date) : -1;
+      if (weatherIndex >= 0) {
+        lines.push(
+          "GHI: " + finiteDisplay(weather.daily_ghi_irradiation_kwh_m2[weatherIndex], 2) +
+          " kWh/m²/day"
+        );
+        lines.push(
+          "Daylight temperature: ambient " +
+          finiteDisplay(weather.daylight_mean_ambient_temperature_c[weatherIndex], 1) +
+          "°C; module/cell " +
+          finiteDisplay(weather.daylight_mean_cell_temperature_c[weatherIndex], 1) + "°C"
+        );
+      }
+      lines.push(
+        "Rainfall: " + finiteDisplay(valueOnDate(payload.dailyRainfall, date), 2) + " mm"
+      );
+      ["baseline", "reactive", "coating"].forEach(function (scenario) {
+        var cleanliness = valueOnDate(payload.dailySoiling, date, scenario);
+        var loss = valueOnDate(payload.dailyLoss, date, scenario);
+        lines.push(
+          scenario + ": cleanliness " + finiteDisplay(cleanliness, 4) +
+          "; energy loss " + finiteDisplay(loss, 1) + " kWh"
+        );
+      });
+      var events = (payload.dailyEventMarkers || []).filter(function (event) {
+        return event.date === date;
+      });
+      if (events.length) {
+        lines.push("Events: " + events.map(function (event) {
+          return event.scenario + " " + event.category + " ×" + event.count;
+        }).join("; "));
+      }
+      return lines;
+    };
+  }
+
+  function markerDatasets(payload) {
+    var energy = payload.dailyEnergy;
+    var reference = payload.dailyCleanReference;
+    var grouped = {};
+    var styles = {
+      rainfall: { label: "Rainfall", color: "#2f7fa3", pointStyle: "rectRot" },
+      cleaning: { label: "Cleaning", color: "#2f7d5c", pointStyle: "triangle" },
+      inspection: { label: "Inspection", color: "#c07f0e", pointStyle: "circle" },
+      coating: { label: "Coating activity", color: "#7b5aa6", pointStyle: "rect" },
+      contamination: { label: "Contamination", color: "#a3453c", pointStyle: "crossRot" },
+    };
+
+    (payload.dailyEventMarkers || []).forEach(function (event) {
+      var y = valueOnDate(energy, event.date, event.scenario);
+      if (typeof y !== "number") y = valueOnDate(reference, event.date);
+      if (typeof y !== "number" || !styles[event.category]) return;
+      grouped[event.category] = grouped[event.category] || [];
+      grouped[event.category].push({ x: event.date, y: y, _event: event });
+    });
+    if (payload.dailyRainfall && Array.isArray(payload.dailyRainfall.dates)) {
+      payload.dailyRainfall.dates.forEach(function (date, index) {
+        var rainfall = payload.dailyRainfall.values[index];
+        if (!(rainfall > 0)) return;
+        var y = valueOnDate(energy, date, "baseline");
+        if (typeof y !== "number") y = valueOnDate(reference, date);
+        grouped.rainfall = grouped.rainfall || [];
+        grouped.rainfall.push({
+          x: date,
+          y: y,
+          _event: { category: "rainfall", count: 1, rainfall_mm: rainfall },
+        });
+      });
+    }
+    return Object.keys(grouped).map(function (category) {
+      var style = styles[category];
+      return {
+        type: "line",
+        label: style.label,
+        data: grouped[category],
+        showLine: false,
+        pointRadius: 4,
+        pointHoverRadius: 7,
+        pointStyle: style.pointStyle,
+        borderColor: style.color,
+        backgroundColor: style.color,
+      };
+    });
+  }
+
+  function drawEnergyDiagnostics(payload) {
+    var data = payload.dailyEnergy;
+    var canvas = document.getElementById("daily-energy-chart");
+    if (!data || !data.series || !canvas || typeof Chart === "undefined") return;
+    var datasets = Object.keys(data.series).map(function (scenario) {
+      return {
+        label: scenario + " actual",
+        _scenario: scenario,
+        data: data.series[scenario],
+        borderColor: scenarioColor(scenario),
+        backgroundColor: "transparent",
+        borderWidth: 1.5,
+        pointRadius: 0,
+        tension: 0,
+      };
+    });
+    if (payload.dailyCleanReference && Array.isArray(payload.dailyCleanReference.values)) {
+      datasets.push({
+        label: "Clean reference",
+        data: payload.dailyCleanReference.values,
+        borderColor: chartInk(),
+        backgroundColor: "transparent",
+        borderDash: [7, 4],
+        borderWidth: 1.5,
+        pointRadius: 0,
+        tension: 0,
+      });
+    }
+    datasets = datasets.concat(markerDatasets(payload));
+    var options = baseOptions("AC energy (kWh/day)");
+    options.plugins.tooltip = {
+      callbacks: {
+        label: function (context) {
+          var event = context.raw && context.raw._event;
+          if (!event) return context.dataset.label + ": " + finiteDisplay(context.parsed.y, 1);
+          if (event.category === "rainfall") {
+            return "Rainfall: " + finiteDisplay(event.rainfall_mm, 2) + " mm";
+          }
+          return context.dataset.label + ": " + event.scenario + " ×" + event.count;
+        },
+        afterBody: diagnosticTooltip(payload),
+      },
+    };
+    registerChart(new Chart(canvas, {
+      type: "line",
+      data: { labels: data.dates, datasets: datasets },
+      options: options,
+    }));
+  }
+
+  function drawWeatherDiagnostics(data) {
+    if (!data || !Array.isArray(data.dates) || typeof Chart === "undefined") return;
+    var ghiCanvas = document.getElementById("daily-ghi-chart");
+    if (ghiCanvas) {
+      var ghiOptions = baseOptions("GHI irradiation (kWh/m²/day)");
+      ghiOptions.scales.y.beginAtZero = true;
+      registerChart(new Chart(ghiCanvas, {
+        type: "bar",
+        data: {
+          labels: data.dates,
+          datasets: [{
+            label: "Daily GHI",
+            data: data.daily_ghi_irradiation_kwh_m2,
+            backgroundColor: "#c07f0e",
+            borderWidth: 0,
+            barPercentage: 1,
+            categoryPercentage: 1,
+          }],
+        },
+        options: ghiOptions,
+      }));
+    }
+    var temperatureCanvas = document.getElementById("daily-temperature-chart");
+    if (temperatureCanvas) {
+      registerChart(new Chart(temperatureCanvas, {
+        type: "line",
+        data: {
+          labels: data.dates,
+          datasets: [
+            {
+              label: "Ambient",
+              data: data.daylight_mean_ambient_temperature_c,
+              borderColor: "#2f7fa3",
+              backgroundColor: "transparent",
+              pointRadius: 0,
+              borderWidth: 1.5,
+            },
+            {
+              label: "Module/cell",
+              data: data.daylight_mean_cell_temperature_c,
+              borderColor: "#a3453c",
+              backgroundColor: "transparent",
+              pointRadius: 0,
+              borderWidth: 1.5,
+            },
+          ],
+        },
+        options: baseOptions("Temperature (°C)"),
+      }));
+    }
+  }
+
+  function drawRainfallBars(data) {
+    var canvas = document.getElementById("daily-rainfall-chart");
+    if (!data || !Array.isArray(data.values) || !canvas || typeof Chart === "undefined") return;
+    var options = baseOptions("Rainfall (mm/day)");
+    options.scales.y.beginAtZero = true;
+    registerChart(new Chart(canvas, {
+      type: "bar",
+      data: {
+        labels: data.dates,
+        datasets: [{
+          label: "Rainfall",
+          _scenario: "reactive",
+          data: data.values,
+          borderWidth: 0,
+          backgroundColor: scenarioColor("reactive"),
+          barPercentage: 1,
+          categoryPercentage: 1,
+        }],
+      },
+      options: options,
+    }));
+  }
+
   // Called from the comparison template after Chart.js loads. Data comes
   // straight from the run's stored CSV artifacts via the server.
   window.drawComparisonCharts = function () {
     var payload = window.solarcleanCharts || {};
-    drawScenarioLines("daily-energy-chart", payload.dailyEnergy, "AC energy (kWh/day)");
+    drawEnergyDiagnostics(payload);
+    drawRainfallBars(payload.dailyRainfall);
+    drawWeatherDiagnostics(payload.dailyWeather);
     drawScenarioLines("daily-loss-chart", payload.dailyLoss, "Energy loss (kWh/day)");
     drawScenarioLines(
       "daily-soiling-chart", payload.dailySoiling, "Dust / contamination cleanliness (1 = clean)"

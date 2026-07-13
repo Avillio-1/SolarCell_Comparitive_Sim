@@ -1938,6 +1938,8 @@ def _write_comparison_package(
     artifacts.append("weather_hourly.csv")
     writer.write_clean_energy(output_dir, profile)
     artifacts.extend(["clean_energy_hourly.csv", "daily_clean_energy.csv"])
+    writer.write_daily_weather_diagnostics(output_dir, weather, profile)
+    artifacts.append("daily_weather_diagnostics.csv")
 
     (output_dir / "event_tape.json").write_text(event_tape.to_json(), encoding="utf-8")
     artifacts.append("event_tape.json")

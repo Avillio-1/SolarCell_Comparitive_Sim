@@ -151,6 +151,7 @@ h2 { font-size: 15px; margin: 0 0 10px; letter-spacing: 0.01em; }
 h3 { font-size: 13.5px; margin: 12px 0 4px; }
 
 a { color: var(--navy); }
+[hidden] { display: none !important; }
 a:focus-visible, button:focus-visible, select:focus-visible,
 input:focus-visible, textarea:focus-visible, summary:focus-visible {
   outline: 2px solid var(--navy);
@@ -179,6 +180,16 @@ input:focus-visible, textarea:focus-visible, summary:focus-visible {
 .field-copy strong { color: var(--ink); font-size: 13.5px; }
 .field-copy small { margin-top: 2px; color: var(--muted); font-size: 11.5px; font-weight: 400; }
 .analysis-summary { margin: 12px 0 0 38px; padding-left: 10px; border-left: 3px solid var(--navy); color: var(--muted); font-size: 13px; }
+.analysis-help { max-width: 780px; margin: 10px 0 0 38px; color: var(--muted); font-size: 12px; }
+.analysis-help summary { display: inline-flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px; color: var(--navy); cursor: pointer; font-weight: 650; list-style: none; }
+.analysis-help summary::-webkit-details-marker { display: none; }
+.analysis-help summary::before { display: grid; place-items: center; width: 16px; height: 16px; border: 1px solid var(--line-strong); border-radius: 50%; content: "?"; font-size: 10px; }
+.analysis-help summary:hover, .analysis-help[open] summary { background: var(--surface-alt); color: var(--ink); }
+.analysis-help-body { margin: 7px 0 0 8px; padding-left: 14px; border-left: 2px solid var(--line); }
+.analysis-help-group { display: grid; grid-template-columns: 130px 1fr; gap: 14px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+.analysis-help-group:last-child { border-bottom: 0; }
+.analysis-help-group strong, .analysis-help-group p span { color: var(--ink); font-weight: 650; }
+.analysis-help-group p { margin: 0; line-height: 1.45; }
 .advanced-options { margin: 16px 0 0; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-alt); }
 .launch-footer { display: flex; align-items: center; gap: 16px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
 .launch-expectation { display: flex; flex-direction: column; margin-right: auto; font-size: 12px; }
@@ -189,6 +200,8 @@ input:focus-visible, textarea:focus-visible, summary:focus-visible {
   .dashboard-hero { align-items: flex-start; flex-direction: column; }
   .hero-facts { justify-content: flex-start; }
   .launch-grid { grid-template-columns: 1fr; }
+  .analysis-help { margin-left: 0; }
+  .analysis-help-group { grid-template-columns: 1fr; gap: 2px; }
   .panel-heading, .launch-footer { align-items: stretch; flex-direction: column; }
   .launch-button { width: 100%; }
   .topbar { padding-inline: 16px; }

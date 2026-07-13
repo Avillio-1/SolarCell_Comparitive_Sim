@@ -656,6 +656,7 @@ def index(request: Request) -> HTMLResponse:
                 "valid": run.valid,
             }
         )
+    visible_jobs = [record for record in jobs.records() if record.get("status") != "done"]
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -664,7 +665,7 @@ def index(request: Request) -> HTMLResponse:
             "default_config_label": DEFAULT_CONFIG_LABEL,
             "configs": _config_names(),
             "runs": runs,
-            "jobs": jobs.records(),
+            "jobs": visible_jobs,
             "parameters": _parameter_catalog(),
         },
     )
@@ -695,6 +696,10 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
                 "reconciliation": artifacts.load_json(run_dir / "reconciliation_report.json"),
                 "headline": _headline_cards(recommendation),
                 "daily_energy": artifacts.daily_energy_series(run_dir),
+                "daily_clean_reference": artifacts.daily_clean_reference_series(run_dir),
+                "daily_rainfall": artifacts.daily_rainfall_series(run_dir),
+                "daily_weather": artifacts.daily_weather_diagnostics(run_dir),
+                "daily_event_markers": artifacts.daily_event_markers(run_dir),
                 "daily_loss": artifacts.daily_series(run_dir, "energy_loss_kwh"),
                 "daily_soiling": artifacts.daily_cleanliness_series(run_dir),
                 "daily_cumgain": artifacts.daily_series(

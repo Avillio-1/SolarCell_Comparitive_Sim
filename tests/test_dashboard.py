@@ -367,12 +367,40 @@ def test_charts_replace_static_plot_grid(client: TestClient, comparison_run: Pat
     page = client.get(f"/run/{comparison_run.name}").text
     # Interactive charts fed from stored CSV columns ...
     assert "daily-energy-chart" in page
+    assert "daily-ghi-chart" in page
+    assert "daily-temperature-chart" in page
+    assert "daily-rainfall-chart" in page
     assert "daily-loss-chart" in page
     assert "daily-soiling-chart" in page
     assert "Daily contamination cleanliness by scenario" in page
     cleanliness = artifacts_module.daily_cleanliness_series(comparison_run)
     assert cleanliness is not None
     assert set(cleanliness["series"]) == {"baseline", "reactive", "coating"}
+    rainfall = artifacts_module.daily_rainfall_series(comparison_run)
+    assert rainfall is not None
+    assert rainfall["dates"] == cleanliness["dates"]
+    assert len(rainfall["values"]) == len(rainfall["dates"])
+    assert "dailyRainfall:" in page
+    clean_reference = artifacts_module.daily_clean_reference_series(comparison_run)
+    assert clean_reference is not None
+    assert clean_reference["dates"] == rainfall["dates"]
+    weather = artifacts_module.daily_weather_diagnostics(comparison_run)
+    assert weather is not None
+    assert weather["dates"] == rainfall["dates"]
+    assert len(weather["daily_ghi_irradiation_kwh_m2"]) == len(rainfall["dates"])
+    markers = artifacts_module.daily_event_markers(comparison_run)
+    assert markers
+    assert {marker["category"] for marker in markers} <= {
+        "cleaning",
+        "inspection",
+        "coating",
+        "contamination",
+    }
+    assert "dailyCleanReference:" in page
+    assert "dailyWeather:" in page
+    assert "dailyEventMarkers:" in page
+    dashboard_js = Path(dashboard_app.__file__).parent / "static" / "dashboard.js"
+    assert "Why this day was low or high:" in dashboard_js.read_text(encoding="utf-8")
     assert "annual-cost-chart" in page
     # ... and no inline <img> plot grid on the comparison page. PNGs stay
     # downloadable from the artifact list.
@@ -765,6 +793,36 @@ def test_launch_form_offers_parameter_dropdowns(client: TestClient) -> None:
     # Options come from the T7-supported registry catalog with their ranges.
     assert 'value="economics.electricity_tariff_sar_per_kwh"' in page
     assert "registry range" in page
+
+
+def test_launch_form_explains_advanced_analysis_fields(client: TestClient) -> None:
+    page = client.get("/").text
+    assert '<details class="analysis-help">' in page
+    assert "Advanced analysis guide" in page
+    assert "repeated simulations using different random seeds." in page
+    assert "how many values are tested across each range." in page
+    assert "assumptions to test; select none to test all." in page
+    assert "two assumptions varied together." in page
+    assert "grid size; 5 means 5 × 5 = 25 comparisons." in page
+    assert "compared to find where their net annual benefits are equal." in page
+    assert "Baseline has no mitigation" in page
+    assert "Reactive detects then cleans" in page
+    assert "Coating uses coating-based mitigation" in page
+
+
+def test_completed_job_moves_out_of_run_sessions(client: TestClient, comparison_run: Path) -> None:
+    job = dashboard_app.jobs.submit("compare", "completed.yaml", lambda _job: comparison_run)
+    deadline = time.time() + 10
+    while job.status != "done" and time.time() < deadline:
+        time.sleep(0.01)
+    assert job.status == "done"
+
+    try:
+        page = client.get("/").text
+        assert job.job_id not in page
+        assert comparison_run.name in page
+    finally:
+        dashboard_app.jobs.delete(job.job_id)
 
 
 def test_parameter_catalog_uses_registry_relative_to_custom_config_dir(

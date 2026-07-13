@@ -13,6 +13,7 @@ import csv
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 # Artifacts small enough to inline in a results page. Everything else is
 # offered as a download only.
@@ -177,6 +178,125 @@ def daily_series(run_dir: Path, value_column: str) -> dict[str, object] | None:
 
 def daily_energy_series(run_dir: Path) -> dict[str, object] | None:
     return daily_series(run_dir, "actual_energy_kwh")
+
+
+def daily_clean_reference_series(run_dir: Path) -> dict[str, object] | None:
+    """Read the one clean-reference series shared by every scenario."""
+
+    reshaped = daily_series(run_dir, "clean_energy_kwh")
+    if reshaped is None:
+        return None
+    series = reshaped.get("series")
+    if not isinstance(series, dict):
+        return None
+    values = series.get("baseline")
+    if not isinstance(values, list):
+        return None
+    return {"dates": reshaped["dates"], "values": values}
+
+
+def daily_rainfall_series(run_dir: Path) -> dict[str, object] | None:
+    """Read the shared daily rainfall values stored with the baseline result."""
+
+    reshaped = daily_series(run_dir, "extension_precipitation_mm")
+    if reshaped is None:
+        return None
+    series = reshaped.get("series")
+    if not isinstance(series, dict):
+        return None
+    values = series.get("baseline")
+    if not isinstance(values, list):
+        return None
+    return {"dates": reshaped["dates"], "values": values}
+
+
+def daily_weather_diagnostics(run_dir: Path) -> dict[str, object] | None:
+    """Select persisted daily irradiance and temperature diagnostics."""
+
+    path = run_dir / "daily_weather_diagnostics.csv"
+    if not path.is_file():
+        return None
+    header, rows = read_csv_rows(path)
+    required = (
+        "date",
+        "daily_ghi_irradiation_kwh_m2",
+        "daylight_mean_ambient_temperature_c",
+        "daylight_mean_cell_temperature_c",
+    )
+    if any(column not in header for column in required):
+        return None
+    indices = {column: header.index(column) for column in required}
+    dates: list[str] = []
+    values: dict[str, list[float | None]] = {column: [] for column in required[1:]}
+    for row in rows:
+        dates.append(row[indices["date"]])
+        for column in required[1:]:
+            try:
+                value: float | None = float(row[indices[column]])
+            except (IndexError, ValueError):
+                value = None
+            values[column].append(value)
+    return {"dates": dates, **values}
+
+
+def daily_event_markers(run_dir: Path) -> list[dict[str, object]]:
+    """Collapse stored scenario events into date/category chart markers."""
+
+    path = run_dir / "scenario_events.csv"
+    if not path.is_file():
+        return []
+    header, rows = read_csv_rows(path)
+    required = ("date", "scenario_name", "event_type", "description")
+    if any(column not in header for column in required):
+        return []
+    indices = {column: header.index(column) for column in required}
+    effective_col = (
+        header.index("effective_for_energy_date") if "effective_for_energy_date" in header else None
+    )
+    grouped: dict[tuple[str, str, str], dict[str, object]] = {}
+    for row in rows:
+        event_type = row[indices["event_type"]]
+        category = _event_marker_category(event_type)
+        if category is None:
+            continue
+        date = row[indices["date"]]
+        scenario = row[indices["scenario_name"]]
+        key = (date, scenario, category)
+        marker = grouped.setdefault(
+            key,
+            {
+                "date": date,
+                "scenario": scenario,
+                "category": category,
+                "count": 0,
+                "event_types": [],
+                "descriptions": [],
+                "effective_dates": [],
+            },
+        )
+        marker["count"] = cast(int, marker["count"]) + 1
+        for target, value in (
+            ("event_types", event_type),
+            ("descriptions", row[indices["description"]]),
+            ("effective_dates", row[effective_col] if effective_col is not None else date),
+        ):
+            entries = marker[target]
+            if isinstance(entries, list) and value and value not in entries:
+                entries.append(value)
+    return list(grouped.values())
+
+
+def _event_marker_category(event_type: str) -> str | None:
+    normalized = event_type.lower()
+    if "inspection" in normalized:
+        return "inspection"
+    if "cleaning" in normalized:
+        return "cleaning"
+    if normalized.startswith("coating_"):
+        return "coating"
+    if any(token in normalized for token in ("dust", "bird", "cementation", "contamination")):
+        return "contamination"
+    return None
 
 
 def daily_cleanliness_series(run_dir: Path) -> dict[str, object] | None:

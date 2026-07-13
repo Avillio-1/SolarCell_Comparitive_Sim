@@ -135,6 +135,45 @@ class OutputWriter:
                 float_format=self.config.output.csv_float_format,
             )
 
+    def write_daily_weather_diagnostics(
+        self,
+        output_dir: Path,
+        weather: WeatherDataset,
+        profile: CleanEnergyProfile,
+    ) -> None:
+        """Persist daily weather/PV drivers used to explain energy variation."""
+
+        records: list[dict[str, object]] = []
+        weather_index = pd.DatetimeIndex(weather.hourly.index)
+        for raw_day, daily_weather in weather.hourly.groupby(weather_index.date):
+            day = pd.Timestamp(str(raw_day)).date()
+            daily_pv = profile.hourly.reindex(daily_weather.index)
+            daylight = daily_weather["ghi_w_m2"] > 20.0
+            if not bool(daylight.any()):
+                daylight = pd.Series(True, index=daily_weather.index)
+            if "cell_temperature_c" in daily_pv:
+                daylight_cell_temperature = float(
+                    daily_pv.loc[daylight, "cell_temperature_c"].mean()
+                )
+            else:
+                daylight_cell_temperature = float("nan")
+            records.append(
+                {
+                    "date": day.isoformat(),
+                    "daily_ghi_irradiation_kwh_m2": float(daily_weather["ghi_w_m2"].sum() / 1000.0),
+                    "daylight_mean_ambient_temperature_c": float(
+                        daily_weather.loc[daylight, "temp_air_c"].mean()
+                    ),
+                    "daylight_mean_cell_temperature_c": daylight_cell_temperature,
+                    "rainfall_mm": float(daily_weather["precipitation_mm"].sum()),
+                }
+            )
+        pd.DataFrame.from_records(records).to_csv(
+            output_dir / "daily_weather_diagnostics.csv",
+            index=False,
+            float_format=self.config.output.csv_float_format,
+        )
+
     def write_baseline(
         self,
         output_dir: Path,
