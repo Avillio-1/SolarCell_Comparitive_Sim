@@ -2,15 +2,34 @@
 {% block title %}Runs · SolarClean-DT{% endblock %}
 {% block content %}
 
-<section class="panel">
-  <h2>Start a run</h2>
+<section class="dashboard-hero">
+  <div>
+    <span class="eyebrow">Simulation workspace</span>
+    <h1>Compare solar-cleaning strategies with confidence</h1>
+    <p>Configure an analysis, run every scenario against shared conditions, and review traceable
+       energy, cost, and uncertainty results.</p>
+  </div>
+  <div class="hero-facts" aria-label="Project facts">
+    <span><strong>10,000</strong> panels</span>
+    <span><strong>3</strong> strategies</span>
+    <span><strong>1</strong> shared event tape</span>
+  </div>
+</section>
+
+<section class="panel launch-panel">
+  <div class="panel-heading">
+    <div><span class="step-label">New analysis</span><h2>Choose what you want to investigate</h2>
+      <p>Select an analysis and configuration. Extra options appear only when needed.</p></div>
+    <a id="config-link" class="config-action" href="/config/{{ default_config_name }}">Review configuration &rarr;</a>
+  </div>
   {% if not configs %}
   <p class="warn-note">No configurations were found under <code>configs/</code>, so runs cannot start.</p>
   {% endif %}
   <form id="launch-form" onsubmit="return false;">
-    <div class="field-row">
-      <label>
-        <span>Analysis</span>
+    <div class="launch-grid">
+      <label class="launch-field">
+        <span class="field-number">1</span>
+        <span class="field-copy"><strong>Analysis type</strong><small>What question should the model answer?</small></span>
         <select id="kind" name="kind">
           <option value="compare">Compare all scenarios</option>
           <option value="monte-carlo">Monte Carlo</option>
@@ -19,22 +38,23 @@
           <option value="break-even">Break-even search</option>
         </select>
       </label>
-      <label>
-        <span>Configuration</span>
+      <label class="launch-field">
+        <span class="field-number">2</span>
+        <span class="field-copy"><strong>Configuration</strong><small>Site, weather, assumptions, and costs</small></span>
         <select id="config" name="config">
           {% for config_name in configs %}
           <option value="{{ config_name }}"{% if config_name == default_config_name %} selected{% endif %}>{{ config_name }}</option>
           {% endfor %}
         </select>
       </label>
-      <a id="config-link" class="quiet-link" href="/config/{{ default_config_name }}">view / edit config</a>
     </div>
+    <div id="analysis-summary" class="analysis-summary" aria-live="polite"></div>
 
-    <div class="field-row kind-opts" data-kind="monte-carlo" hidden>
+    <div class="field-row kind-opts advanced-options" data-kind="monte-carlo" hidden>
       <label><span>Trials</span><input id="trials" type="number" min="2" max="500" value="25"></label>
       <label><span>Base seed (optional)</span><input id="base-seed" type="number" placeholder="registry default"></label>
     </div>
-    <div class="field-row kind-opts" data-kind="sensitivity-oneway" hidden>
+    <div class="field-row kind-opts advanced-options" data-kind="sensitivity-oneway" hidden>
       <label><span>Steps per parameter</span><input id="steps" type="number" min="3" max="21" value="5"></label>
       <label class="wide"><span>Parameters (Ctrl-click to select several; none selected = all supported)</span>
         <select id="parameters" multiple size="6">
@@ -43,7 +63,7 @@
           {% endfor %}
         </select></label>
     </div>
-    <div class="field-row kind-opts" data-kind="winner-map" hidden>
+    <div class="field-row kind-opts advanced-options" data-kind="winner-map" hidden>
       <label class="wide"><span>Parameter A</span>
         <select id="parameter-a">
           {% for p in parameters %}
@@ -59,7 +79,7 @@
         </select></label>
       <label><span>Grid steps</span><input id="grid-steps" type="number" min="3" max="15" value="5"></label>
     </div>
-    <div class="field-row kind-opts" data-kind="break-even" hidden>
+    <div class="field-row kind-opts advanced-options" data-kind="break-even" hidden>
       <label class="wide"><span>Registry parameter</span>
         <select id="be-parameter">
           {% for p in parameters %}
@@ -72,8 +92,9 @@
         <select id="scenario-b"><option>baseline</option><option>reactive</option><option>coating</option></select></label>
     </div>
 
-    <div class="field-row">
-      <button id="launch" class="primary" type="button" {% if not configs %}disabled{% endif %}>Start run</button>
+    <div class="launch-footer">
+      <div class="launch-expectation"><strong>Before you start</strong><span>Runs execute one at a time and save a reproducible result package.</span></div>
+      <button id="launch" class="primary launch-button" type="button" {% if not configs %}disabled{% endif %}>Start analysis</button>
       <span id="launch-error" class="error-text" role="alert"></span>
     </div>
   </form>

@@ -23,10 +23,19 @@
 
   var kindSelect = document.getElementById("kind");
   if (kindSelect) {
+    var analysisDescriptions = {
+      "compare": "Compare baseline, reactive cleaning, and coating under identical weather and events.",
+      "monte-carlo": "Repeat the comparison across controlled random seeds to measure uncertainty and winner probability.",
+      "sensitivity-oneway": "Change one assumption at a time to see which inputs influence the result most.",
+      "winner-map": "Vary two assumptions together and map which strategy wins across the grid.",
+      "break-even": "Find the parameter value where two selected strategies have equal net benefit."
+    };
     var showOptionsForKind = function () {
       document.querySelectorAll(".kind-opts").forEach(function (row) {
         row.hidden = row.dataset.kind !== kindSelect.value;
       });
+      var summary = document.getElementById("analysis-summary");
+      if (summary) summary.textContent = analysisDescriptions[kindSelect.value] || "";
     };
     kindSelect.addEventListener("change", showOptionsForKind);
     showOptionsForKind();

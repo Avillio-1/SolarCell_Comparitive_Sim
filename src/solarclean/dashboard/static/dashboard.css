@@ -116,7 +116,25 @@ body {
 }
 .theme-toggle:hover { border-color: #fff; color: #fff; }
 
+/* Refined application header and launch workspace. */
+.topbar { align-items: center; padding: 12px max(22px, calc((100vw - 1160px) / 2 + 22px)); border-bottom-width: 1px; }
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand-mark { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; background: #f3b43f; color: #17232b; font-size: 12px; font-weight: 800; }
+.brand strong, .brand small { display: block; }
+.brand strong { font-size: 15px; }
+.brand small { margin-top: 1px; color: var(--topbar-muted); font-size: 11px; font-weight: 500; letter-spacing: 0; }
+.topbar nav { margin-left: auto; }
+.topbar nav a.nav-current { padding: 6px 10px; border-radius: 6px; background: rgba(255, 255, 255, 0.08); }
+
 main { max-width: 1160px; margin: 0 auto; padding: 20px 22px 48px; }
+
+.dashboard-hero { display: flex; justify-content: space-between; align-items: flex-end; gap: 28px; padding: 10px 2px 27px; }
+.dashboard-hero h1 { max-width: 680px; font-size: clamp(25px, 3vw, 38px); line-height: 1.12; letter-spacing: -0.025em; }
+.dashboard-hero p { max-width: 680px; margin: 10px 0 0; color: var(--muted); font-size: 15.5px; }
+.eyebrow, .step-label { display: block; margin-bottom: 7px; color: var(--navy); font-size: 11px; font-weight: 750; letter-spacing: 0.09em; text-transform: uppercase; }
+.hero-facts { display: flex; gap: 9px; flex-wrap: wrap; justify-content: flex-end; }
+.hero-facts span { min-width: 92px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--muted); font-size: 11px; }
+.hero-facts strong { display: block; color: var(--ink); font-size: 17px; }
 
 footer {
   max-width: 1160px;
@@ -146,6 +164,35 @@ input:focus-visible, textarea:focus-visible, summary:focus-visible {
   border-radius: 2px;
   padding: 14px 16px;
   margin-bottom: 16px;
+}
+
+.launch-panel { border-radius: 11px; padding: 21px; box-shadow: 0 5px 20px rgba(15, 34, 46, 0.05); }
+.panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; margin-bottom: 18px; }
+.panel-heading h2 { margin: 0; font-size: 20px; }
+.panel-heading p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+.config-action { white-space: nowrap; padding: 7px 10px; border-radius: 6px; background: var(--surface-alt); text-decoration: none; font-size: 12.5px; }
+.launch-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.launch-field { display: grid; grid-template-columns: 28px 1fr; gap: 2px 10px; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-alt); }
+.launch-field select { grid-column: 2; width: 100%; min-height: 39px; margin-top: 8px; }
+.field-number { display: grid; place-items: center; width: 25px; height: 25px; border-radius: 50%; background: var(--navy); color: var(--on-accent); font-weight: 700; font-size: 12px; }
+.field-copy strong, .field-copy small { display: block; }
+.field-copy strong { color: var(--ink); font-size: 13.5px; }
+.field-copy small { margin-top: 2px; color: var(--muted); font-size: 11.5px; font-weight: 400; }
+.analysis-summary { margin: 12px 0 0 38px; padding-left: 10px; border-left: 3px solid var(--navy); color: var(--muted); font-size: 13px; }
+.advanced-options { margin: 16px 0 0; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface-alt); }
+.launch-footer { display: flex; align-items: center; gap: 16px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.launch-expectation { display: flex; flex-direction: column; margin-right: auto; font-size: 12px; }
+.launch-expectation span { color: var(--muted); }
+.launch-button { min-width: 150px; min-height: 41px; border-radius: 7px; font-weight: 700; }
+
+@media (max-width: 760px) {
+  .dashboard-hero { align-items: flex-start; flex-direction: column; }
+  .hero-facts { justify-content: flex-start; }
+  .launch-grid { grid-template-columns: 1fr; }
+  .panel-heading, .launch-footer { align-items: stretch; flex-direction: column; }
+  .launch-button { width: 100%; }
+  .topbar { padding-inline: 16px; }
+  .brand small { display: none; }
 }
 
 .run-head {
