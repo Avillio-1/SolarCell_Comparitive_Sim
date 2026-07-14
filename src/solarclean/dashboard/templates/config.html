@@ -11,7 +11,9 @@
 <section class="panel">
   <p class="hint">Edits are checked with the same loader the simulator uses, so anything that
   validates here will load for a run.
-  <strong>Validate and save</strong> updates only the {{ default_config_label }} configuration.</p>
+  <strong>Validate and save</strong> updates only the {{ default_config_label }} configuration.
+  <strong>Restore page-load values</strong> returns the editor to the values from when this page
+  opened; save them again if you are undoing an earlier save.</p>
   <textarea id="config-editor" class="mono" spellcheck="false"
             data-name="{{ name }}" data-is-default="{{ 'true' if is_default else 'false' }}">{{ content }}</textarea>
   <div class="field-row">
@@ -19,6 +21,7 @@
     {% if is_default %}
     <button class="primary" id="save-default-btn" type="button">Validate and save</button>
     {% endif %}
+    <button id="reset-config-btn" type="button">Restore page-load values</button>
   </div>
   <p id="config-status" role="status"></p>
 </section>
@@ -56,6 +59,6 @@
 
 {% endblock %}
 {% block scripts %}
-<script src="/static/world_land.js"></script>
+<script src="/static/world_land.js?v=20260714b"></script>
 <script>initSiteMap();</script>
 {% endblock %}

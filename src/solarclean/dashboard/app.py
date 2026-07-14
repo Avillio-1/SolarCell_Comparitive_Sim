@@ -5,8 +5,9 @@ start use cases, and read artifact files. It must not calculate energy, cost,
 or statistics. If a screen needs a number that no use case writes, the fix is
 a backend change, not a formula here. The only transformations allowed are
 reshaping stored values (picking columns, grouping rows) and display
-formatting (rounding, thousands separators, best-of-row highlighting of
-already-stored numbers).
+formatting (rounding, thousands separators, best-of-row highlighting, and the
+display-only delta between two already-stored run values). Display deltas are
+never persisted or fed back into simulation, economics, or ranking.
 """
 
 from __future__ import annotations
@@ -19,6 +20,7 @@ import os
 import re
 import secrets
 import shutil
+import stat
 import tempfile
 import time
 import zipfile
@@ -48,6 +50,8 @@ from solarclean.dashboard import artifacts
 from solarclean.dashboard.jobs import JOB_KINDS, ActiveJobError, Job, JobRegistry
 from solarclean.domain.calibration.parameter_overrides import build_parameter_catalog
 from solarclean.domain.calibration.registry import ParameterRegistry
+from solarclean.domain.environment.weather import CANONICAL_WEATHER_COLUMNS, WeatherRequest
+from solarclean.infrastructure.weather.cache import WeatherCache
 
 _PACKAGE_DIR = Path(__file__).parent
 
@@ -70,6 +74,7 @@ _REPO_ROOT = _directory_from_env("SOLARCLEAN_ROOT", Path.cwd())
 _CONFIGS_DIR = _directory_from_env("SOLARCLEAN_CONFIGS_DIR", _REPO_ROOT / "configs")
 _OUTPUTS_DIR = _directory_from_env("SOLARCLEAN_OUTPUTS_DIR", _REPO_ROOT / "outputs")
 _CONFIG_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_\-]+\.yaml$")
+_RUNS_PER_PAGE = 24
 
 app = FastAPI(title="SolarClean-DT dashboard", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=_PACKAGE_DIR / "static"), name="static")
@@ -151,8 +156,20 @@ def _format_sar(value: str | float) -> str:
     return f"{number:.4f}"
 
 
+def _format_rate(value: str | float) -> str:
+    """Compact decimal-rate display without hiding meaningful precision."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if math.isnan(number):
+        return "–"
+    return f"{number:,.4f}".rstrip("0").rstrip(".")
+
+
 templates.env.filters["display_number"] = _display_number
 templates.env.filters["sar"] = _format_sar
+templates.env.filters["rate"] = _format_rate
 
 
 def _config_path(name: str) -> Path:
@@ -251,10 +268,18 @@ def _kpi_table(header: list[str], rows: list[list[str]]) -> dict[str, object]:
         table_rows.append(
             {
                 "label": label,
+                "column": column,
                 "values": values,
                 "direction": direction,
                 "best": _best_flags(values, direction),
                 "help": _KPI_GLOSSARY.get(column, ""),
+                "audit_sources": [
+                    (
+                        "scenario_annual_summary.csv · "
+                        f"row scenario_name={scenario} · column {column}"
+                    )
+                    for scenario in scenarios
+                ],
             }
         )
     return {"scenarios": scenarios, "rows": table_rows}
@@ -276,7 +301,65 @@ _COST_CATEGORY_LABELS = {
 }
 
 
-def _cost_table(header: list[str], rows: list[list[str]]) -> list[dict[str, object]]:
+def _reconciliation_lookup(
+    reconciliation: dict[str, object] | None,
+) -> dict[str, dict[str, object]]:
+    checks = reconciliation.get("checks") if reconciliation else None
+    if not isinstance(checks, list):
+        return {}
+    lookup: dict[str, dict[str, object]] = {}
+    for number, raw in enumerate(checks, start=1):
+        if not isinstance(raw, dict) or not isinstance(raw.get("name"), str):
+            continue
+        lookup[str(raw["name"])] = {
+            "number": number,
+            "passed": bool(raw.get("passed")),
+            "message": str(raw.get("message", "")),
+        }
+    return lookup
+
+
+def _cost_audit(
+    scenario_id: str,
+    amount: str,
+    unit: str,
+    notes: str,
+    row_number: int,
+    reconciliation: dict[str, object] | None,
+) -> dict[str, str]:
+    """Explain a stored component row without recreating its economics."""
+
+    pieces = [piece.strip() for piece in notes.split(";") if piece.strip()]
+    quantity = next((piece for piece in pieces if "=" in piece), "")
+    unit_rate = next((piece for piece in pieces if piece.startswith("unit_rate=")), "")
+    if quantity and unit_rate:
+        detail = (
+            f"{quantity.replace('=', ' ')} × {unit_rate.removeprefix('unit_rate=')} "
+            f"= {_format_sar(amount)} {unit or 'SAR'}"
+        )
+    else:
+        detail = notes or f"Stored amount = {_format_sar(amount)} {unit or 'SAR'}"
+
+    quantity_key = quantity.partition("=")[0]
+    check_name = f"{scenario_id}_cost_{quantity_key}_reconciles" if quantity_key else ""
+    check = _reconciliation_lookup(reconciliation).get(check_name)
+    if check:
+        mark = "✓" if check["passed"] else "✕"
+        check_text = f"reconciliation check #{check['number']} {mark} · {check_name}"
+    else:
+        check_text = "No quantity-rate reconciliation check applies to this stored component."
+    return {
+        "source": f"scenario_cost_summary.csv · row {row_number}",
+        "detail": detail,
+        "check": check_text,
+    }
+
+
+def _cost_table(
+    header: list[str],
+    rows: list[list[str]],
+    reconciliation: dict[str, object] | None = None,
+) -> list[dict[str, object]]:
     """Group scenario_cost_summary.csv rows for reading.
 
     Reshaping and display formatting only: every amount, subtotal, and total
@@ -293,10 +376,11 @@ def _cost_table(header: list[str], rows: list[list[str]]) -> list[dict[str, obje
         return row[position]
 
     scenario_order: list[str] = []
-    components_by_scenario: dict[str, dict[str, list[dict[str, str]]]] = {}
+    components_by_scenario: dict[str, dict[str, list[dict[str, object]]]] = {}
     stored_totals: dict[str, dict[str, str]] = {}
     evidence_by_scenario: dict[str, list[dict[str, str]]] = {}
-    for row in rows:
+    first_row_by_scenario: dict[str, int] = {}
+    for row_number, row in enumerate(rows, start=2):
         scenario_id = cell(row, "scenario_id")
         if not scenario_id:
             continue
@@ -304,6 +388,7 @@ def _cost_table(header: list[str], rows: list[list[str]]) -> list[dict[str, obje
             scenario_order.append(scenario_id)
             components_by_scenario[scenario_id] = {}
             evidence_by_scenario[scenario_id] = []
+            first_row_by_scenario[scenario_id] = row_number
             stored_totals[scenario_id] = {
                 "total_capex_sar": cell(row, "total_capex_sar"),
                 "annualized_capex_sar": cell(row, "annualized_capex_sar"),
@@ -320,6 +405,14 @@ def _cost_table(header: list[str], rows: list[list[str]]) -> list[dict[str, obje
                 "name": component_name,
                 "amount": cell(row, "amount_sar"),
                 "unit": cell(row, "unit") or "SAR",
+                "audit": _cost_audit(
+                    scenario_id,
+                    cell(row, "amount_sar"),
+                    cell(row, "unit") or "SAR",
+                    cell(row, "notes"),
+                    row_number,
+                    reconciliation,
+                ),
             }
         )
         evidence_by_scenario[scenario_id].append(
@@ -360,6 +453,10 @@ def _cost_table(header: list[str], rows: list[list[str]]) -> list[dict[str, obje
                 "annual_opex_sar": stored.get("annual_opex_sar", ""),
                 "total_annual_cost_sar": stored.get("total_annual_cost_sar", ""),
                 "capital_recovery_life_years": stored.get("capital_recovery_life_years", ""),
+                "audit_source": (
+                    "scenario_cost_summary.csv · "
+                    f"row {first_row_by_scenario.get(scenario_id, 2)} · stored scenario totals"
+                ),
                 "evidence": evidence_by_scenario[scenario_id],
             }
         )
@@ -389,6 +486,95 @@ def _annual_cost_bars(header: list[str], rows: list[list[str]]) -> dict[str, obj
             }
         )
     return {"scenarios": [row[scenario_col] for row in rows], "metrics": series}
+
+
+def _financial_ranking(
+    header: list[str],
+    rows: list[list[str]],
+    ranking: dict[str, object] | None,
+    metadata: dict[str, object] | None,
+) -> dict[str, object] | None:
+    """Join stored ranking order to the stored financial explanation fields.
+
+    This is a display-only join. Every monetary and energy value is passed
+    through from ``scenario_ranking.json``, ``scenario_annual_summary.csv``,
+    or ``metadata.json``; no economics are recomputed here.
+    """
+
+    raw_ranking = ranking.get("ranking") if ranking else None
+    if not isinstance(raw_ranking, list) or not raw_ranking:
+        return None
+
+    index = {name: position for position, name in enumerate(header)}
+    scenario_col = index.get("scenario_name", index.get("scenario_id"))
+    required = {
+        "annual_actual_energy_kwh",
+        "annual_revenue_sar",
+        "annualized_capex_sar",
+        "annual_opex_sar",
+        "total_annual_cost_sar",
+        "net_annual_benefit_sar",
+        "incremental_revenue_vs_baseline_sar",
+        "incremental_annual_cost_vs_baseline_sar",
+        "incremental_net_annual_benefit_vs_baseline_sar",
+    }
+    if scenario_col is None or not required.issubset(index):
+        return None
+
+    stored_by_scenario = {
+        row[scenario_col]: row for row in rows if scenario_col < len(row) and row[scenario_col]
+    }
+
+    def stored(row: list[str], column: str) -> str:
+        position = index.get(column)
+        return row[position] if position is not None and position < len(row) else ""
+
+    display_rows: list[dict[str, object]] = []
+    for raw_entry in raw_ranking:
+        if not isinstance(raw_entry, dict):
+            return None
+        scenario_id = raw_entry.get("scenario_id")
+        if not isinstance(scenario_id, str) or scenario_id not in stored_by_scenario:
+            return None
+        annual_row = stored_by_scenario[scenario_id]
+        display_rows.append(
+            {
+                "rank": raw_entry.get("rank"),
+                "tied_with_previous": bool(raw_entry.get("tied_with_previous")),
+                "scenario_id": scenario_id,
+                "annual_actual_energy_kwh": stored(annual_row, "annual_actual_energy_kwh"),
+                "annual_revenue_sar": stored(annual_row, "annual_revenue_sar"),
+                "annualized_capex_sar": stored(annual_row, "annualized_capex_sar"),
+                "annual_opex_sar": stored(annual_row, "annual_opex_sar"),
+                "total_annual_cost_sar": stored(annual_row, "total_annual_cost_sar"),
+                "net_annual_benefit_sar": raw_entry.get("net_annual_benefit_sar"),
+                "incremental_revenue_sar": stored(
+                    annual_row, "incremental_revenue_vs_baseline_sar"
+                ),
+                "incremental_annual_cost_sar": stored(
+                    annual_row, "incremental_annual_cost_vs_baseline_sar"
+                ),
+                "incremental_net_annual_benefit_sar": stored(
+                    annual_row, "incremental_net_annual_benefit_vs_baseline_sar"
+                ),
+                "total_capex_sar": stored(annual_row, "total_capex_sar"),
+                "capital_recovery_life_years": stored(annual_row, "capital_recovery_life_years"),
+                "annual_audit_source": (
+                    f"scenario_annual_summary.csv · row scenario_name={scenario_id}"
+                ),
+            }
+        )
+
+    economics = metadata.get("economics_config") if metadata else None
+    economics = economics if isinstance(economics, dict) else {}
+    annualization_method = economics.get("annualization_method")
+    return {
+        "rows": display_rows,
+        "tariff_sar_per_kwh": economics.get("tariff_sar_per_kwh"),
+        "annualization_method": (
+            str(annualization_method).replace("_", " ") if annualization_method else None
+        ),
+    }
 
 
 def _registry_path(config_path: Path) -> Path:
@@ -611,8 +797,9 @@ def _breakeven_chart(report: dict[str, object] | None) -> dict[str, object] | No
     }
 
 
-def _resolved_config_section(run_dir: Path, section: str) -> dict[str, object]:
-    """One top-level section of the run's stored config_resolved.yaml."""
+def _resolved_config(run_dir: Path) -> dict[str, object]:
+    """The stored configuration document for a run, when available."""
+
     config_path = run_dir / "config_resolved.yaml"
     if not config_path.is_file():
         return {}
@@ -620,10 +807,105 @@ def _resolved_config_section(run_dir: Path, section: str) -> dict[str, object]:
         resolved = yaml.safe_load(config_path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError):
         return {}
-    if not isinstance(resolved, dict):
-        return {}
-    raw = resolved.get(section)
+    return resolved if isinstance(resolved, dict) else {}
+
+
+def _resolved_config_section(run_dir: Path, section: str) -> dict[str, object]:
+    """One top-level section of the run's stored config_resolved.yaml."""
+
+    raw = _resolved_config(run_dir).get(section)
     return raw if isinstance(raw, dict) else {}
+
+
+def _weather_cache_status(config: SolarCleanConfig) -> dict[str, str]:
+    """Read-only readiness signal for the selected configuration cockpit."""
+
+    provider = config.weather.provider
+    if provider == "fixture":
+        return {
+            "state": "ready",
+            "label": "✓ bundled fixture",
+            "detail": config.weather.fixture_profile,
+        }
+    if provider == "csv":
+        configured = config.weather.local_csv_path
+        if configured is None:
+            return {"state": "missing", "label": "needs file", "detail": "No local CSV configured"}
+        path = configured if configured.is_absolute() else _REPO_ROOT / configured
+        return {
+            "state": "ready" if path.is_file() else "missing",
+            "label": "✓ local file" if path.is_file() else "needs file",
+            "detail": str(configured),
+        }
+    if not config.weather.cache_enabled:
+        return {"state": "fetch", "label": "fetch each run", "detail": "Weather cache disabled"}
+
+    cache_dir = config.weather.cache_directory
+    cache_dir = cache_dir if cache_dir.is_absolute() else _REPO_ROOT / cache_dir
+    if not cache_dir.is_dir():
+        return {"state": "fetch", "label": "needs fetch", "detail": "NASA POWER cache not found"}
+    request = WeatherRequest(
+        latitude=config.site.latitude,
+        longitude=config.site.longitude,
+        elevation_m=config.site.elevation_m,
+        start=config.simulation.start,
+        end=config.simulation.end,
+        target_timezone=config.simulation.target_timezone,
+        variables=frozenset(CANONICAL_WEATHER_COLUMNS),
+    )
+    cache = WeatherCache(cache_dir)
+    key = cache.key_for(request, "nasa_power")
+    cached = (cache_dir / f"{key}.normalized.csv").is_file() and (
+        cache_dir / f"{key}.metadata.json"
+    ).is_file()
+    return {
+        "state": "ready" if cached else "fetch",
+        "label": "✓ cached" if cached else "needs fetch",
+        "detail": f"NASA POWER · key {key[:10]}",
+    }
+
+
+def _config_cockpits(
+    config_names: list[str], run_entries: list[artifacts.RunEntry]
+) -> dict[str, dict[str, object]]:
+    """Instrument-cluster state for every selectable launch configuration."""
+
+    cockpits: dict[str, dict[str, object]] = {}
+    for name in config_names:
+        try:
+            config = load_config(_config_path(name))
+        except Exception as exc:
+            cockpits[name] = {"error": str(exc)}
+            continue
+        prefix = f"{config.simulation.run_id_prefix}-"
+        last = next((entry for entry in run_entries if entry.run_id.startswith(prefix)), None)
+        last_run: dict[str, object] | None = None
+        if last is not None:
+            recommendation = artifacts.load_json(last.path / "recommendation.json") or {}
+            margin = recommendation.get("decisive_margin_sar")
+            last_run = {
+                "run_id": last.run_id,
+                "winner": last.winner,
+                "margin_sar": (
+                    _format_sar(margin)
+                    if isinstance(margin, int | float) and math.isfinite(float(margin))
+                    else None
+                ),
+                "valid": last.valid,
+            }
+        cockpits[name] = {
+            "site_name": config.site.name,
+            "latitude": config.site.latitude,
+            "longitude": config.site.longitude,
+            "start_date": config.simulation.start.date().isoformat(),
+            "end_date": config.simulation.end.date().isoformat(),
+            "timezone": config.simulation.target_timezone,
+            "weather_provider": config.weather.provider,
+            "weather_status": _weather_cache_status(config),
+            "assumption_set": config.calibration.assumption_set,
+            "last_run": last_run,
+        }
+    return cockpits
 
 
 def _provenance(run_dir: Path) -> dict[str, object] | None:
@@ -640,6 +922,7 @@ def _provenance(run_dir: Path) -> dict[str, object] | None:
     site = _resolved_config_section(run_dir, "site")
     weather_cfg = _resolved_config_section(run_dir, "weather")
     calibration = _resolved_config_section(run_dir, "calibration")
+    simulation = _resolved_config_section(run_dir, "simulation")
     if metadata is None and not site and not weather_cfg:
         return None
     metadata = metadata or {}
@@ -649,11 +932,208 @@ def _provenance(run_dir: Path) -> dict[str, object] | None:
         "site_name": site.get("name"),
         "latitude": site.get("latitude"),
         "longitude": site.get("longitude"),
+        "weather_checksum": checksum or None,
         "weather_checksum_short": checksum[:12] if checksum else None,
-        "created_at_utc": str(metadata.get("created_at_utc", ""))[:19],
+        "created_at_utc": str(metadata.get("created_at_utc") or metadata.get("created_utc", ""))[
+            :19
+        ],
         "assumption_set": metadata.get("calibration_assumption_set")
         or calibration.get("assumption_set"),
+        "start_date": str(simulation.get("start", ""))[:10],
+        "end_date": str(simulation.get("end", ""))[:10],
     }
+
+
+def _chart_event_markers(run_dir: Path) -> list[dict[str, object]]:
+    """Return only the action markers the explorer can usefully display.
+
+    Daily dust loading is already represented by the cleanliness track. A
+    marker for every scenario and day made the chart unreadable and bloated a
+    full-year page with redundant data.
+    """
+
+    return [
+        {
+            "date": marker.get("date"),
+            "scenario": marker.get("scenario"),
+            "category": marker.get("category"),
+            "count": marker.get("count"),
+        }
+        for marker in artifacts.daily_event_markers(run_dir)
+        if marker.get("category") != "contamination"
+    ]
+
+
+def _first_message(items: object) -> str | None:
+    if not isinstance(items, list):
+        return None
+    for item in items:
+        if isinstance(item, dict) and item.get("message"):
+            return str(item["message"])
+        if isinstance(item, str) and item:
+            return item
+    return None
+
+
+def _finding_statement(
+    recommendation: dict[str, object] | None,
+    reconciliation: dict[str, object] | None,
+) -> dict[str, str] | None:
+    """One plain-language conclusion composed only from stored result fields."""
+
+    checks = reconciliation.get("checks") if reconciliation else None
+    if isinstance(checks, list):
+        failed = [check for check in checks if isinstance(check, dict) and not check.get("passed")]
+        if failed:
+            first = failed[0]
+            message = str(first.get("message") or "Stored reconciliation check failed")
+            return {
+                "tone": "fail",
+                "text": f"Run not certified — “{message}” ({first.get('name', 'unnamed check')}).",
+            }
+
+    if recommendation and recommendation.get(
+        "calculation_valid", recommendation.get("valid", False)
+    ):
+        winner = recommendation.get("winner")
+        snapshot = recommendation.get("kpi_snapshot")
+        winner_kpis = snapshot.get(winner) if isinstance(snapshot, dict) else None
+        benefit = (
+            winner_kpis.get("net_annual_benefit_sar") if isinstance(winner_kpis, dict) else None
+        )
+        margin = recommendation.get("decisive_margin_sar")
+        parts = [f"{str(winner).capitalize()} wins this year"]
+        if isinstance(benefit, int | float) and math.isfinite(float(benefit)):
+            parts.append(f"net benefit {_format_sar(benefit)} SAR")
+        if isinstance(margin, int | float) and math.isfinite(float(margin)):
+            parts.append(f"a {_format_sar(margin)} SAR margin over the runner-up")
+        tier = str(recommendation.get("recommendation_tier", "legacy")).replace("_", "-")
+        if tier != "legacy":
+            parts.append(tier)
+        if isinstance(checks, list):
+            parts.append(f"all {len(checks)} checks passed")
+        return {"tone": "pass", "text": " — ".join([parts[0], ", ".join(parts[1:])]) + "."}
+
+    warning = _first_message(recommendation.get("warnings") if recommendation else None)
+    if warning:
+        return {"tone": "warn", "text": f"No certified winner — “{warning}”"}
+    if reconciliation and reconciliation.get("passed"):
+        return {
+            "tone": "neutral",
+            "text": (
+                "The stored calculations reconcile, but no ranking was accepted for this run's "
+                "configured period."
+            ),
+        }
+    return None
+
+
+def _display_config_value(value: object) -> str:
+    if value is None:
+        return "null"
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, list):
+        return "[" + ", ".join(_display_config_value(item) for item in value) + "]"
+    return str(value)
+
+
+def _flatten_config(value: object, prefix: str = "") -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {prefix: _display_config_value(value)} if prefix else {}
+    flattened: dict[str, str] = {}
+    for key, child in value.items():
+        path = f"{prefix}.{key}" if prefix else str(key)
+        if isinstance(child, dict):
+            flattened.update(_flatten_config(child, path))
+        else:
+            flattened[path] = _display_config_value(child)
+    return flattened
+
+
+def _config_diff(run_a: Path, run_b: Path) -> dict[str, object]:
+    old = _flatten_config(_resolved_config(run_a))
+    new = _flatten_config(_resolved_config(run_b))
+    changes = []
+    identical = 0
+    for path in sorted(set(old) | set(new)):
+        before, after = old.get(path, "<missing>"), new.get(path, "<missing>")
+        if before == after:
+            identical += 1
+            continue
+        changes.append({"path": path, "before": before, "after": after})
+    return {"changes": changes, "identical_count": identical}
+
+
+def _stored_kpi_values(run_dir: Path) -> dict[str, dict[str, str]]:
+    path = run_dir / "scenario_annual_summary.csv"
+    if not path.is_file():
+        return {}
+    header, rows = artifacts.read_csv_rows(path)
+    index = {name: position for position, name in enumerate(header)}
+    scenario_col = index.get("scenario_name", index.get("scenario_id"))
+    if scenario_col is None:
+        return {}
+    return {
+        row[scenario_col]: {
+            column: row[position] for column, position in index.items() if position < len(row)
+        }
+        for row in rows
+        if scenario_col < len(row)
+    }
+
+
+def _kpi_diff(run_a: Path, run_b: Path) -> dict[str, object]:
+    old, new = _stored_kpi_values(run_a), _stored_kpi_values(run_b)
+    preferred = ["baseline", "reactive", "coating"]
+    scenarios = preferred + sorted((set(old) | set(new)) - set(preferred))
+    rows: list[dict[str, object]] = []
+    identical = 0
+    for scenario in scenarios:
+        if scenario not in old and scenario not in new:
+            continue
+        for label, column, direction in _KPI_FIELDS:
+            before, after = old.get(scenario, {}).get(column), new.get(scenario, {}).get(column)
+            before_number, after_number = _parse_finite(before or ""), _parse_finite(after or "")
+            same = before == after or (
+                before_number is not None
+                and after_number is not None
+                and before_number == after_number
+            )
+            if same:
+                identical += 1
+                continue
+            delta = (
+                after_number - before_number
+                if before_number is not None and after_number is not None
+                else None
+            )
+            if delta is None:
+                delta_display, trend, outcome = "changed", "→", "neutral"
+            else:
+                trend = "↑" if delta > 0 else "↓" if delta < 0 else "→"
+                delta_display = f"{'+' if delta > 0 else ''}{_display_number(str(delta))}"
+                if direction is None or delta == 0:
+                    outcome = "neutral"
+                else:
+                    improved = (direction == "higher" and delta > 0) or (
+                        direction == "lower" and delta < 0
+                    )
+                    outcome = "better" if improved else "worse"
+            rows.append(
+                {
+                    "scenario": scenario,
+                    "label": label,
+                    "column": column,
+                    "before": _display_number(before) if before is not None else "–",
+                    "after": _display_number(after) if after is not None else "–",
+                    "delta": delta_display,
+                    "trend": trend,
+                    "outcome": outcome,
+                    "direction": direction,
+                }
+            )
+    return {"rows": rows, "identical_count": identical}
 
 
 # --------------------------------------------------------------------------
@@ -661,11 +1141,11 @@ def _provenance(run_dir: Path) -> dict[str, object] | None:
 # --------------------------------------------------------------------------
 
 
-@app.get("/", response_class=HTMLResponse)
-def index(request: Request) -> HTMLResponse:
-    config_names = _config_names()
-    runs = []
-    for run in artifacts.list_runs(_OUTPUTS_DIR):
+def _run_cards(run_entries: list[artifacts.RunEntry]) -> list[dict[str, object]]:
+    """Presentation data for a batch of stored run cards."""
+
+    runs: list[dict[str, object]] = []
+    for run in run_entries:
         site = _resolved_config_section(run.path, "site").get("name")
         runs.append(
             {
@@ -675,8 +1155,19 @@ def index(request: Request) -> HTMLResponse:
                 "site": site if isinstance(site, str) else None,
                 "winner": run.winner,
                 "valid": run.valid,
+                "fingerprint_url": f"/api/runs/{run.run_id}/fingerprint",
             }
         )
+    return runs
+
+
+@app.get("/", response_class=HTMLResponse)
+def index(request: Request) -> HTMLResponse:
+    config_names = _config_names()
+    run_entries = artifacts.list_runs(_OUTPUTS_DIR)
+    total_runs = len(run_entries)
+    total_pages = max(1, math.ceil(total_runs / _RUNS_PER_PAGE))
+    runs = _run_cards(run_entries[:_RUNS_PER_PAGE])
     visible_jobs = [record for record in jobs.records() if record.get("status") != "done"]
     return templates.TemplateResponse(
         request,
@@ -687,9 +1178,29 @@ def index(request: Request) -> HTMLResponse:
             "configs": config_names,
             "config_periods": _config_periods(config_names),
             "runs": runs,
+            "run_total": total_runs,
+            "run_total_pages": total_pages,
             "jobs": visible_jobs,
             "parameters": _parameter_catalog(),
+            "config_cockpits": _config_cockpits(config_names, run_entries),
         },
+    )
+
+
+@app.get("/api/run-pages/{page}", response_class=HTMLResponse)
+def run_page_fragment(request: Request, page: int) -> HTMLResponse:
+    """Return one lightweight card batch for the scrolling run archive."""
+
+    run_entries = artifacts.list_runs(_OUTPUTS_DIR)
+    total_pages = max(1, math.ceil(len(run_entries) / _RUNS_PER_PAGE))
+    if page < 1 or page > total_pages:
+        raise HTTPException(status_code=404, detail="Run archive page not found")
+    start = (page - 1) * _RUNS_PER_PAGE
+    return templates.TemplateResponse(
+        request,
+        "_run_cards.html",
+        {"runs": _run_cards(run_entries[start : start + _RUNS_PER_PAGE])},
+        headers={"X-Run-Total-Pages": str(total_pages)},
     )
 
 
@@ -697,6 +1208,7 @@ def index(request: Request) -> HTMLResponse:
 def run_detail(request: Request, run_id: str) -> HTMLResponse:
     run_dir = _run_dir_or_404(run_id)
     kind = artifacts._detect_kind(run_id)
+    provenance = _provenance(run_dir)
     context: dict[str, object] = {
         "run_id": run_id,
         "kind": kind,
@@ -705,29 +1217,40 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
             f["name"] for f in artifacts.list_artifacts(run_dir) if str(f["name"]).endswith(".png")
         ],
         "summary_text": artifacts.text_preview(run_dir / "summary.txt"),
-        "provenance": _provenance(run_dir),
+        "provenance": provenance,
+        "fingerprint": artifacts.run_fingerprint(run_dir),
         "rerun_supported": kind in _RERUNNABLE_KINDS,
+        "document_status": "ANALYSIS RECORD",
     }
 
     if kind == "compare-all-scenarios":
+        ranking = artifacts.load_json(run_dir / "scenario_ranking.json")
         recommendation = artifacts.load_json(run_dir / "recommendation.json")
+        reconciliation = artifacts.load_json(run_dir / "reconciliation_report.json")
+        comparison_metadata = artifacts.load_json(run_dir / "metadata.json") or artifacts.load_json(
+            run_dir / "comparison_metadata.json"
+        )
         raw_validation_status = (
             recommendation.get("validation_status") if recommendation is not None else None
         )
         context.update(
             {
-                "ranking": artifacts.load_json(run_dir / "scenario_ranking.json"),
+                "ranking": ranking,
                 "recommendation": recommendation,
                 "validation_status": (
                     raw_validation_status if isinstance(raw_validation_status, dict) else None
                 ),
-                "reconciliation": artifacts.load_json(run_dir / "reconciliation_report.json"),
+                "reconciliation": reconciliation,
                 "headline": _headline_cards(recommendation),
+                "finding": _finding_statement(recommendation, reconciliation),
+                "document_status": (
+                    "VERIFIED" if reconciliation and reconciliation.get("passed") else "HOLD"
+                ),
                 "daily_energy": artifacts.daily_energy_series(run_dir),
                 "daily_clean_reference": artifacts.daily_clean_reference_series(run_dir),
                 "daily_rainfall": artifacts.daily_rainfall_series(run_dir),
                 "daily_weather": artifacts.daily_weather_diagnostics(run_dir),
-                "daily_event_markers": artifacts.daily_event_markers(run_dir),
+                "daily_event_markers": _chart_event_markers(run_dir),
                 "daily_loss": artifacts.daily_series(run_dir, "energy_loss_kwh"),
                 "daily_soiling": artifacts.daily_cleanliness_series(run_dir),
                 "daily_cumgain": artifacts.daily_series(
@@ -743,14 +1266,43 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
             context["annual_summary"] = {"header": header, "rows": rows}
             context["kpi_table"] = _kpi_table(header, rows)
             context["annual_cost_bars"] = _annual_cost_bars(header, rows)
+            context["financial_ranking"] = _financial_ranking(
+                header,
+                rows,
+                ranking,
+                comparison_metadata,
+            )
         cost_path = run_dir / "scenario_cost_summary.csv"
         if cost_path.is_file():
             header, rows = artifacts.read_csv_rows(cost_path, limit=200)
-            context["cost_table"] = _cost_table(header, rows)
+            context["cost_table"] = _cost_table(header, rows, reconciliation)
         return templates.TemplateResponse(request, "run_comparison.html", context)
 
     if kind == "monte-carlo":
         context["mc_summary"] = artifacts.load_json(run_dir / "monte_carlo_summary.json")
+        mc_summary = context["mc_summary"]
+        if isinstance(mc_summary, dict) and mc_summary.get("majority_trial_winner"):
+            winner = str(mc_summary["majority_trial_winner"])
+            scenario_summaries = mc_summary.get("scenario_summaries")
+            winner_summary = (
+                scenario_summaries.get(winner) if isinstance(scenario_summaries, dict) else None
+            )
+            probability = (
+                winner_summary.get("win_probability") if isinstance(winner_summary, dict) else None
+            )
+            probability_text = (
+                f" with {_format_sar(float(probability) * 100)}% win probability"
+                if isinstance(probability, int | float)
+                else ""
+            )
+            context["finding"] = {
+                "tone": "neutral",
+                "text": (
+                    f"{winner.capitalize()} is the majority trial winner{probability_text} "
+                    "across "
+                    f"{mc_summary.get('reconciled_trial_count', 'the stored')} reconciled trials."
+                ),
+            }
         trials_path = run_dir / "monte_carlo_trials.csv"
         if trials_path.is_file():
             header, rows = artifacts.read_csv_rows(trials_path, limit=1000)
@@ -780,16 +1332,27 @@ def compare_runs(request: Request, a: str, b: str) -> HTMLResponse:
     if a == b:
         raise HTTPException(status_code=400, detail="Choose two different runs to compare")
     runs = []
+    run_dirs: list[Path] = []
     for run_id in (a, b):
         run_dir = _run_dir_or_404(run_id)
+        run_dirs.append(run_dir)
         runs.append(
             {
                 "run_id": run_id,
                 "provenance": _provenance(run_dir),
-                "kpi_table": _stored_kpi_table(run_dir),
+                "kind": artifacts._detect_kind(run_id),
+                "fingerprint": artifacts.run_fingerprint(run_dir),
             }
         )
-    return templates.TemplateResponse(request, "compare_runs.html", {"runs": runs})
+    return templates.TemplateResponse(
+        request,
+        "compare_runs.html",
+        {
+            "runs": runs,
+            "config_diff": _config_diff(run_dirs[0], run_dirs[1]),
+            "kpi_diff": _kpi_diff(run_dirs[0], run_dirs[1]),
+        },
+    )
 
 
 @app.get("/config/{name}", response_class=HTMLResponse)
@@ -816,6 +1379,17 @@ def config_page(request: Request, name: str) -> HTMLResponse:
 def config_parameters(name: str) -> JSONResponse:
     """Return the sensitivity catalog selected by one dashboard config."""
     return JSONResponse(_parameter_catalog(_config_path(name)))
+
+
+@app.get("/api/runs/{run_id}/fingerprint")
+def run_fingerprint(run_id: str) -> JSONResponse:
+    """Load a run-card fingerprint on demand instead of blocking the run list."""
+
+    run_dir = _run_dir_or_404(run_id)
+    return JSONResponse(
+        artifacts.run_fingerprint(run_dir) or {},
+        headers={"Cache-Control": "private, max-age=300"},
+    )
 
 
 class LaunchRequest(BaseModel):
@@ -882,20 +1456,42 @@ def _headline_cards(recommendation: dict[str, object] | None) -> list[dict[str, 
         "exploratory": "Exploratory winner",
         "legacy": "Recommended strategy",
     }.get(tier, "Winner under assumptions")
-    cards = [{"label": winner_label, "value": winner, "unit": ""}]
+    cards = [
+        {
+            "label": winner_label,
+            "value": winner,
+            "unit": "",
+            "audit_source": "recommendation.json · winner",
+            "audit_detail": f"Stored certified winner = {winner}",
+        }
+    ]
     margin = recommendation.get("decisive_margin_sar")
     if isinstance(margin, int | float) and math.isfinite(margin):
         cards.append(
-            {"label": "Margin over runner-up", "value": _format_sar(margin), "unit": "SAR/year"}
+            {
+                "label": "Margin over runner-up",
+                "value": _format_sar(margin),
+                "unit": "SAR/year",
+                "audit_source": "recommendation.json · decisive_margin_sar",
+                "audit_detail": "Stored margin between the first- and second-ranked strategies.",
+            }
         )
     for label, key, unit in (
-        ("Net annual benefit", "net_annual_benefit_sar", "SAR/year"),
+        ("Total net annual benefit", "net_annual_benefit_sar", "SAR/year"),
         ("Energy gain vs baseline", "energy_gain_vs_baseline_kwh", "kWh/year"),
         ("Incremental payback", "incremental_payback_years_vs_baseline", "years"),
     ):
         value = winner_kpis.get(key)
         if isinstance(value, int | float) and math.isfinite(float(value)):
-            cards.append({"label": label, "value": _format_sar(value), "unit": unit})
+            cards.append(
+                {
+                    "label": label,
+                    "value": _format_sar(value),
+                    "unit": unit,
+                    "audit_source": f"recommendation.json · kpi_snapshot.{winner}.{key}",
+                    "audit_detail": f"Stored {key} for the certified winner.",
+                }
+            )
     return cards
 
 
@@ -1118,6 +1714,20 @@ def delete_job(job_id: str) -> JSONResponse:
     )
 
 
+def _retry_readonly_removal(
+    remove: Callable[[str], object],
+    path: str,
+    error_info: tuple[type[BaseException], BaseException, object],
+) -> None:
+    """Let ``rmtree`` remove Windows/OneDrive paths marked read-only."""
+
+    error = error_info[1]
+    if not isinstance(error, PermissionError):
+        raise error
+    os.chmod(path, stat.S_IWRITE)
+    remove(path)
+
+
 @app.delete("/api/runs/{run_id}")
 def delete_run(run_id: str) -> JSONResponse:
     """Permanently delete a run directory and everything in it.
@@ -1131,7 +1741,7 @@ def delete_run(run_id: str) -> JSONResponse:
     last_error: OSError | None = None
     for _ in range(4):
         try:
-            shutil.rmtree(run_dir)
+            shutil.rmtree(run_dir, onerror=_retry_readonly_removal)
             last_error = None
             break
         except FileNotFoundError:
@@ -1150,8 +1760,8 @@ def delete_run(run_id: str) -> JSONResponse:
         raise HTTPException(
             status_code=409,
             detail=(
-                f"Could not delete {run_id}: a file or folder is held open by another "
-                "program (often OneDrive sync or antivirus). Close it and try again. "
+                f"Could not delete {run_id}: a file or folder is still in use or inaccessible "
+                "(often OneDrive sync or antivirus). Close it and try again. "
                 f"({type(last_error).__name__}: {last_error})"
             ),
         )

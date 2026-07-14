@@ -7,7 +7,7 @@ no science of its own — every number on screen exists in a file under
 links to those files directly. The only transformations the dashboard performs
 are reshaping stored values (picking CSV columns, grouping rows) and display
 formatting (rounding, thousands separators, best-of-row highlighting of
-already-stored numbers).
+already-stored numbers, plus a display-only subtraction on the two-run diff).
 
 ## Install and run (workstation)
 
@@ -71,6 +71,13 @@ Notes and known limits:
 
 ## Home page
 
+**Configuration cockpit.** The first viewport is an instrument cluster for the
+selected configuration, not a marketing hero. It shows the resolved site and
+coordinates, an offline Arabian-peninsula locator, simulation period,
+assumption set, exact weather-cache readiness, and the most recent matching
+run's winner and margin. Changing the configuration selector updates the
+cockpit as well as the launch-period fields and sensitivity catalog.
+
 **Configuration and period.** The bundled **Default** configuration
 (`configs/default.yaml`) starts with the Riyadh site, **live NASA POWER weather**
 (`weather.provider: nasa_power`), the 2025 site-year, and the central-v2
@@ -131,8 +138,17 @@ run directories; those are managed separately (below). Finished sessions are
 persisted to `outputs/.dashboard_jobs.json`, so the table survives server
 restarts.
 
-**Completed runs.** The runs list shows every run directory under `outputs/`
-(dashboard- or CLI-made) with its creation time. Each row has a **Delete**
+**Completed runs.** The run gallery shows every run directory under `outputs/`
+(dashboard- or CLI-made) as one newest-first scrolling archive. Older card
+batches append automatically near the bottom; the button there is a manual
+fallback, not pagination. Fingerprints load only when their cards approach the
+viewport, so the complete archive does not eagerly load every daily tape.
+**Select all** loads and selects the remaining batches before enabling the bulk
+action. Comparison packages that contain daily artifacts carry one slice
+per stored day, combining daily GHI and baseline cleanliness, with stored
+cleaning events as ticks. The same fingerprint appears larger in the run header
+and full-width in the daily explorer. Packages without daily artifacts show an explicit
+"daily tape unavailable" hatch rather than inventing a year. Each card has a **Delete**
 button, and rows can be check-selected for **Delete selected** — both ask for
 confirmation because deletion permanently removes the run directory,
 including all exports; download the `.zip` first if the files matter. (On
@@ -149,21 +165,24 @@ sessions table.
 
 ## Theme
 
-The topbar has a light/dark toggle. The choice is stored in the browser
-(`localStorage`) and reapplied before first paint on refresh; with no stored
-choice the OS preference is used.
+The topbar names the two shifts **Daylight** and **Night shift**. The control is
+drawn as a sun-elevation dial; internally it retains the light/dark preference
+keys for compatibility. The choice is stored in the browser (`localStorage`)
+and reapplied before first paint on refresh; with no stored choice the OS
+preference is used. IBM Plex Sans, IBM Plex Mono, and IBM Plex Sans Arabic are
+self-hosted under `static/fonts/` with their Open Font License.
 
 ## Comparison results page
 
 Reading order is intentional:
 
-0. **Headline cards and provenance.** For a run whose recommendation is valid,
-   the answer sits at the top: recommended strategy, its margin over the
-   runner-up, net annual benefit, energy gain, and payback — all straight from
-   `recommendation.json`. Below it, a provenance strip states the weather
-   provider, site coordinates, weather checksum, and creation time from the
-   run's `metadata.json`, so results from different sites cannot be confused.
-   (T7 analysis pages show the same strip from their `config_resolved.yaml`.)
+0. **Engineering document header.** Every run page starts with a bilingual
+   EN/AR CAD-style title block: run ID, site and coordinates, weather provider
+   and checksum, assumption set, period, issue date, status, and sheet 1 of 1.
+   It replaces the old provenance strip. A declarative stored-data finding and
+   the medium run fingerprint sit alongside it. For a valid recommendation the
+   headline cards still show strategy, margin, net annual benefit, energy gain,
+   and payback directly from `recommendation.json`.
 1. **Reconciliation strip.** Every T6 check as a pass/fail chip (hover for the
    message), with a plain-English "What is this?" explainer: reconciliation is
    the run's self-audit, including **cost reconciliation** — costs must match
@@ -171,9 +190,18 @@ Reading order is intentional:
    price). If any check fails the strip turns red, a notice explains that no
    ranking was accepted, and the ranking section is absent — the dashboard
    never shows a winner the backend refused to certify.
-2. **Ranking and recommendation.** Net-annual-benefit ranking with the winner
-   highlighted, followed by the recommendation's warnings (always expanded)
-   and the full assumption list (collapsible).
+2. **Ranking and recommendation.** The annual financial-outcome ranking makes
+   the stored arithmetic visible at the decision point: value of extra energy,
+   added annual cost, net change versus baseline, and total net annual benefit.
+   A formula strip names the run's stored electricity tariff, and each scenario
+   has an expandable ledger showing annual AC energy × tariff, annualized CAPEX,
+   annual OPEX, and the resulting total. The dashboard only joins and formats
+   values already stored in the ranking, annual-summary, and metadata artifacts;
+   it does not recalculate economics. The winner is highlighted, followed by the
+   recommendation's warnings (always expanded) and full assumption list
+   (collapsible). The cost-boundary note makes clear that common solar-farm costs
+   are outside the mitigation decision, so baseline has no mitigation CAPEX or
+   OPEX.
 3. **Annual KPIs.** Selected columns of `scenario_annual_summary.csv`,
    transposed so scenarios read across. The best stored value in each row is
    highlighted green using the metric's direction: higher is better for
@@ -196,6 +224,32 @@ Reading order is intentional:
    table — it lives in the collapsed "Evidence status & sources (advanced)"
    section together with sources and notes.
 6. **Artifacts.** A download link for every file plus a full-run `.zip`.
+
+Between the KPI table and explorer, a collapsed strategy-rhythm disclosure
+creates three 53-by-7 dust calendars only when opened. They render stored daily
+cleanliness plus inspection, cleaning, and coating action marks. Permanent line
+glyphs identify baseline (bare panel), reactive
+(droplet), and coating (hex film) in HTML and Chart.js legends.
+
+### Audit mode and print
+
+**Audit mode** turns source-annotated values and figures into dotted,
+clickable traces. Clicking opens a source card naming the artifact and field;
+cost components also show the stored quantity/rate note and the matching
+numbered reconciliation check. This is presentation over stored values, not a
+second economics engine.
+
+The print stylesheet removes application chrome, forces an A4 landscape
+calculation-record palette, preserves rules/hatching, and keeps the bilingual
+title block and verification stamp. Invalid and missing winner-map cells use
+diagonal drawing hatch in screen and print output.
+
+## Compare runs
+
+The two-run page is a diff: changed resolved-config assumptions are rendered as
+minus/plus lines, identical fields are collapsed, and changed annual KPIs show
+before/after values plus a directional delta. The preferred KPI direction is
+used only to colour the displayed change; it does not alter either stored run.
 
 ## Analysis results page
 
@@ -225,7 +279,10 @@ artifact list):
 "view / edit config" opens the Default configuration. **Validate** round-trips
 the text through `load_config`, so schema errors are the same Pydantic
 messages a CLI run would raise. **Validate and save** overwrites the Default —
-the next dashboard or CLI run uses it.
+the next dashboard or CLI run uses it. **Restore page-load values** returns the
+editor to the configuration loaded when the page opened. If the configuration
+was already saved during that page session, save the restored text to make the
+rollback active for subsequent runs.
 
 ### Map location picker
 
@@ -258,7 +315,8 @@ the YAML and states the applicable case.
 - No physics, economics, or statistics in routes, templates, or JS. The only
   data transformation is reshaping (picking CSV columns for a chart, grouping
   cost rows) and display formatting (rounding, separators, highlighting the
-  best of already-stored values).
+  best of already-stored values, and subtracting two stored values for the
+  two-run diff). Display deltas are never persisted or fed back into ranking.
 - Progress and ETA are never estimated beyond measured unit counts reported by
   the use cases themselves (or, for the break-even search, its declared
   evaluation budget — an upper bound, labelled as such).

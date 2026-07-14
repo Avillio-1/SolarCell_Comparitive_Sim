@@ -1,25 +1,62 @@
 {% extends "base.html" %}
+{% from "_fingerprint.html" import run_fingerprint %}
+{% from "_strategy.html" import strategy_label %}
 {% block title %}Runs · SolarClean-DT{% endblock %}
 {% block content %}
 
-<section class="dashboard-hero">
-  <div>
-    <span class="eyebrow">Simulation workspace</span>
-    <h1>Three cleaning strategies, one shared year of weather</h1>
-    <p>Run baseline, reactive cleaning, and coating against identical conditions, then trace
-       every energy, cost, and uncertainty figure back to the file it came from.</p>
+{% set cockpit = config_cockpits.get(default_config_name, {}) %}
+<section class="config-cockpit" aria-label="Selected configuration instruments">
+  <div class="cockpit-ident">
+    <span class="eyebrow">Selected configuration</span>
+    <h1 id="cockpit-site">{{ cockpit.site_name or "Configuration unavailable" }}</h1>
+    <p class="cockpit-coordinates mono" id="cockpit-coordinates">
+      {% if cockpit.latitude is defined %}{{ cockpit.latitude }}, {{ cockpit.longitude }} · {{ cockpit.timezone }}{% else %}–{% endif %}
+    </p>
+    <span class="cockpit-assumptions mono" id="cockpit-assumptions">{{ cockpit.assumption_set or "–" }}</span>
   </div>
-  <div class="hero-facts" aria-label="Project facts">
-    <span><strong>10,000</strong> panels</span>
-    <span><strong>3</strong> strategies</span>
-    <span><strong>1</strong> shared event tape</span>
+  <div class="cockpit-map-wrap">
+    <span class="instrument-label">Arabian Peninsula locator</span>
+    <svg id="cockpit-map" viewBox="34 -34 29 24" preserveAspectRatio="xMidYMid meet"
+         role="img" aria-label="Arabian Peninsula locator map with selected site marked">
+      <rect class="map-sea" x="34" y="-34" width="29" height="24"></rect>
+      <path id="cockpit-map-land" class="map-land" d=""></path>
+      <g id="cockpit-map-marker" class="cockpit-map-marker"
+         transform="translate({{ cockpit.longitude or 46.6753 }} {{ -(cockpit.latitude or 24.7136) }})">
+        <circle r="1.1"></circle><path d="M-2 0h4M0-2v4"></path>
+      </g>
+    </svg>
   </div>
+  <dl class="cockpit-readouts">
+    <div>
+      <dt>Simulation period</dt>
+      <dd class="mono" id="cockpit-period">{{ cockpit.start_date or "–" }} — {{ cockpit.end_date or "–" }}</dd>
+    </div>
+    <div>
+      <dt>Weather readiness</dt>
+      <dd id="cockpit-weather" class="readiness readiness-{{ cockpit.weather_status.state if cockpit.weather_status else 'missing' }}"
+          data-audit-source="selected config · weather + exact cache key"
+          data-audit-detail="Read-only check for the resolved site, period, provider, and normalized weather cache files.">
+        {{ cockpit.weather_status.label if cockpit.weather_status else "unavailable" }}
+      </dd>
+      <small id="cockpit-weather-detail">{{ cockpit.weather_status.detail if cockpit.weather_status else "" }}</small>
+    </div>
+    <div>
+      <dt>Last recorded finding</dt>
+      <dd id="cockpit-last-winner">
+        {% if cockpit.last_run and cockpit.last_run.winner %}
+          {{ strategy_label(cockpit.last_run.winner) }}
+          {% if cockpit.last_run.margin_sar %}<span class="mono">+{{ cockpit.last_run.margin_sar }} SAR</span>{% endif %}
+        {% else %}No certified result{% endif %}
+      </dd>
+      <small id="cockpit-last-run" class="mono">{{ cockpit.last_run.run_id if cockpit.last_run else "no matching run" }}</small>
+    </div>
+  </dl>
 </section>
 
 <section class="panel launch-panel">
   <div class="panel-heading">
-    <div><span class="step-label">New analysis</span><h2>Choose what you want to investigate</h2>
-      <p>Select an analysis and configuration. Extra options appear only when needed.</p></div>
+    <div><span class="step-label">Simulation plan · Form SC-01</span><h2>File a new analysis</h2>
+      <p>Declare the question, configuration, and operating period. The resulting package is immutable.</p></div>
     <a id="config-link" class="config-action" href="/config/{{ default_config_name }}">Review configuration &rarr;</a>
   </div>
   {% if not configs %}
@@ -181,38 +218,28 @@
      here for diagnosis. Deleting a running session asks it to stop at its next checkpoint.</p>
 </section>
 
-<section class="panel">
-  <h2>Completed runs</h2>
+<section class="panel" id="runs-panel">
+  <div class="panel-heading runs-heading">
+    <div><h2>Completed runs</h2>
+      <p>{{ run_total }} stored runs · scroll to browse the complete archive.</p>
+    </div>
+  </div>
   {% if runs %}
   <div class="field-row runs-toolbar">
+    <button type="button" id="select-all-runs" aria-pressed="false">Select all</button>
     <button type="button" id="compare-selected-runs" disabled>Compare 2 selected</button>
     <button type="button" id="delete-selected-runs" class="danger-quiet" disabled>Delete selected</button>
     <span id="runs-delete-error" class="error-text" role="alert"></span>
   </div>
-  <table class="data-table" id="runs-table">
-    <thead><tr><th></th><th>Run</th><th>Created (UTC)</th><th>Analysis</th><th>Site</th><th>Winner</th><th>Reconciled</th><th></th></tr></thead>
-    <tbody>
-      {% for r in runs %}
-      <tr data-run="{{ r.run_id }}">
-        <td><input type="checkbox" class="run-select" value="{{ r.run_id }}" aria-label="select {{ r.run_id }}"></td>
-        <td class="mono"><a href="/run/{{ r.run_id }}">{{ r.run_id }}</a></td>
-        <td class="mono">{{ r.created[:19] or "–" }}</td>
-        <td>{{ r.kind }}</td>
-        <td>{{ r.site or "–" }}</td>
-        <td>{{ r.winner or "–" }}</td>
-        <td>
-          {% if r.valid is none %}–
-          {% elif r.valid %}<span class="chip chip-pass">valid</span>
-          {% else %}<span class="chip chip-fail">failed</span>{% endif %}
-        </td>
-        <td class="run-actions">
-          <a class="quiet-link" href="/api/runs/{{ r.run_id }}/download">download .zip</a>
-          <button type="button" class="danger-quiet run-delete" data-run-id="{{ r.run_id }}">Delete</button>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <div class="run-gallery" id="runs-table">
+    {% include "_run_cards.html" %}
+  </div>
+  <div id="run-archive-loader" class="run-archive-loader"
+       data-next-page="{{ 2 if run_total_pages > 1 else '' }}"
+       data-total-pages="{{ run_total_pages }}" data-total-runs="{{ run_total }}"{% if run_total_pages <= 1 %} hidden{% endif %}>
+    <span id="run-archive-status" role="status">Scroll for older runs</span>
+    <button type="button" id="load-more-runs">Load older runs</button>
+  </div>
   <p class="hint">Deleting a run permanently removes its directory under <code>outputs/</code> —
      download the .zip first if you need the exports.</p>
   {% else %}
@@ -220,14 +247,21 @@
     <p class="first-run-lead">No runs yet. Your first comparison simulates three strategies
        against the same weather and the same events:</p>
     <div class="first-run-scenarios">
-      <div><strong>baseline</strong><span>no mitigation — only rain cleans the panels</span></div>
-      <div><strong>reactive</strong><span>drone inspections trigger crew cleaning once losses
+      <div><strong>{{ strategy_label("baseline") }}</strong><span>no mitigation — only rain cleans the panels</span></div>
+      <div><strong>{{ strategy_label("reactive") }}</strong><span>drone inspections trigger crew cleaning once losses
         cross the threshold</span></div>
-      <div><strong>coating</strong><span>an anti-soiling coating slows dust accumulation</span></div>
+      <div><strong>{{ strategy_label("coating") }}</strong><span>an anti-soiling coating slows dust accumulation</span></div>
     </div>
     <p class="hint">Pick a configuration above and press “Start analysis”.</p>
   </div>
   {% endif %}
 </section>
 
+{% endblock %}
+{% block scripts %}
+<script src="/static/world_land.js?v=20260714b"></script>
+<script>
+  window.solarcleanCockpits = {{ config_cockpits | tojson }};
+  initConfigurationCockpit();
+</script>
 {% endblock %}

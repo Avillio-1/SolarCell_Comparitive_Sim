@@ -11,15 +11,156 @@
   // this button just flips and stores it.
 
   var themeToggle = document.getElementById("theme-toggle");
+  function updateThemeLabel() {
+    var label = themeToggle && themeToggle.querySelector(".theme-label");
+    if (label) label.textContent = document.documentElement.dataset.theme === "dark" ?
+      "Night shift" : "Daylight";
+  }
   if (themeToggle) {
     themeToggle.addEventListener("click", function () {
       var root = document.documentElement;
       var next = root.dataset.theme === "dark" ? "light" : "dark";
       root.dataset.theme = next;
       try { localStorage.setItem("solarclean-theme", next); } catch (e) { /* ignore */ }
+      updateThemeLabel();
       restyleCharts();
     });
+    updateThemeLabel();
   }
+
+  // --- audit mode -----------------------------------------------------
+  // The source trace is an interaction layer over stored figures. It never
+  // fetches or derives another value; it reveals the artifact annotations
+  // already attached to the rendered element.
+
+  var auditToggle = document.getElementById("audit-toggle");
+  var auditPopover = document.getElementById("audit-popover");
+  function setAuditMode(enabled) {
+    document.body.classList.toggle("audit-mode", enabled);
+    if (auditToggle) auditToggle.setAttribute("aria-pressed", enabled ? "true" : "false");
+    if (!enabled && auditPopover) auditPopover.hidden = true;
+  }
+  if (auditToggle) {
+    auditToggle.addEventListener("click", function () {
+      setAuditMode(!document.body.classList.contains("audit-mode"));
+    });
+  }
+  document.querySelectorAll(".footer-audit-toggle").forEach(function (button) {
+    button.addEventListener("click", function () { setAuditMode(true); });
+  });
+  document.addEventListener("click", function (event) {
+    if (!document.body.classList.contains("audit-mode") || !auditPopover) return;
+    var target = event.target.closest("[data-audit-source]");
+    if (!target) return;
+    event.preventDefault();
+    document.getElementById("audit-popover-title").textContent =
+      target.dataset.auditSource || "Stored artifact";
+    document.getElementById("audit-popover-detail").textContent =
+      target.dataset.auditDetail || "This figure is read from the named stored artifact.";
+    var check = document.getElementById("audit-popover-check");
+    check.textContent = target.dataset.auditCheck || "";
+    check.hidden = !target.dataset.auditCheck;
+    auditPopover.hidden = false;
+  });
+  var auditClose = document.querySelector(".audit-close");
+  if (auditClose) auditClose.addEventListener("click", function () { auditPopover.hidden = true; });
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape" && auditPopover) auditPopover.hidden = true;
+  });
+
+  // --- run fingerprints -----------------------------------------------
+
+  function clamp(value, low, high) { return Math.max(low, Math.min(high, value)); }
+  function blendChannel(a, b, mix) { return Math.round(a + (b - a) * mix); }
+  function drawRunFingerprint(canvas, payload) {
+      var dates = payload.dates || [];
+      var ghi = payload.ghi || [];
+      var cleanliness = payload.cleanliness || [];
+      if (!dates.length) {
+        canvas.hidden = true;
+        canvas.parentElement.classList.add("fingerprint-empty");
+        return;
+      }
+      canvas.width = dates.length;
+      canvas.height = 32;
+      var context = canvas.getContext("2d");
+      context.imageSmoothingEnabled = false;
+      var finiteGhi = ghi.filter(function (value) { return typeof value === "number" && isFinite(value); });
+      var minGhi = finiteGhi.length ? Math.min.apply(null, finiteGhi) : 0;
+      var maxGhi = finiteGhi.length ? Math.max.apply(null, finiteGhi) : 1;
+      var cleaningDates = new Set(payload.cleaning_dates || []);
+      dates.forEach(function (date, index) {
+        var ghiValue = typeof ghi[index] === "number" ? ghi[index] : minGhi;
+        var ghiLevel = maxGhi === minGhi ? 0.6 : clamp((ghiValue - minGhi) / (maxGhi - minGhi), 0, 1);
+        var cleanValue = typeof cleanliness[index] === "number" ? cleanliness[index] : 1;
+        var dustLevel = clamp((1 - cleanValue) / 0.3, 0, 1);
+        var clear = [30, 80, 108];
+        var dusty = [165, 109, 46];
+        var light = 0.55 + ghiLevel * 0.55;
+        var red = clamp(blendChannel(clear[0], dusty[0], dustLevel) * light, 0, 255);
+        var green = clamp(blendChannel(clear[1], dusty[1], dustLevel) * light, 0, 255);
+        var blue = clamp(blendChannel(clear[2], dusty[2], dustLevel) * light, 0, 255);
+        context.fillStyle = "rgb(" + red + "," + green + "," + blue + ")";
+        context.fillRect(index, 0, 1, canvas.height);
+        if (cleaningDates.has(date)) {
+          context.fillStyle = "#d8f2e4";
+          context.fillRect(index, 0, 1, 9);
+        }
+      });
+  }
+
+  function loadRunFingerprint(canvas) {
+    if (canvas.dataset.fingerprintState) return;
+    canvas.dataset.fingerprintState = "loading";
+    if (canvas.dataset.fingerprintSource) {
+      var source = document.getElementById(canvas.dataset.fingerprintSource);
+      try {
+        drawRunFingerprint(canvas, JSON.parse(source && source.dataset.fingerprint || "{}"));
+      } catch (error) {
+        drawRunFingerprint(canvas, {});
+      }
+      canvas.dataset.fingerprintState = "ready";
+      return;
+    }
+    if (canvas.dataset.fingerprint) {
+      try { drawRunFingerprint(canvas, JSON.parse(canvas.dataset.fingerprint)); }
+      catch (error) { drawRunFingerprint(canvas, {}); }
+      canvas.dataset.fingerprintState = "ready";
+      return;
+    }
+    fetch(canvas.dataset.fingerprintUrl)
+      .then(function (response) {
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        return response.json();
+      })
+      .then(function (payload) { drawRunFingerprint(canvas, payload); })
+      .catch(function () { drawRunFingerprint(canvas, {}); })
+      .finally(function () { canvas.dataset.fingerprintState = "ready"; });
+  }
+
+  function initRunFingerprints(root) {
+    var scope = root || document;
+    var canvases = Array.from(scope.querySelectorAll("canvas.run-fingerprint"))
+      .filter(function (canvas) { return !canvas.dataset.fingerprintBound; });
+    canvases.forEach(function (canvas) { canvas.dataset.fingerprintBound = "true"; });
+    var lazy = canvases.filter(function (canvas) { return canvas.dataset.fingerprintUrl; });
+    canvases.filter(function (canvas) { return !canvas.dataset.fingerprintUrl; })
+      .forEach(loadRunFingerprint);
+    if (!("IntersectionObserver" in window)) {
+      lazy.forEach(loadRunFingerprint);
+      return;
+    }
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        if (!entry.isIntersecting) return;
+        observer.unobserve(entry.target);
+        loadRunFingerprint(entry.target);
+      });
+    }, { rootMargin: "160px 0px" });
+    lazy.forEach(function (canvas) { observer.observe(canvas); });
+  }
+  window.initRunFingerprints = initRunFingerprints;
+  initRunFingerprints(document);
 
   var kindSelect = document.getElementById("kind");
   if (kindSelect) {
@@ -245,8 +386,8 @@
     }
   }
 
-  // The completed-runs table is server-rendered. When a job finishes, fetch
-  // the page again and swap in the fresh rows so the new run appears without
+  // The completed-runs gallery is server-rendered. When a job finishes, fetch
+  // the page again and swap in the fresh first batch so the new run appears without
   // a manual reload (Jinja stays the only place that renders run rows).
   function refreshCompletedRuns() {
     return fetch("/")
@@ -254,13 +395,30 @@
       .then(function (html) {
         if (!html) return false;
         var doc = new DOMParser().parseFromString(html, "text/html");
-        var freshBody = doc.querySelector("#runs-table tbody");
-        var currentBody = document.querySelector("#runs-table tbody");
-        if (freshBody && currentBody) {
-          currentBody.innerHTML = freshBody.innerHTML;
+        var freshGallery = doc.querySelector("#runs-table");
+        var currentGallery = document.querySelector("#runs-table");
+        if (freshGallery && currentGallery) {
+          currentGallery.replaceChildren.apply(
+            currentGallery,
+            Array.from(freshGallery.childNodes).map(function (node) { return node.cloneNode(true); })
+          );
+          var freshLoader = doc.querySelector("#run-archive-loader");
+          var currentLoader = document.querySelector("#run-archive-loader");
+          if (freshLoader && currentLoader) {
+            currentLoader.dataset.nextPage = freshLoader.dataset.nextPage || "";
+            currentLoader.dataset.totalPages = freshLoader.dataset.totalPages || "1";
+            currentLoader.dataset.totalRuns = freshLoader.dataset.totalRuns || "0";
+            currentLoader.hidden = freshLoader.hidden;
+            var status = currentLoader.querySelector("#run-archive-status");
+            if (status) status.textContent = "Scroll for older runs";
+            var loadButton = currentLoader.querySelector("#load-more-runs");
+            if (loadButton) loadButton.hidden = false;
+          }
+          selectEverything = false;
+          initRunFingerprints(currentGallery);
           updateBulkDeleteState();
           return true;
-        } else if (freshBody && !currentBody) {
+        } else if (freshGallery && !currentGallery) {
           // First completed run ever: the empty-state panel has no table to
           // swap into, so take the one-off full reload.
           window.location.reload();
@@ -371,7 +529,7 @@
               throw new Error(data.detail || ("HTTP " + r.status + " deleting " + runId));
             });
           }
-          var row = document.querySelector('tr[data-run="' + runId + '"]');
+          var row = document.querySelector('[data-run="' + runId + '"]');
           if (row) row.remove();
           updateBulkDeleteState();
         })
@@ -379,15 +537,92 @@
     });
   }
 
+  var runsTable = document.getElementById("runs-table");
+  var runArchiveLoader = document.getElementById("run-archive-loader");
+  var archiveLoadPromise = null;
+  var selectEverything = false;
+
+  function archiveHasMore() {
+    return Boolean(runArchiveLoader && runArchiveLoader.dataset.nextPage);
+  }
+
+  function setArchiveStatus(message) {
+    var status = document.getElementById("run-archive-status");
+    if (status) status.textContent = message;
+  }
+
+  function loadNextRunPage() {
+    if (!runsTable || !archiveHasMore()) return Promise.resolve(false);
+    if (archiveLoadPromise) return archiveLoadPromise;
+    var page = parseInt(runArchiveLoader.dataset.nextPage, 10);
+    var totalPages = parseInt(runArchiveLoader.dataset.totalPages, 10);
+    var loadMoreButton = document.getElementById("load-more-runs");
+    setArchiveStatus("Loading older runs…");
+    if (loadMoreButton) loadMoreButton.disabled = true;
+    archiveLoadPromise = fetch("/api/run-pages/" + page)
+      .then(function (response) {
+        if (!response.ok) throw new Error("HTTP " + response.status);
+        return response.text();
+      })
+      .then(function (html) {
+        var template = document.createElement("template");
+        template.innerHTML = html;
+        var cards = Array.from(template.content.querySelectorAll(".run-card"));
+        if (selectEverything) {
+          cards.forEach(function (card) {
+            var checkbox = card.querySelector(".run-select");
+            if (checkbox) checkbox.checked = true;
+          });
+        }
+        runsTable.appendChild(template.content);
+        initRunFingerprints(runsTable);
+        runArchiveLoader.dataset.nextPage = page < totalPages ? String(page + 1) : "";
+        var loadedCount = runsTable.querySelectorAll(".run-card").length;
+        var totalRuns = runArchiveLoader.dataset.totalRuns;
+        setArchiveStatus(
+          archiveHasMore() ? "Loaded " + loadedCount + " of " + totalRuns + " runs" :
+            "All " + totalRuns + " runs loaded"
+        );
+        if (loadMoreButton) loadMoreButton.hidden = !archiveHasMore();
+        updateBulkDeleteState();
+        return true;
+      })
+      .catch(function () {
+        setArchiveStatus("Could not load older runs. Try again.");
+        return false;
+      })
+      .finally(function () {
+        archiveLoadPromise = null;
+        if (loadMoreButton) loadMoreButton.disabled = false;
+      });
+    return archiveLoadPromise;
+  }
+
+  function loadAllRunPages() {
+    if (!archiveHasMore()) return Promise.resolve(true);
+    return loadNextRunPage().then(function (loaded) {
+      return loaded ? loadAllRunPages() : false;
+    });
+  }
+
   function updateBulkDeleteState() {
+    var checkboxes = Array.from(document.querySelectorAll("#runs-table .run-select"));
     var bulkButton = document.getElementById("delete-selected-runs");
-    var selectedCount = document.querySelectorAll(".run-select:checked").length;
+    var selectedCount = checkboxes.filter(function (checkbox) { return checkbox.checked; }).length;
     if (bulkButton) bulkButton.disabled = selectedCount === 0;
     var compareButton = document.getElementById("compare-selected-runs");
     if (compareButton) compareButton.disabled = selectedCount !== 2;
+    var selectAllButton = document.getElementById("select-all-runs");
+    if (selectAllButton) {
+      var allSelected = !archiveHasMore() && checkboxes.length > 0 &&
+        selectedCount === checkboxes.length;
+      selectAllButton.disabled = checkboxes.length === 0 || selectEverything;
+      selectAllButton.textContent = selectEverything ? "Loading all runs…" :
+        allSelected ? "Clear selection" : "Select all";
+      selectAllButton.setAttribute("aria-pressed", allSelected ? "true" : "false");
+    }
   }
 
-  var runsTable = document.getElementById("runs-table");
   if (runsTable) {
     var runsError = document.getElementById("runs-delete-error");
     runsTable.addEventListener("click", function (event) {
@@ -395,7 +630,32 @@
       if (button) deleteRuns([button.dataset.runId], runsError);
     });
     runsTable.addEventListener("change", function (event) {
-      if (event.target.classList.contains("run-select")) updateBulkDeleteState();
+      if (event.target.classList.contains("run-select")) {
+        selectEverything = false;
+        updateBulkDeleteState();
+      }
+    });
+    var selectAllButton = document.getElementById("select-all-runs");
+    selectAllButton.addEventListener("click", function () {
+      var checkboxes = Array.from(runsTable.querySelectorAll(".run-select"));
+      var allSelected = !archiveHasMore() && checkboxes.length > 0 &&
+        checkboxes.every(function (checkbox) { return checkbox.checked; });
+      if (allSelected) {
+        checkboxes.forEach(function (checkbox) { checkbox.checked = false; });
+        updateBulkDeleteState();
+        return;
+      }
+      selectEverything = true;
+      checkboxes.forEach(function (checkbox) { checkbox.checked = true; });
+      updateBulkDeleteState();
+      loadAllRunPages().then(function (loadedAll) {
+        selectEverything = false;
+        if (loadedAll) {
+          Array.from(runsTable.querySelectorAll(".run-select"))
+            .forEach(function (checkbox) { checkbox.checked = true; });
+        }
+        updateBulkDeleteState();
+      });
     });
     var bulkButton = document.getElementById("delete-selected-runs");
     bulkButton.addEventListener("click", function () {
@@ -412,6 +672,17 @@
           "&b=" + encodeURIComponent(selected[1]);
       }
     });
+
+    var loadMoreButton = document.getElementById("load-more-runs");
+    if (loadMoreButton) loadMoreButton.addEventListener("click", loadNextRunPage);
+    if (runArchiveLoader && archiveHasMore() && "IntersectionObserver" in window) {
+      var archiveObserver = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting && archiveHasMore()) loadNextRunPage();
+        });
+      }, { rootMargin: "360px 0px" });
+      archiveObserver.observe(runArchiveLoader);
+    }
   }
 
   // --- re-run an analysis ----------------------------------------------
@@ -442,6 +713,30 @@
 
   // --- config editor ------------------------------------------------------
 
+  var configEditor = document.getElementById("config-editor");
+  if (configEditor) {
+    configEditor.originalContent = configEditor.value;
+    configEditor.savedContent = configEditor.value;
+  }
+
+  function syncSiteLocationFromEditor(editor) {
+    var lat = parseFloat(parseYamlScalar(editor.value, "latitude"));
+    var lon = parseFloat(parseYamlScalar(editor.value, "longitude"));
+    var latInput = document.getElementById("site-lat");
+    var lonInput = document.getElementById("site-lon");
+    var marker = document.getElementById("site-map-marker");
+    if (latInput) latInput.value = isNaN(lat) ? "" : lat;
+    if (lonInput) lonInput.value = isNaN(lon) ? "" : lon;
+    if (marker) {
+      marker.hidden = isNaN(lat) || isNaN(lon);
+      if (!marker.hidden) {
+        marker.setAttribute("cx", lon);
+        marker.setAttribute("cy", -lat);
+      }
+    }
+    updateProviderNote(editor.value);
+  }
+
   function validateConfig(saveAs) {
     var editor = document.getElementById("config-editor");
     var statusEl = document.getElementById("config-status");
@@ -460,6 +755,7 @@
           statusEl.className = "bad";
           statusEl.textContent = result.error;
         } else if (result.saved) {
+          editor.savedContent = payload.content;
           statusEl.className = "ok";
           statusEl.textContent = "Valid. Saved — the next run uses this configuration.";
         } else if (result.error) {
@@ -483,6 +779,29 @@
     if (saveDefaultButton) {
       saveDefaultButton.addEventListener("click", function () {
         validateConfig(document.getElementById("config-editor").dataset.name);
+      });
+    }
+    var resetConfigButton = document.getElementById("reset-config-btn");
+    if (resetConfigButton) {
+      resetConfigButton.addEventListener("click", function () {
+        var editor = document.getElementById("config-editor");
+        var statusEl = document.getElementById("config-status");
+        var hadEditorChanges = editor.value !== editor.originalContent;
+        var savedValuesDiffer = editor.savedContent !== editor.originalContent;
+        editor.value = editor.originalContent;
+        editor.dispatchEvent(new Event("input", { bubbles: true }));
+        syncSiteLocationFromEditor(editor);
+        var locationStatus = document.getElementById("location-status");
+        if (locationStatus) locationStatus.textContent = "";
+        statusEl.className = savedValuesDiffer || hadEditorChanges ? "ok" : "";
+        if (savedValuesDiffer) {
+          statusEl.textContent = "Page-load values restored in the editor. " +
+            "Validate and save to make them the active Default again.";
+        } else if (hadEditorChanges) {
+          statusEl.textContent = "Unsaved changes reset to the page-load values.";
+        } else {
+          statusEl.textContent = "Already showing the values from when this page opened.";
+        }
       });
     }
   }
@@ -697,6 +1016,73 @@
       statusEl.textContent = "Updated site.latitude / site.longitude in the editor — " +
         "validate and save to keep it.";
     });
+  };
+
+  // --- selected-config cockpit ---------------------------------------
+
+  function strategyLabelNode(strategy) {
+    var label = document.createElement("span");
+    label.className = "strategy-label strategy-" + strategy;
+    var glyph = document.createElement("span");
+    glyph.className = "strategy-glyph";
+    glyph.setAttribute("aria-hidden", "true");
+    var name = document.createElement("span");
+    name.textContent = strategy.charAt(0).toUpperCase() + strategy.slice(1);
+    label.append(glyph, name);
+    return label;
+  }
+
+  window.initConfigurationCockpit = function () {
+    var cockpits = window.solarcleanCockpits || {};
+    var mapLand = document.getElementById("cockpit-map-land");
+    if (mapLand && typeof window.SOLARCLEAN_WORLD_LAND === "string") {
+      mapLand.setAttribute("d", window.SOLARCLEAN_WORLD_LAND);
+    }
+    if (!configSelect) return;
+
+    function setText(id, value) {
+      var element = document.getElementById(id);
+      if (element) element.textContent = value == null || value === "" ? "–" : String(value);
+    }
+    function renderCockpit() {
+      var state = cockpits[configSelect.value];
+      if (!state || state.error) {
+        setText("cockpit-site", "Configuration unavailable");
+        setText("cockpit-weather", "configuration error");
+        return;
+      }
+      setText("cockpit-site", state.site_name);
+      setText("cockpit-coordinates", state.latitude + ", " + state.longitude + " · " + state.timezone);
+      setText("cockpit-assumptions", state.assumption_set);
+      setText("cockpit-period", state.start_date + " — " + state.end_date);
+      var weather = document.getElementById("cockpit-weather");
+      if (weather) {
+        weather.className = "readiness readiness-" + state.weather_status.state;
+        weather.textContent = state.weather_status.label;
+      }
+      setText("cockpit-weather-detail", state.weather_status.detail);
+      var marker = document.getElementById("cockpit-map-marker");
+      if (marker) marker.setAttribute("transform", "translate(" + state.longitude + " " + (-state.latitude) + ")");
+      var winner = document.getElementById("cockpit-last-winner");
+      if (winner) {
+        winner.replaceChildren();
+        if (state.last_run && state.last_run.winner) {
+          winner.appendChild(strategyLabelNode(state.last_run.winner));
+          if (state.last_run.margin_sar) {
+            var margin = document.createElement("span");
+            margin.className = "mono";
+            margin.textContent = "+" + state.last_run.margin_sar + " SAR";
+            winner.appendChild(document.createTextNode(" "));
+            winner.appendChild(margin);
+          }
+        } else {
+          winner.textContent = "No certified result";
+        }
+      }
+      setText("cockpit-last-run", state.last_run ? state.last_run.run_id : "no matching run");
+    }
+    configSelect.addEventListener("change", renderCockpit);
+    renderCockpit();
   };
 
   // --- charts ---------------------------------------------------------
@@ -731,11 +1117,58 @@
     return cssVar("--chart-" + scenario, cssVar("--ink", "#333"));
   }
 
+  function strategyAxisLabel(scenario) {
+    var marks = { baseline: "▤", reactive: "◊", coating: "⬡" };
+    return (marks[scenario] || "") + " " + scenario;
+  }
+
+  function strategyPointStyle(scenario) {
+    var glyph = document.createElement("canvas");
+    glyph.width = 18;
+    glyph.height = 18;
+    var context = glyph.getContext("2d");
+    context.strokeStyle = scenarioColor(scenario);
+    context.lineWidth = 1.5;
+    context.lineJoin = "round";
+    context.lineCap = "round";
+    context.beginPath();
+    if (scenario === "baseline") {
+      context.rect(2.5, 5, 13, 8);
+      context.moveTo(9, 5);
+      context.lineTo(9, 13);
+      context.moveTo(2.5, 9);
+      context.lineTo(15.5, 9);
+    } else if (scenario === "reactive") {
+      context.moveTo(9, 2.5);
+      context.bezierCurveTo(7, 6, 4.5, 8.5, 4.5, 11);
+      context.bezierCurveTo(4.5, 14, 6.5, 15.5, 9, 15.5);
+      context.bezierCurveTo(11.5, 15.5, 13.5, 14, 13.5, 11);
+      context.bezierCurveTo(13.5, 8.5, 11, 6, 9, 2.5);
+    } else if (scenario === "coating") {
+      context.moveTo(5, 2.5);
+      context.lineTo(13, 2.5);
+      context.lineTo(16, 9);
+      context.lineTo(13, 15.5);
+      context.lineTo(5, 15.5);
+      context.lineTo(2, 9);
+      context.closePath();
+    } else {
+      context.arc(9, 9, 4, 0, Math.PI * 2);
+    }
+    context.stroke();
+    return glyph;
+  }
+
   function baseOptions(yLabel) {
     return {
       animation: false,
       interaction: { mode: "index", intersect: false },
-      plugins: { legend: { position: "bottom", labels: { color: chartInk() } } },
+      plugins: {
+        legend: {
+          position: "bottom",
+          labels: { color: chartInk(), usePointStyle: true, pointStyleWidth: 15 },
+        },
+      },
       scales: {
         x: {
           ticks: { maxTicksLimit: 14, font: { size: 11 }, color: chartInk() },
@@ -775,6 +1208,7 @@
         if (dataset._scenario) {
           var color = scenarioColor(dataset._scenario);
           dataset.borderColor = color;
+          dataset.pointStyle = strategyPointStyle(dataset._scenario);
           if (dataset.type !== "line" && dataset.backgroundColor !== "transparent") {
             dataset.backgroundColor = color;
           }
@@ -791,10 +1225,11 @@
       var style = seriesStyles && seriesStyles[scenario];
       var colorScenario = style && style.colorScenario ? style.colorScenario : scenario;
       return {
-        label: style && style.label ? style.label : scenario,
+        label: style && style.label ? style.label : scenario.charAt(0).toUpperCase() + scenario.slice(1),
         _scenario: colorScenario,
         data: data.series[scenario],
         borderColor: scenarioColor(colorScenario),
+        pointStyle: strategyPointStyle(colorScenario),
         backgroundColor: "transparent",
         borderWidth: 1.5,
         pointRadius: 0,
@@ -1209,12 +1644,13 @@
     explorerPayload = payload;
     var datasets = Object.keys(data.series).map(function (scenario) {
       return {
-        label: scenario + " actual",
+        label: scenario.charAt(0).toUpperCase() + scenario.slice(1) + " actual",
         _kind: "actual",
         _scenario: scenario,
         hidden: scenario !== "baseline",
         data: data.series[scenario],
         borderColor: scenarioColor(scenario),
+        pointStyle: strategyPointStyle(scenario),
         backgroundColor: "transparent",
         borderWidth: 1.8,
         pointRadius: 0,
@@ -1263,11 +1699,67 @@
     setExplorerIndex(0, false);
   }
 
+  function drawDustCalendars(payload) {
+    if (!payload || !Array.isArray(payload.dates) || !payload.dates.length) return;
+    document.querySelectorAll("[data-calendar-scenario]").forEach(function (calendar) {
+      var scenario = calendar.dataset.calendarScenario;
+      var values = payload.series && payload.series[scenario];
+      if (!Array.isArray(values)) return;
+      calendar.replaceChildren();
+      var first = new Date(payload.dates[0] + "T00:00:00Z");
+      var mondayOffset = (first.getUTCDay() + 6) % 7;
+      for (var blankIndex = 0; blankIndex < mondayOffset; blankIndex += 1) {
+        var blank = document.createElement("span");
+        blank.className = "dust-day dust-day-placeholder";
+        blank.setAttribute("aria-hidden", "true");
+        calendar.appendChild(blank);
+      }
+      payload.dates.forEach(function (date, index) {
+        var cell = document.createElement("span");
+        var value = values[index];
+        var dust = typeof value === "number" ? clamp((1 - value) / 0.3, 0, 1) : 0;
+        cell.className = "dust-day";
+        cell.style.setProperty("--day-color", "rgba(151, 105, 48, " + (0.08 + dust * 0.88) + ")");
+        var events = payload.events && payload.events[scenario] && payload.events[scenario][date] || [];
+        events.forEach(function (category) { cell.classList.add("is-" + category); });
+        cell.title = date + " · cleanliness " +
+          (typeof value === "number" ? value.toFixed(4) : "–") +
+          (events.length ? " · " + events.join(", ") : "");
+        cell.setAttribute("aria-label", cell.title);
+        calendar.appendChild(cell);
+      });
+    });
+  }
+
+  function initDustCalendars(payload) {
+    var panel = document.querySelector(".dust-calendar-panel");
+    if (!panel || !payload.dailySoiling) return;
+    var events = {};
+    (payload.dailyEventMarkers || []).forEach(function (marker) {
+      var scenarioEvents = events[marker.scenario] || (events[marker.scenario] = {});
+      var dayEvents = scenarioEvents[marker.date] || (scenarioEvents[marker.date] = []);
+      if (dayEvents.indexOf(marker.category) === -1) dayEvents.push(marker.category);
+    });
+    var rendered = false;
+    var render = function () {
+      if (rendered || !panel.open) return;
+      drawDustCalendars({
+        dates: payload.dailySoiling.dates,
+        series: payload.dailySoiling.series,
+        events: events,
+      });
+      rendered = true;
+    };
+    panel.addEventListener("toggle", render);
+    render();
+  }
+
   // Called from the comparison template after Chart.js loads. Data comes
   // straight from the run's stored CSV artifacts via the server.
   window.drawComparisonCharts = function () {
     applyChartTypography();
     var payload = window.solarcleanCharts || {};
+    initDustCalendars(payload);
     drawEnergyExplorer(payload);
     drawScenarioLines("daily-loss-chart", payload.dailyLoss, "Energy loss (kWh/day)");
     drawScenarioLines(
@@ -1285,7 +1777,7 @@
       registerChart(new Chart(canvas, {
         type: "bar",
         data: {
-          labels: bars.scenarios,
+          labels: bars.scenarios.map(strategyAxisLabel),
           datasets: bars.metrics.map(function (metric, i) {
             return {
               label: metric.label,
@@ -1324,6 +1816,7 @@
           return { x: value, y: row + ((i % 7) - 3) * 0.07 };
         }),
         backgroundColor: scenarioColor(scenario),
+        pointStyle: strategyPointStyle(scenario),
         pointRadius: 3,
       };
     });
@@ -1335,7 +1828,7 @@
     options.scales.y.min = -0.6;
     options.scales.y.max = scenarios.length - 0.4;
     options.scales.y.ticks.callback = function (value) {
-      return Number.isInteger(value) ? scenarios[value] : "";
+      return Number.isInteger(value) ? strategyAxisLabel(scenarios[value]) : "";
     };
     options.interaction = { mode: "nearest", intersect: false };
     registerChart(new Chart(canvas, { type: "scatter", data: { datasets: datasets }, options: options }));
@@ -1428,7 +1921,7 @@
       registerChart(new Chart(winCanvas, {
         type: "bar",
         data: {
-          labels: scenarios,
+          labels: scenarios.map(strategyAxisLabel),
           datasets: [{
             label: "win probability",
             data: scenarios.map(function (sid) {
@@ -1452,7 +1945,7 @@
       registerChart(new Chart(benefitCanvas, {
         type: "bar",
         data: {
-          labels: scenarios,
+          labels: scenarios.map(strategyAxisLabel),
           datasets: stats.map(function (stat, i) {
             return {
               label: stat.label,

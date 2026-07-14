@@ -1,0 +1,18 @@
+{% macro run_fingerprint(data=none, size="medium", label="Run fingerprint", url=none, source=none, element_id=none) -%}
+{% if data or url or source %}
+<span class="fingerprint-wrap fingerprint-{{ size }}">
+  <canvas class="run-fingerprint"{% if element_id %} id="{{ element_id }}"{% endif %}
+          {% if data %}data-fingerprint="{{ data|tojson|forceescape }}"{% endif %}
+          {% if url %}data-fingerprint-url="{{ url }}"{% endif %}
+          {% if source %}data-fingerprint-source="{{ source }}"{% endif %}
+          role="img" aria-label="{{ label }}: daily GHI and baseline dust cleanliness, with cleaning-event ticks"
+          data-audit-source="daily_weather_diagnostics.csv + scenario_daily_summary.csv + scenario_events.csv"
+          data-audit-detail="Each vertical slice is one stored day. Colour combines stored GHI and baseline cleanliness; top ticks are stored cleaning events."></canvas>
+</span>
+{% else %}
+<span class="fingerprint-wrap fingerprint-{{ size }} fingerprint-empty"
+      title="This artifact package does not contain stored daily weather and scenario summaries.">
+  <span>daily tape unavailable</span>
+</span>
+{% endif %}
+{%- endmacro %}

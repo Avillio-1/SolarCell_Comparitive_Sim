@@ -13,8 +13,12 @@ markers, and web-readiness (environment-configurable paths and bind address).
 
 from __future__ import annotations
 
+import csv
 import io
 import json
+import os
+import shutil
+import stat
 import threading
 import time
 import zipfile
@@ -43,6 +47,7 @@ from solarclean.dashboard.__main__ import resolve_bind  # noqa: E402
 from solarclean.dashboard.app import (  # noqa: E402
     DEFAULT_CONFIG_NAME,
     _cost_table,
+    _financial_ranking,
     _format_sar,
     _kpi_table,
     app,
@@ -379,8 +384,64 @@ def test_displayed_ranking_matches_artifact(client: TestClient, comparison_run: 
         return
     for entry in ranking:
         assert entry["scenario_id"] in page
-        # Net annual benefit is rendered with %.0f on the ranking table.
-        assert f"{entry['net_annual_benefit_sar']:.0f}" in page
+        # Net annual benefit is displayed with readable currency grouping.
+        assert _format_sar(entry["net_annual_benefit_sar"]) in page
+
+
+def test_financial_ranking_explains_total_and_baseline_change(
+    client: TestClient,
+    comparison_run: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outputs = tmp_path / "outputs"
+    run_dir = outputs / "test-financial-ranking-compare-all-scenarios-20260714"
+    shutil.copytree(comparison_run, run_dir)
+    with (run_dir / "scenario_annual_summary.csv").open(encoding="utf-8", newline="") as handle:
+        annual_rows = list(csv.DictReader(handle))
+    ranking_rows = [
+        {
+            "rank": rank,
+            "scenario_id": row["scenario_name"],
+            "annual_actual_energy_kwh": float(row["annual_actual_energy_kwh"]),
+            "energy_gain_vs_baseline_kwh": float(row["energy_gain_vs_baseline_kwh"]),
+            "net_annual_benefit_sar": float(row["net_annual_benefit_sar"]),
+            "tied_with_previous": False,
+        }
+        for rank, row in enumerate(annual_rows, start=1)
+    ]
+    (run_dir / "scenario_ranking.json").write_text(
+        json.dumps({"ranking": ranking_rows}), encoding="utf-8"
+    )
+    (run_dir / "recommendation.json").write_text(
+        json.dumps(
+            {
+                "calculation_valid": True,
+                "valid": True,
+                "winner": ranking_rows[0]["scenario_id"],
+                "recommendation_tier": "exploratory",
+                "warnings": [],
+                "assumptions": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "reconciliation_report.json").write_text(
+        json.dumps({"passed": True, "checks": []}), encoding="utf-8"
+    )
+    monkeypatch.setattr(dashboard_app, "_OUTPUTS_DIR", outputs)
+
+    page = client.get(f"/run/{run_dir.name}").text
+
+    assert "Ranking by annual financial outcome" in page
+    assert "Value of extra energy" in page
+    assert "Net change" in page and "vs baseline" in page
+    assert "0.18 SAR/kWh" in page
+    assert "Cost boundary:" in page
+    first = ranking_rows[0]
+    assert f"How {_format_sar(first['net_annual_benefit_sar'])} SAR/year is calculated" in page
+    assert "annual AC energy ×" in page
+    assert "incremental_net_annual_benefit_vs_baseline_sar" in page
 
 
 def test_reconciliation_chips_rendered(client: TestClient, comparison_run: Path) -> None:
@@ -516,6 +577,66 @@ def test_kpi_table_marks_best_by_metric_direction() -> None:
     assert by_label["Water used (L)"]["best"] == [False, False, False]
 
 
+def test_financial_ranking_joins_stored_explanation_values_without_recalculation() -> None:
+    header = [
+        "scenario_name",
+        "annual_actual_energy_kwh",
+        "annual_revenue_sar",
+        "annualized_capex_sar",
+        "annual_opex_sar",
+        "total_annual_cost_sar",
+        "net_annual_benefit_sar",
+        "incremental_revenue_vs_baseline_sar",
+        "incremental_annual_cost_vs_baseline_sar",
+        "incremental_net_annual_benefit_vs_baseline_sar",
+        "total_capex_sar",
+        "capital_recovery_life_years",
+    ]
+    rows = [
+        ["baseline", "1000", "180", "0", "0", "0", "180", "0", "0", "0", "0", "15"],
+        # Deliberately non-arithmetic values prove the dashboard passes stored
+        # cells through instead of becoming a second economics engine.
+        [
+            "reactive",
+            "2000",
+            "999",
+            "111",
+            "222",
+            "333",
+            "777",
+            "444",
+            "555",
+            "-666",
+            "1500",
+            "3",
+        ],
+    ]
+    ranking = {
+        "ranking": [
+            {"rank": 1, "scenario_id": "baseline", "net_annual_benefit_sar": 180.0},
+            {"rank": 2, "scenario_id": "reactive", "net_annual_benefit_sar": 777.0},
+        ]
+    }
+    metadata = {
+        "economics_config": {
+            "tariff_sar_per_kwh": 0.18,
+            "annualization_method": "capital_recovery_factor",
+        }
+    }
+
+    result = _financial_ranking(header, rows, ranking, metadata)
+
+    assert result is not None
+    assert result["tariff_sar_per_kwh"] == 0.18
+    assert result["annualization_method"] == "capital recovery factor"
+    reactive = result["rows"][1]
+    assert reactive["annual_revenue_sar"] == "999"
+    assert reactive["incremental_revenue_sar"] == "444"
+    assert reactive["incremental_annual_cost_sar"] == "555"
+    assert reactive["incremental_net_annual_benefit_sar"] == "-666"
+    assert reactive["net_annual_benefit_sar"] == 777.0
+
+
 def test_cost_table_groups_components_and_passes_through_stored_totals() -> None:
     header = [
         "scenario_id",
@@ -547,7 +668,7 @@ def test_cost_table_groups_components_and_passes_through_stored_totals() -> None
             "SAR/year",
             "wage refs",
             "blocked",
-            "n1",
+            "crew_hours=580.8 hour; unit_rate=35 SAR/hour",
         ],
         [
             "reactive",
@@ -565,7 +686,16 @@ def test_cost_table_groups_components_and_passes_through_stored_totals() -> None
             "n2",
         ],
     ]
-    table = _cost_table(header, rows)
+    reconciliation = {
+        "checks": [
+            {
+                "name": "reactive_cost_crew_hours_reconciles",
+                "passed": True,
+                "message": "OK",
+            }
+        ]
+    }
+    table = _cost_table(header, rows, reconciliation)
     by_scenario = {entry["scenario"]: entry for entry in table}
 
     assert by_scenario["baseline"]["groups"] == []
@@ -579,6 +709,10 @@ def test_cost_table_groups_components_and_passes_through_stored_totals() -> None
     # source_status is exposed only as renamed evidence metadata.
     statuses = {item["evidence_status"] for item in reactive["evidence"]}
     assert statuses == {"blocked"}
+    crew_audit = groups["opex"]["components"][0]["audit"]
+    assert "crew_hours 580.8 hour × 35 SAR/hour = 20,328 SAR/year" in crew_audit["detail"]
+    assert crew_audit["source"] == "scenario_cost_summary.csv · row 3"
+    assert "reconciliation check #1 ✓" in crew_audit["check"]
 
 
 # --------------------------------------------------------------------------
@@ -616,6 +750,21 @@ def test_config_validation_paths(client: TestClient) -> None:
         json={"content": DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")},
     )
     assert good.json()["valid"] is True
+
+
+def test_config_page_can_restore_values_after_a_save(client: TestClient) -> None:
+    page = client.get(f"/config/{DEFAULT_CONFIG_NAME}")
+    assert page.status_code == 200
+    assert 'id="reset-config-btn"' in page.text
+    assert "Restore page-load values" in page.text
+
+    script = client.get("/static/dashboard.js").text
+    assert "configEditor.originalContent = configEditor.value" in script
+    assert "editor.savedContent = payload.content" in script
+    assert "editor.value = editor.originalContent" in script
+    assert "Validate and save to make them the active Default again." in script
+    assert "resetContent" not in script
+    assert "syncSiteLocationFromEditor(editor)" in script
 
 
 def test_config_save_updates_default(
@@ -737,6 +886,25 @@ def test_delete_run_removes_directory(client: TestClient) -> None:
     # Gone means gone; and traversal out of outputs/ stays blocked.
     assert client.delete(f"/api/runs/{run_id}").status_code == 404
     assert client.delete("/api/runs/..%2Fconfigs").status_code == 404
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows read-only directory behavior")
+def test_delete_run_clears_readonly_directories(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outputs = tmp_path / "outputs"
+    run_dir = outputs / "readonly-run"
+    nested = run_dir / "readonly-onedrive-placeholder"
+    nested.mkdir(parents=True)
+    nested.chmod(stat.S_IREAD)
+    run_dir.chmod(stat.S_IREAD)
+    monkeypatch.setattr(dashboard_app, "_OUTPUTS_DIR", outputs)
+
+    response = client.delete(f"/api/runs/{run_dir.name}")
+
+    assert response.status_code == 200
+    assert response.json() == {"deleted": True, "run_id": run_dir.name}
+    assert not run_dir.exists()
 
 
 def test_empty_run_shells_are_hidden_and_swept(tmp_path: Path) -> None:
@@ -1029,7 +1197,7 @@ def test_comparison_page_shows_headline_cards(client: TestClient, comparison_run
         page = client.get(f"/run/{run_dir.name}").text
         assert "Recommended strategy" in page
         assert 'class="headline-card"' in page
-        assert "Net annual benefit" in page
+        assert "Total net annual benefit" in page
         assert "Margin over runner-up" in page
         assert "734,918" in page  # stored value, formatted for reading
     finally:
@@ -1098,6 +1266,123 @@ def test_run_page_shows_weather_provenance(client: TestClient, comparison_run: P
     assert "Weather checksum" in page
     # Site coordinates come from the run's own config_resolved.yaml.
     assert "24.7136" in page and "46.6753" in page
+
+
+def test_engineering_document_fingerprint_and_audit_mode_render(
+    client: TestClient, comparison_run: Path
+) -> None:
+    page = client.get(f"/run/{comparison_run.name}").text
+    assert 'class="engineering-title-block"' in page
+    assert "Engineering run record" in page
+    assert "سجل التشغيل الهندسي" in page
+    assert "1 OF 1" in page and "١ من ١" in page
+    assert "fingerprint-medium" in page
+    assert "fingerprint-full" in page
+    assert 'class="dust-calendar"' in page
+    assert 'id="audit-toggle"' in page
+    assert "data-audit-source=" in page
+
+    fingerprint = artifacts_module.run_fingerprint(comparison_run)
+    assert fingerprint is not None
+    assert len(fingerprint["dates"]) == 2
+    assert len(fingerprint["ghi"]) == len(fingerprint["cleanliness"])
+
+
+def test_home_is_configuration_cockpit_and_run_gallery(
+    client: TestClient, comparison_run: Path
+) -> None:
+    page = client.get("/").text
+    assert 'class="config-cockpit"' in page
+    assert "Arabian Peninsula locator" in page
+    assert "Weather readiness" in page
+    assert "Simulation plan · Form SC-01" in page
+    assert 'class="run-gallery"' in page
+    assert "fingerprint-tiny" in page
+    assert "data-fingerprint-url=" in page
+    assert 'id="select-all-runs"' in page
+    assert 'id="run-archive-loader"' in page
+    assert "runs-pagination" not in page
+    assert "Daylight" in page
+    assert page.count('class="run-card"') == min(
+        len(artifacts_module.list_runs(Path("outputs"))), 24
+    )
+
+    first_batch = client.get("/api/run-pages/1")
+    assert first_batch.status_code == 200
+    assert 'class="run-card"' in first_batch.text
+    assert int(first_batch.headers["x-run-total-pages"]) >= 1
+
+    fingerprint = client.get(f"/api/runs/{comparison_run.name}/fingerprint")
+    assert fingerprint.status_code == 200
+    assert fingerprint.headers["cache-control"] == "private, max-age=300"
+    assert fingerprint.json()["dates"]
+
+
+def test_chart_event_payload_omits_redundant_daily_contamination(
+    comparison_run: Path,
+) -> None:
+    markers = dashboard_app._chart_event_markers(comparison_run)
+    assert all(marker["category"] != "contamination" for marker in markers)
+
+
+def test_failed_check_is_quoted_verbatim_in_finding(client: TestClient) -> None:
+    run_dir = Path("outputs") / "test-dashboard-compare-all-scenarios-failed-finding"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "reconciliation_report.json").write_text(
+        json.dumps(
+            {
+                "passed": False,
+                "checks": [
+                    {
+                        "name": "reactive_cost_crew_hours_reconciles",
+                        "passed": False,
+                        "message": "Crew cost differs from 412.5 × 35 SAR/hour.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    try:
+        page = client.get(f"/run/{run_dir.name}").text
+        assert "Run not certified" in page
+        assert "Crew cost differs from 412.5 × 35 SAR/hour." in page
+        assert "reactive_cost_crew_hours_reconciles" in page
+    finally:
+        _delete_run(client, run_dir)
+
+
+def test_compare_runs_is_diff_with_collapsed_identical_values(
+    client: TestClient, comparison_run: Path
+) -> None:
+    response = client.get(
+        "/compare-runs", params={"a": comparison_run.name, "b": comparison_run.name + "-missing"}
+    )
+    assert response.status_code == 404
+
+    other = Path("outputs") / "test-dashboard-diff-other-compare-all-scenarios"
+    other.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(comparison_run / "config_resolved.yaml", other / "config_resolved.yaml")
+    shutil.copy2(
+        comparison_run / "scenario_annual_summary.csv", other / "scenario_annual_summary.csv"
+    )
+    try:
+        page = client.get("/compare-runs", params={"a": comparison_run.name, "b": other.name}).text
+        assert "Changed assumptions" in page
+        assert "identical fields collapsed" in page
+        assert "Annual KPIs · changed values" in page
+        assert "identical KPI values collapsed" in page
+    finally:
+        _delete_run(client, other)
+
+
+def test_fonts_themes_and_drawing_hatching_are_self_contained(client: TestClient) -> None:
+    css = client.get("/static/dashboard.css").text
+    assert 'font-family: "IBM Plex Sans"' in css
+    assert "IBMPlexSansArabic-Regular.woff2" in css
+    assert "repeating-linear-gradient(135deg" in css
+    assert "Night shift" in client.get("/static/dashboard.js").text
+    assert client.get("/static/fonts/IBMPlexSans-Regular.woff2").status_code == 200
 
 
 def test_cumulative_gain_column_reconciles_and_charts(

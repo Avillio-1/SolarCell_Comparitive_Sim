@@ -1,54 +1,79 @@
 {% extends "base.html" %}
+{% from "_fingerprint.html" import run_fingerprint %}
+{% from "_strategy.html" import strategy_label %}
 {% block title %}Compare runs · SolarClean-DT{% endblock %}
+{% block body_class %}run-diff-document{% endblock %}
 {% block content %}
 
-<div class="run-head">
-  <h1>Two-run comparison</h1>
+<div class="run-head diff-page-head">
+  <div>
+    <span class="eyebrow">Configuration and result change set</span>
+    <h1>Two-run comparison</h1>
+    <p>Read left as the earlier state and right as the later state. Unchanged values stay collapsed.</p>
+  </div>
   <a class="quiet-link" href="/">back to runs</a>
 </div>
 
-<div class="plot-grid">
+<div class="diff-run-register">
   {% for run in runs %}
-  <div>
-    <section class="panel">
-      <h2 class="mono"><a href="/run/{{ run.run_id }}">{{ run.run_id }}</a></h2>
-      {% if run.provenance %}
-      <dl class="fact-strip small-facts">
-        <div><dt>Weather provider</dt><dd class="mono">{{ run.provenance.provider or "–" }}</dd></div>
-        <div><dt>Site</dt><dd>{{ run.provenance.site_name or "–" }}
-          {% if run.provenance.latitude is not none and run.provenance.longitude is not none %}
-          <span class="mono">({{ run.provenance.latitude }}, {{ run.provenance.longitude }})</span>
-          {% endif %}</dd></div>
-        <div><dt>Weather checksum</dt><dd class="mono">{{ run.provenance.weather_checksum_short or "–" }}</dd></div>
-        <div><dt>Created (UTC)</dt><dd class="mono">{{ run.provenance.created_at_utc or "–" }}</dd></div>
-        {% if run.provenance.assumption_set %}
-        <div><dt>Assumption set</dt><dd class="mono">{{ run.provenance.assumption_set }}</dd></div>
-        {% endif %}
-      </dl>
-      {% else %}
-      <p class="empty">No stored provenance is available for this run.</p>
-      {% endif %}
-    </section>
-
-    <section class="panel">
-      <h2>Annual KPIs</h2>
-      {% if run.kpi_table %}
-      <table class="data-table kpi-table">
-        <thead><tr><th></th>{% for scenario in run.kpi_table.scenarios %}<th class="num">{{ scenario }}</th>{% endfor %}</tr></thead>
-        <tbody>
-          {% for row in run.kpi_table.rows %}
-          <tr><th{% if row.help %} class="has-help" title="{{ row.help }}"{% endif %}>{{ row.label }}</th>
-            {% for value in row["values"] %}<td class="num mono{{ ' best-cell' if row.best[loop.index0] }}">{{ value | display_number }}</td>{% endfor %}
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
-      {% else %}
-      <p class="empty">This run has no <code>scenario_annual_summary.csv</code> artifact.</p>
-      {% endif %}
-    </section>
-  </div>
+  <article class="diff-run-card diff-run-{{ 'before' if loop.first else 'after' }}">
+    <span class="diff-side">{{ 'A · BEFORE' if loop.first else 'B · AFTER' }}</span>
+    <a href="/run/{{ run.run_id }}" class="mono diff-run-id">{{ run.run_id }}</a>
+    {{ run_fingerprint(run.fingerprint, "medium", run.run_id ~ " fingerprint") }}
+    {% set run_id = run.run_id %}
+    {% set provenance = run.provenance %}
+    {% set document_status = "DIFF SOURCE" %}
+    {% include "_title_block.html" %}
+  </article>
   {% endfor %}
 </div>
+
+<section class="panel diff-panel">
+  <div class="panel-heading compact-heading">
+    <div><span class="step-label">Configuration diff</span><h2>Changed assumptions</h2></div>
+    <span class="diff-collapse-count mono">{{ config_diff.identical_count }} identical fields collapsed</span>
+  </div>
+  {% if config_diff.changes %}
+  <div class="code-diff" role="list" aria-label="Changed resolved configuration values">
+    {% for change in config_diff.changes %}
+    <div class="diff-hunk" role="listitem">
+      <span class="diff-path mono">@@ {{ change.path }} @@</span>
+      <code class="diff-line diff-minus">− {{ change.path }}: {{ change.before }}</code>
+      <code class="diff-line diff-plus">+ {{ change.path }}: {{ change.after }}</code>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="empty">The stored resolved configurations are identical.</p>
+  {% endif %}
+</section>
+
+<section class="panel diff-panel">
+  <div class="panel-heading compact-heading">
+    <div><span class="step-label">Result diff</span><h2>Annual KPIs · changed values</h2></div>
+    <span class="diff-collapse-count mono">{{ kpi_diff.identical_count }} identical KPI values collapsed</span>
+  </div>
+  {% if kpi_diff.rows %}
+  <div class="scroll-x">
+    <table class="data-table kpi-diff-table">
+      <thead><tr><th>Strategy</th><th>KPI</th><th class="num">A · before</th><th class="num">B · after</th><th class="num">Delta</th></tr></thead>
+      <tbody>
+      {% for row in kpi_diff.rows %}
+        <tr>
+          <td>{{ strategy_label(row.scenario) }}</td>
+          <th>{{ row.label }}</th>
+          <td class="num mono diff-old" data-audit-source="{{ runs[0].run_id }} · scenario_annual_summary.csv · {{ row.scenario }}.{{ row.column }}">{{ row.before }}</td>
+          <td class="num mono diff-new" data-audit-source="{{ runs[1].run_id }} · scenario_annual_summary.csv · {{ row.scenario }}.{{ row.column }}">{{ row.after }}</td>
+          <td class="num mono delta-{{ row.outcome }}">{{ row.delta }} <span aria-label="{{ 'increased' if row.trend == '↑' else 'decreased' if row.trend == '↓' else 'changed' }}">{{ row.trend }}</span></td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="hint">Green means the stored change moved in the KPI's preferred direction; red means it moved away. Operational quantities are directional only, not judged.</p>
+  {% else %}
+  <p class="empty">No changed annual KPI values were found in the two stored summaries.</p>
+  {% endif %}
+</section>
 
 {% endblock %}

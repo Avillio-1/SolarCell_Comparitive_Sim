@@ -12,6 +12,7 @@ import contextlib
 import csv
 import json
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import cast
 
@@ -128,17 +129,30 @@ def list_artifacts(run_dir: Path) -> list[dict[str, object]]:
     return files
 
 
-def read_csv_rows(path: Path, limit: int | None = None) -> tuple[list[str], list[list[str]]]:
+@lru_cache(maxsize=24)
+def _read_csv_rows_cached(
+    path_text: str, mtime_ns: int, limit: int | None
+) -> tuple[tuple[str, ...], tuple[tuple[str, ...], ...]]:
+    """Read an immutable CSV snapshot keyed by path and modification time."""
+
+    del mtime_ns  # Part of the cache key; the file contents are read below.
     csv.field_size_limit(_CSV_FIELD_SIZE_LIMIT)
-    with path.open(encoding="utf-8", newline="") as handle:
+    with Path(path_text).open(encoding="utf-8", newline="") as handle:
         reader = csv.reader(handle)
-        header = next(reader, [])
-        rows = []
+        header = tuple(next(reader, []))
+        rows: list[tuple[str, ...]] = []
         for i, row in enumerate(reader):
             if limit is not None and i >= limit:
                 break
-            rows.append(row)
-    return header, rows
+            rows.append(tuple(row))
+    return header, tuple(rows)
+
+
+def read_csv_rows(path: Path, limit: int | None = None) -> tuple[list[str], list[list[str]]]:
+    """Read CSV rows, reusing an unchanged artifact within this process."""
+
+    header, rows = _read_csv_rows_cached(str(path.resolve()), path.stat().st_mtime_ns, limit)
+    return list(header), [list(row) for row in rows]
 
 
 def daily_series(run_dir: Path, value_column: str) -> dict[str, object] | None:
@@ -250,9 +264,6 @@ def daily_event_markers(run_dir: Path) -> list[dict[str, object]]:
     if any(column not in header for column in required):
         return []
     indices = {column: header.index(column) for column in required}
-    effective_col = (
-        header.index("effective_for_energy_date") if "effective_for_energy_date" in header else None
-    )
     grouped: dict[tuple[str, str, str], dict[str, object]] = {}
     for row in rows:
         event_type = row[indices["event_type"]]
@@ -269,20 +280,9 @@ def daily_event_markers(run_dir: Path) -> list[dict[str, object]]:
                 "scenario": scenario,
                 "category": category,
                 "count": 0,
-                "event_types": [],
-                "descriptions": [],
-                "effective_dates": [],
             },
         )
         marker["count"] = cast(int, marker["count"]) + 1
-        for target, value in (
-            ("event_types", event_type),
-            ("descriptions", row[indices["description"]]),
-            ("effective_dates", row[effective_col] if effective_col is not None else date),
-        ):
-            entries = marker[target]
-            if isinstance(entries, list) and value and value not in entries:
-                entries.append(value)
     return list(grouped.values())
 
 
@@ -336,6 +336,79 @@ def daily_cleanliness_series(run_dir: Path) -> dict[str, object] | None:
         "series": {
             scenario: [values.get(date) for date in dates] for scenario, values in series.items()
         },
+    }
+
+
+def run_fingerprint(run_dir: Path) -> dict[str, object] | None:
+    """Stored daily climate/contamination values used to draw a run fingerprint.
+
+    This deliberately returns the original GHI and cleanliness values. Colour
+    mapping is a display concern handled by the browser; no physical quantity
+    is inferred or re-simulated here.
+    """
+
+    weather = daily_weather_diagnostics(run_dir)
+    cleanliness = daily_cleanliness_series(run_dir)
+    if weather is None or cleanliness is None:
+        return None
+    weather_dates = weather.get("dates")
+    clean_dates = cleanliness.get("dates")
+    clean_series = cleanliness.get("series")
+    if not isinstance(weather_dates, list) or weather_dates != clean_dates:
+        return None
+    if not isinstance(clean_series, dict):
+        return None
+    baseline = clean_series.get("baseline")
+    ghi = weather.get("daily_ghi_irradiation_kwh_m2")
+    if not isinstance(baseline, list) or not isinstance(ghi, list):
+        return None
+    cleaning_dates = sorted(
+        {
+            str(marker["date"])
+            for marker in daily_event_markers(run_dir)
+            if marker.get("category") == "cleaning" and marker.get("date")
+        }
+    )
+    return {
+        "dates": weather_dates,
+        "ghi": ghi,
+        "cleanliness": baseline,
+        "cleaning_dates": cleaning_dates,
+        "sources": [
+            "daily_weather_diagnostics.csv",
+            "scenario_daily_summary.csv",
+            "scenario_events.csv",
+        ],
+    }
+
+
+def dust_calendar(run_dir: Path) -> dict[str, object] | None:
+    """Scenario cleanliness and stored action markers for calendar rendering."""
+
+    cleanliness = daily_cleanliness_series(run_dir)
+    if cleanliness is None:
+        return None
+    dates = cleanliness.get("dates")
+    series = cleanliness.get("series")
+    if not isinstance(dates, list) or not isinstance(series, dict):
+        return None
+    events_by_scenario: dict[str, dict[str, list[str]]] = {}
+    for marker in daily_event_markers(run_dir):
+        scenario = marker.get("scenario")
+        day = marker.get("date")
+        category = marker.get("category")
+        if not isinstance(scenario, str) or not isinstance(day, str):
+            continue
+        if not isinstance(category, str):
+            continue
+        categories = events_by_scenario.setdefault(scenario, {}).setdefault(day, [])
+        if category not in categories:
+            categories.append(category)
+    return {
+        "dates": dates,
+        "series": series,
+        "events": events_by_scenario,
+        "sources": ["scenario_daily_summary.csv", "scenario_events.csv"],
     }
 
 

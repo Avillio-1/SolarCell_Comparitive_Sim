@@ -1,0 +1,60 @@
+{# CAD-style title block. Every field is read from stored run artifacts. #}
+<section class="engineering-title-block" aria-label="Engineering run title block">
+  <div class="title-block-name">
+    <span class="title-block-kicker">SOLARCLEAN-DT · CALCULATION RECORD</span>
+    <strong>Engineering run record</strong>
+    <span class="ar" lang="ar" dir="rtl">سجل التشغيل الهندسي</span>
+  </div>
+  <dl class="title-block-fields">
+    <div class="tb-run">
+      <dt>Run ID <span lang="ar" dir="rtl">معرّف التشغيل</span></dt>
+      <dd class="mono" data-audit-source="output directory name"
+          data-audit-detail="Immutable identifier of this stored artifact package.">{{ run_id }}</dd>
+    </div>
+    <div>
+      <dt>Site / coordinates <span lang="ar" dir="rtl">الموقع / الإحداثيات</span></dt>
+      <dd data-audit-source="config_resolved.yaml · site"
+          data-audit-detail="Site name, latitude, and longitude stored with this run.">
+        {{ provenance.site_name if provenance else "–" }}
+        {% if provenance and provenance.latitude is not none and provenance.longitude is not none %}
+        <span class="mono">{{ provenance.latitude }}, {{ provenance.longitude }}</span>
+        {% endif %}
+      </dd>
+    </div>
+    <div>
+      <dt>Weather provider <span lang="ar" dir="rtl">مصدر الطقس</span></dt>
+      <dd class="mono" data-audit-source="metadata.json + config_resolved.yaml · weather.provider"
+          data-audit-detail="Resolved provider recorded for this run.">{{ provenance.provider if provenance else "–" }}</dd>
+    </div>
+    <div class="tb-checksum">
+      <dt>Weather checksum <span lang="ar" dir="rtl">بصمة بيانات الطقس</span></dt>
+      <dd class="mono" data-audit-source="metadata.json · weather_checksum"
+          data-audit-detail="Checksum of the resolved weather shared by the scenarios.">{{ provenance.weather_checksum if provenance and provenance.weather_checksum else "–" }}</dd>
+    </div>
+    <div>
+      <dt>Assumption set <span lang="ar" dir="rtl">مجموعة الافتراضات</span></dt>
+      <dd class="mono" data-audit-source="metadata.json + config_resolved.yaml · calibration.assumption_set"
+          data-audit-detail="Calibration assumption set stored with this run.">{{ provenance.assumption_set if provenance else "–" }}</dd>
+    </div>
+    <div>
+      <dt>Date issued <span lang="ar" dir="rtl">تاريخ الإصدار</span></dt>
+      <dd class="mono" data-audit-source="metadata.json · created_at_utc"
+          data-audit-detail="Stored UTC creation timestamp.">{{ provenance.created_at_utc if provenance else "–" }}</dd>
+    </div>
+    <div>
+      <dt>Period <span lang="ar" dir="rtl">الفترة</span></dt>
+      <dd class="mono" data-audit-source="config_resolved.yaml · simulation.start/end"
+          data-audit-detail="Resolved site-time simulation period.">
+        {% if provenance and provenance.start_date %}{{ provenance.start_date }} — {{ provenance.end_date }}{% else %}–{% endif %}
+      </dd>
+    </div>
+    <div class="tb-status {{ 'tb-verified' if document_status == 'VERIFIED' else 'tb-hold' if document_status == 'HOLD' else '' }}">
+      <dt>Status <span lang="ar" dir="rtl">الحالة</span></dt>
+      <dd>{{ document_status or "ANALYSIS RECORD" }}</dd>
+    </div>
+    <div class="tb-sheet">
+      <dt>Sheet <span lang="ar" dir="rtl">اللوحة</span></dt>
+      <dd class="mono">1 OF 1 <span lang="ar" dir="rtl">١ من ١</span></dd>
+    </div>
+  </dl>
+</section>

@@ -1,0 +1,15 @@
+{% macro strategy_label(name, capitalize=true) -%}
+{% set strategy = name|string|lower %}
+<span class="strategy-label strategy-{{ strategy }}">
+  <span class="strategy-glyph" aria-hidden="true"></span>
+  <span>{{ strategy|capitalize if capitalize else strategy }}</span>
+</span>
+{%- endmacro %}
+
+{% macro strategy_glyph(name) -%}
+{% set strategy = name|string|lower %}
+<span class="strategy-label strategy-glyph-only strategy-{{ strategy }}"
+      title="{{ strategy|capitalize }}" aria-label="{{ strategy|capitalize }}">
+  <span class="strategy-glyph" aria-hidden="true"></span>
+</span>
+{%- endmacro %}

@@ -1,21 +1,37 @@
 {% extends "base.html" %}
+{% from "_fingerprint.html" import run_fingerprint %}
+{% from "_strategy.html" import strategy_label %}
 {% block title %}{{ run_id }} · SolarClean-DT{% endblock %}
+{% block body_class %}run-document{% endblock %}
 {% block content %}
 
-<div class="run-head">
-  <h1 class="mono">{{ run_id }}</h1>
+<div class="document-head">
+  <div class="document-ident">
+    <span class="eyebrow">Annual strategy comparison</span>
+    <h1>Engineering comparison record</h1>
+    {{ run_fingerprint(fingerprint, "medium", run_id ~ " fingerprint", element_id="run-fingerprint-source") }}
+  </div>
+  {% include "_title_block.html" %}
+</div>
+<div class="run-head run-command-bar">
   <span class="run-head-actions">
     {% if rerun_supported %}
     <button type="button" id="rerun-btn" data-run-id="{{ run_id }}" title="Repeat this analysis with the run's own stored config snapshot">re-run this analysis</button>
     {% endif %}
+    <button type="button" class="print-record" onclick="window.print()">print stamped record</button>
     <a class="quiet-link" href="/api/runs/{{ run_id }}/download">download full run (.zip)</a>
   </span>
   <span id="rerun-status" class="hint" role="status"></span>
 </div>
 
+{% if finding %}
+<p class="finding-statement finding-{{ finding.tone }}" data-audit-source="recommendation.json + reconciliation_report.json"
+   data-audit-detail="Declarative summary composed from the stored winner, KPI snapshot, margin, evidence tier, and reconciliation checks.">{{ finding.text }}</p>
+{% endif %}
+
 {% if validation_status %}
-<aside class="warn-note validation-banner" role="note" aria-label="Parameter evidence quality">
-  <strong>Parameter evidence quality</strong>
+<details class="warn-note validation-banner">
+  <summary>Parameter evidence quality · {{ validation_status.parameter_counts_by_status.blocked or 0 }} blocked, {{ validation_status.parameter_counts_by_status.provisional or 0 }} provisional</summary>
   <p>{{ validation_status.disclaimer }}</p>
   <p class="validation-counts">
     <span>Status:</span>
@@ -28,8 +44,8 @@
     {% endfor %}
   </p>
   {% if validation_status.key_uncertain_parameters %}
-  <details>
-    <summary>Most uncertain parameters</summary>
+  <div class="validation-uncertain">
+    <h3>Most uncertain parameters</h3>
     <ul>
       {% for parameter in validation_status.key_uncertain_parameters %}
       <li><span class="mono">{{ parameter.name }}</span>:
@@ -39,31 +55,22 @@
         ({{ parameter.confidence }} confidence, {{ parameter.status }})</li>
       {% endfor %}
     </ul>
-  </details>
+  </div>
   {% endif %}
-</aside>
+</details>
 {% endif %}
 
 {% if headline %}
 <section class="headline-cards">
   {% for card in headline %}
-  <div class="headline-card">
+  <div class="headline-card" data-audit-source="{{ card.audit_source }}"
+       data-audit-detail="{{ card.audit_detail }}">
     <span class="headline-label">{{ card.label }}</span>
-    <span class="headline-value">{{ card.value }}</span>
+    <span class="headline-value">{% if loop.first %}{{ strategy_label(card.value) }}{% else %}{{ card.value }}{% endif %}</span>
     {% if card.unit %}<span class="headline-unit">{{ card.unit }}</span>{% endif %}
   </div>
   {% endfor %}
 </section>
-{% endif %}
-
-{% include "_provenance.html" %}
-
-{% if recommendation and recommendation.recommendation_tier %}
-<p class="warn-note"><strong>Recommendation evidence tier:</strong>
-  {{ recommendation.recommendation_tier|replace('_', ' ') }}.
-  Calculation valid: {{ recommendation.calculation_valid }};
-  decision grade: {{ recommendation.decision_grade }}.
-  Parameter status counts: {{ recommendation.parameter_status_counts }}.</p>
 {% endif %}
 
 {# Reconciliation comes first on purpose: nothing below it means anything if these fail. #}
@@ -76,44 +83,122 @@
   {% else %}
   <strong class="recon-verdict recon-verdict-fail">✕ {{ failed_checks | length }} of {{ reconciliation.checks | length }} checks failed</strong>
   {% endif %}
-  {% for check in reconciliation.checks %}
-    <span class="chip {{ 'chip-pass' if check.passed else 'chip-fail' }}"
-          title="{{ check.message }}">{{ check.name }}</span>
-  {% endfor %}
-  <details class="recon-help">
-    <summary>What is this?</summary>
-    <p>Reconciliation is the run's self-audit. Before any ranking is accepted, the backend checks
-    that all three scenarios used the same weather and event data, that annual totals equal the
-    sum of the daily results, and that <strong>costs match the operational quantities</strong>
-    the simulation actually recorded — for example, the crew labour cost must equal crew hours
-    &times; the labour rate, and the water cost must equal water used &times; the water price.
-    If any check fails, the run is not trusted and no winner is declared.</p>
+  <details class="recon-checks">
+    <summary>View {{ reconciliation.checks | length }} checks</summary>
+    <div class="recon-check-list">
+    {% for check in reconciliation.checks %}
+      <span class="chip {{ 'chip-pass' if check.passed else 'chip-fail' }}"
+            title="{{ check.message }}">{{ check.name }}</span>
+    {% endfor %}
+    </div>
+    <p class="hint">This self-audit verifies shared weather and events, annual-to-daily totals, and cost-to-operation reconciliation.</p>
   </details>
 </section>
 {% if not reconciliation.passed %}
-<p class="warn-note">One or more reconciliation checks failed, so no ranking was accepted for this
-run. Failure messages are in <code>reconciliation_report.json</code>.</p>
+{% set first_failed = (reconciliation.checks | rejectattr("passed") | list | first) %}
+<p class="warn-note"><strong>{{ first_failed.name }} failed:</strong>
+“{{ first_failed.message }}” Therefore no ranking was accepted. The exact stored failure is in
+<code>reconciliation_report.json</code>.</p>
 {% endif %}
 {% endif %}
 
 {% if recommendation and ranking and ranking.ranking %}
 <section class="panel">
-  <h2>Ranking by net annual benefit</h2>
+  <h2>Ranking by annual financial outcome</h2>
+  {% if financial_ranking %}
+  <div class="financial-formula" data-audit-source="scenario_annual_summary.csv · stored economics columns">
+    <strong>Total net annual benefit</strong>
+    <span class="financial-operator">=</span>
+    <span>annual electricity revenue</span>
+    <span class="financial-operator">−</span>
+    <span>annualized CAPEX</span>
+    <span class="financial-operator">−</span>
+    <span>annual OPEX</span>
+  </div>
+  <p class="hint financial-formula-note">
+    Electricity revenue = annual AC energy ×
+    {% if financial_ranking.tariff_sar_per_kwh is not none %}<strong data-audit-source="metadata.json · economics_config.tariff_sar_per_kwh">{{ financial_ranking.tariff_sar_per_kwh | rate }} SAR/kWh</strong>{% else %}the run's stored tariff{% endif %}.
+    “Net change vs baseline” isolates whether the mitigation programme adds or removes annual
+    value compared with doing nothing.
+  </p>
+  <div class="scroll-x">
+    <table class="data-table financial-ranking-table">
+      <thead><tr><th>#</th><th>Scenario</th>
+        <th class="num">Value of extra energy<br><span>vs baseline · SAR/year</span></th>
+        <th class="num">Added annual cost<br><span>vs baseline · SAR/year</span></th>
+        <th class="num">Net change<br><span>vs baseline · SAR/year</span></th>
+        <th class="num">Total net annual benefit<br><span>SAR/year</span></th></tr></thead>
+      <tbody>
+        {% for row in financial_ranking.rows %}
+        <tr class="{{ 'winner-row' if row.rank == 1 }}">
+          <td data-audit-source="scenario_ranking.json · ranking[{{ loop.index0 }}].rank">{{ row.rank }}{% if row.tied_with_previous %} (tie){% endif %}</td>
+          <td>{{ strategy_label(row.scenario_id) }}</td>
+          <td class="num mono" data-audit-source="{{ row.annual_audit_source }} · incremental_revenue_vs_baseline_sar">{{ row.incremental_revenue_sar | sar }}</td>
+          <td class="num mono" data-audit-source="{{ row.annual_audit_source }} · incremental_annual_cost_vs_baseline_sar">{{ row.incremental_annual_cost_sar | sar }}</td>
+          <td class="num mono financial-net-change" data-audit-source="{{ row.annual_audit_source }} · incremental_net_annual_benefit_vs_baseline_sar">{{ row.incremental_net_annual_benefit_sar | sar }}</td>
+          <td class="num mono financial-total" data-audit-source="scenario_ranking.json · {{ row.scenario_id }}.net_annual_benefit_sar">{{ row.net_annual_benefit_sar | sar }}</td>
+        </tr>
+        <tr class="ranking-calculation-row">
+          <td></td>
+          <td colspan="5">
+            <details class="financial-calculation">
+              <summary>How {{ row.net_annual_benefit_sar | sar }} SAR/year is calculated</summary>
+              <div class="calculation-ledger">
+                <span class="calculation-term">Electricity revenue</span>
+                <span class="calculation-inputs mono">{{ row.annual_actual_energy_kwh | display_number }} kWh ×
+                  {% if financial_ranking.tariff_sar_per_kwh is not none %}{{ financial_ranking.tariff_sar_per_kwh | rate }} SAR/kWh{% else %}stored tariff{% endif %}</span>
+                <strong class="calculation-result mono" data-audit-source="{{ row.annual_audit_source }} · annual_revenue_sar">= {{ row.annual_revenue_sar | sar }} SAR/year</strong>
+
+                <span class="calculation-term">Minus annualized CAPEX</span>
+                <span class="calculation-inputs">
+                  {% if row.total_capex_sar %}{{ row.total_capex_sar | sar }} SAR upfront{% endif %}
+                  {% if row.capital_recovery_life_years %} over {{ row.capital_recovery_life_years | display_number }} years{% endif %}
+                  {% if financial_ranking.annualization_method %} using {{ financial_ranking.annualization_method }}{% endif %}
+                </span>
+                <strong class="calculation-result mono" data-audit-source="{{ row.annual_audit_source }} · annualized_capex_sar">− {{ row.annualized_capex_sar | sar }} SAR/year</strong>
+
+                <span class="calculation-term">Minus annual OPEX</span>
+                <span class="calculation-inputs">Recurring scenario operating costs</span>
+                <strong class="calculation-result mono" data-audit-source="{{ row.annual_audit_source }} · annual_opex_sar">− {{ row.annual_opex_sar | sar }} SAR/year</strong>
+
+                <span class="calculation-term calculation-total-label">Total net annual benefit</span>
+                <span class="calculation-inputs calculation-total-label">Revenue minus annualized scenario costs</span>
+                <strong class="calculation-result calculation-total mono" data-audit-source="{{ row.annual_audit_source }} · net_annual_benefit_sar">= {{ row.net_annual_benefit_sar | sar }} SAR/year</strong>
+              </div>
+              <p class="incremental-equation mono" data-audit-source="{{ row.annual_audit_source }} · incremental comparison columns">
+                Versus baseline: {{ row.incremental_revenue_sar | sar }} extra revenue −
+                {{ row.incremental_annual_cost_sar | sar }} added annual cost =
+                <strong>{{ row.incremental_net_annual_benefit_sar | sar }} SAR/year</strong>.
+              </p>
+            </details>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="hint financial-baseline-note"><strong>Cost boundary:</strong> the comparison includes
+    scenario-specific mitigation costs. Costs common to all scenarios are outside this decision,
+    so baseline has no mitigation-programme CAPEX or OPEX.</p>
+  {% else %}
+  <p class="hint">This legacy run does not contain the stored incremental financial columns needed
+    for the explanatory breakdown. Its accepted ranking is shown unchanged.</p>
   <table class="data-table">
     <thead><tr><th>#</th><th>Scenario</th><th class="num">Annual AC energy (kWh)</th>
-      <th class="num">Gain vs baseline (kWh)</th><th class="num">Net annual benefit (SAR)</th></tr></thead>
+      <th class="num">Gain vs baseline (kWh)</th><th class="num">Total net annual benefit (SAR/year)</th></tr></thead>
     <tbody>
       {% for row in ranking.ranking %}
       <tr class="{{ 'winner-row' if row.rank == 1 }}">
-        <td>{{ row.rank }}{% if row.tied_with_previous %} (tie){% endif %}</td>
-        <td>{{ row.scenario_id }}</td>
-        <td class="num mono">{{ "%.1f"|format(row.annual_actual_energy_kwh) }}</td>
-        <td class="num mono">{{ "%.2f"|format(row.energy_gain_vs_baseline_kwh) }}</td>
-        <td class="num mono">{{ "%.0f"|format(row.net_annual_benefit_sar) }}</td>
+        <td data-audit-source="scenario_ranking.json · ranking[{{ loop.index0 }}].rank">{{ row.rank }}{% if row.tied_with_previous %} (tie){% endif %}</td>
+        <td>{{ strategy_label(row.scenario_id) }}</td>
+        <td class="num mono" data-audit-source="scenario_ranking.json · {{ row.scenario_id }}.annual_actual_energy_kwh">{{ row.annual_actual_energy_kwh | display_number }}</td>
+        <td class="num mono" data-audit-source="scenario_ranking.json · {{ row.scenario_id }}.energy_gain_vs_baseline_kwh">{{ row.energy_gain_vs_baseline_kwh | display_number }}</td>
+        <td class="num mono" data-audit-source="scenario_ranking.json · {{ row.scenario_id }}.net_annual_benefit_sar">{{ row.net_annual_benefit_sar | sar }}</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+  {% endif %}
 
   {% if recommendation.warnings %}
   <div class="assumption-block">
@@ -148,11 +233,13 @@ run. Failure messages are in <code>reconciliation_report.json</code>.</p>
 <section class="panel">
   <h2>Annual KPIs</h2>
   <table class="data-table kpi-table">
-    <thead><tr><th></th>{% for s in kpi_table.scenarios %}<th class="num">{{ s }}</th>{% endfor %}</tr></thead>
+    <thead><tr><th></th>{% for s in kpi_table.scenarios %}<th class="num">{{ strategy_label(s) }}</th>{% endfor %}</tr></thead>
     <tbody>
       {% for row in kpi_table.rows %}
       <tr><th{% if row.help %} class="has-help" title="{{ row.help }}"{% endif %}>{{ row.label }}</th>
-        {% for v in row["values"] %}<td class="num mono{{ ' best-cell' if row.best[loop.index0] }}">{{ v | display_number }}</td>{% endfor %}
+        {% for v in row["values"] %}<td class="num mono{{ ' best-cell' if row.best[loop.index0] }}"
+          data-audit-source="{{ row.audit_sources[loop.index0] }}"
+          data-audit-detail="Stored value shown with display rounding; download the CSV for full precision.">{{ v | display_number }}</td>{% endfor %}
       </tr>
       {% endfor %}
     </tbody>
@@ -173,6 +260,24 @@ run. Failure messages are in <code>reconciliation_report.json</code>.</p>
 </section>
 {% endif %}
 
+{% if daily_soiling %}
+<details class="panel dust-calendar-panel">
+  <summary>Strategy rhythm · 365-day dust calendars</summary>
+  <p class="hint">One stored day per cell. Darker cells are dustier; action marks show how each strategy responds.</p>
+  <div class="dust-calendars">
+    {% for scenario in ["baseline", "reactive", "coating"] %}
+    <article class="dust-calendar-card">
+      <h3>{{ strategy_label(scenario) }}</h3>
+      <div class="dust-calendar" data-calendar-scenario="{{ scenario }}"
+           data-audit-source="scenario_daily_summary.csv + scenario_events.csv"
+           data-audit-detail="Stored daily cleanliness by strategy; outlined cells are stored actions."></div>
+    </article>
+    {% endfor %}
+  </div>
+  <p class="hint">Calendar colour maps the stored contamination-cleanliness field (1.0 = clean). Marks come from the stored scenario event log.</p>
+</details>
+{% endif %}
+
 {% if daily_energy %}
 <section class="panel energy-explorer" id="energy-explorer">
   <div class="energy-explorer-heading">
@@ -183,42 +288,47 @@ run. Failure messages are in <code>reconciliation_report.json</code>.</p>
     </div>
     <div class="scenario-picker" role="group" aria-label="Energy scenario">
       <button type="button" class="scenario-choice active" data-energy-scenario="baseline"
-        aria-pressed="true">Baseline</button>
+        aria-pressed="true">{{ strategy_label("baseline") }}</button>
       <button type="button" class="scenario-choice" data-energy-scenario="reactive"
-        aria-pressed="false">Reactive</button>
+        aria-pressed="false">{{ strategy_label("reactive") }}</button>
       <button type="button" class="scenario-choice" data-energy-scenario="coating"
-        aria-pressed="false">Coating</button>
+        aria-pressed="false">{{ strategy_label("coating") }}</button>
       <button type="button" class="scenario-choice" data-energy-scenario="compare"
         aria-pressed="false">Compare</button>
     </div>
   </div>
 
+  <div class="explorer-fingerprint">
+    <span class="instrument-label">Shared-year fingerprint · GHI / dust / cleaning events</span>
+    {{ run_fingerprint(none, "full", run_id ~ " full-width fingerprint", source="run-fingerprint-source") }}
+  </div>
+
   <div class="energy-explorer-layout">
     <div class="energy-explorer-charts">
       <div class="energy-main-chart">
-        <canvas id="daily-energy-chart" height="115"></canvas>
+        <canvas id="daily-energy-chart" height="115" data-audit-source="scenario_daily_summary.csv · actual_energy_kwh + daily_clean_energy.csv"></canvas>
       </div>
 
       <div class="context-tracks" aria-label="Weather and event context aligned by date">
         {% if daily_weather %}
         <div class="context-track">
           <div class="context-track-label"><strong>GHI</strong><span>kWh/m²/day</span></div>
-          <div class="context-track-chart"><canvas id="daily-ghi-chart" height="42"></canvas></div>
+          <div class="context-track-chart"><canvas id="daily-ghi-chart" height="42" data-audit-source="daily_weather_diagnostics.csv · daily_ghi_irradiation_kwh_m2"></canvas></div>
         </div>
         <div class="context-track">
           <div class="context-track-label"><strong>Temperature</strong><span>ambient / cell °C</span></div>
-          <div class="context-track-chart"><canvas id="daily-temperature-chart" height="42"></canvas></div>
+          <div class="context-track-chart"><canvas id="daily-temperature-chart" height="42" data-audit-source="daily_weather_diagnostics.csv · daylight temperature columns"></canvas></div>
         </div>
         {% endif %}
         {% if daily_rainfall %}
         <div class="context-track">
           <div class="context-track-label"><strong>Rainfall</strong><span>mm/day</span></div>
-          <div class="context-track-chart"><canvas id="daily-rainfall-chart" height="38"></canvas></div>
+          <div class="context-track-chart"><canvas id="daily-rainfall-chart" height="38" data-audit-source="scenario_daily_summary.csv · extension_precipitation_mm"></canvas></div>
         </div>
         {% endif %}
         <div class="context-track context-track-events">
           <div class="context-track-label"><strong>Events</strong><span>stored actions</span></div>
-          <div class="context-track-chart"><canvas id="daily-events-chart" height="64"></canvas></div>
+          <div class="context-track-chart"><canvas id="daily-events-chart" height="64" data-audit-source="scenario_events.csv"></canvas></div>
         </div>
       </div>
     </div>
@@ -244,7 +354,7 @@ run. Failure messages are in <code>reconciliation_report.json</code>.</p>
         <tbody>
           {% for scenario in ["baseline", "reactive", "coating"] %}
           <tr data-selected-scenario="{{ scenario }}">
-            <th>{{ scenario }}</th>
+            <th>{{ strategy_label(scenario) }}</th>
             <td data-selected-field="actual">–</td>
             <td data-selected-field="loss">–</td>
             <td data-selected-field="cleanliness">–</td>
@@ -279,7 +389,7 @@ run. Failure messages are in <code>reconciliation_report.json</code>.</p>
 {% if daily_loss %}
 <section class="panel">
   <h2>Daily energy loss by scenario</h2>
-  <canvas id="daily-loss-chart" height="110"></canvas>
+  <canvas id="daily-loss-chart" height="110" data-audit-source="scenario_daily_summary.csv · energy_loss_kwh"></canvas>
   <p class="hint">Values are the stored <code>energy_loss_kwh</code> column of
     <a href="/api/runs/{{ run_id }}/artifact/scenario_daily_summary.csv">scenario_daily_summary.csv</a>.</p>
 </section>
@@ -288,7 +398,7 @@ run. Failure messages are in <code>reconciliation_report.json</code>.</p>
 {% if daily_soiling %}
 <section class="panel">
   <h2>Daily contamination cleanliness by scenario</h2>
-  <canvas id="daily-soiling-chart" height="110"></canvas>
+  <canvas id="daily-soiling-chart" height="110" data-audit-source="scenario_daily_summary.csv · stored scenario cleanliness fields"></canvas>
   <p class="hint">1.0 = perfectly clean panels. Each scenario uses its stored dust or
     contamination-cleanliness field from the state that produced that day's energy.</p>
 </section>
@@ -297,7 +407,7 @@ run. Failure messages are in <code>reconciliation_report.json</code>.</p>
 {% if daily_dew or daily_cementation %}
 <section class="panel">
   <h2>Daily dew risk and dust cementation</h2>
-  <canvas id="daily-dew-chart" height="110"></canvas>
+  <canvas id="daily-dew-chart" height="110" data-audit-source="scenario_daily_summary.csv · extension_dew_risk + extension_cementation_index"></canvas>
   <p class="hint">Values come from the stored
     <a href="/api/runs/{{ run_id }}/artifact/scenario_daily_summary.csv">scenario_daily_summary.csv</a>.</p>
 </section>
@@ -306,7 +416,7 @@ run. Failure messages are in <code>reconciliation_report.json</code>.</p>
 {% if daily_cumgain %}
 <section class="panel">
   <h2>Cumulative energy gain vs baseline</h2>
-  <canvas id="daily-cumgain-chart" height="110"></canvas>
+  <canvas id="daily-cumgain-chart" height="110" data-audit-source="scenario_daily_summary.csv · cumulative_energy_gain_vs_baseline_kwh"></canvas>
   <p class="hint">Running total of each scenario's daily AC energy minus the baseline's — where a
     curve climbs, the strategy is pulling ahead. Values are the stored
     <code>cumulative_energy_gain_vs_baseline_kwh</code> column of the daily summary; the final
@@ -317,7 +427,7 @@ run. Failure messages are in <code>reconciliation_report.json</code>.</p>
 {% if annual_cost_bars %}
 <section class="panel">
   <h2>Annual revenue, cost, and benefit</h2>
-  <canvas id="annual-cost-chart" height="110"></canvas>
+  <canvas id="annual-cost-chart" height="110" data-audit-source="scenario_annual_summary.csv · revenue, CAPEX, OPEX, and net benefit columns"></canvas>
   <p class="hint">Bars show the stored annual figures (SAR) from
     <a href="/api/runs/{{ run_id }}/artifact/scenario_annual_summary.csv">scenario_annual_summary.csv</a>.</p>
 </section>
@@ -336,7 +446,7 @@ run. Failure messages are in <code>reconciliation_report.json</code>.</p>
     <a href="/api/runs/{{ run_id }}/artifact/scenario_cost_summary.csv">scenario_cost_summary.csv</a>.</p>
   </details>
   {% for sc in cost_table %}
-  <h3 class="cost-scenario">{{ sc.scenario }}</h3>
+  <h3 class="cost-scenario">{{ strategy_label(sc.scenario) }}</h3>
   {% if sc.groups %}
   <table class="data-table cost-table">
     <thead><tr><th>Cost item</th><th class="num">Amount</th><th>Unit</th></tr></thead>
@@ -345,18 +455,19 @@ run. Failure messages are in <code>reconciliation_report.json</code>.</p>
       <tr class="cost-group-row"><td colspan="3">{{ group.label }}</td></tr>
       {% for comp in group.components %}
       <tr><td class="cost-item">{{ comp.name }}</td>
-        <td class="num mono">{{ comp.amount | sar }}</td><td class="unit">{{ comp.unit }}</td></tr>
+        <td class="num mono" data-audit-source="{{ comp.audit.source }}"
+            data-audit-detail="{{ comp.audit.detail }}" data-audit-check="{{ comp.audit.check }}">{{ comp.amount | sar }}</td><td class="unit">{{ comp.unit }}</td></tr>
       {% endfor %}
       <tr class="cost-subtotal-row"><td>Subtotal — {{ group.label }}</td>
-        <td class="num mono">{{ group.subtotal_amount | sar }}</td><td class="unit">{{ group.subtotal_unit }}</td></tr>
+        <td class="num mono" data-audit-source="{{ sc.audit_source }} · {{ group.category }} subtotal">{{ group.subtotal_amount | sar }}</td><td class="unit">{{ group.subtotal_unit }}</td></tr>
       {% endfor %}
       <tr class="cost-total-row"><td>Annualized CAPEX
           {% if sc.capital_recovery_life_years %}<span class="hint-inline">(recovered over {{ sc.capital_recovery_life_years | display_number }} yr)</span>{% endif %}</td>
-        <td class="num mono">{{ sc.annualized_capex_sar | sar }}</td><td class="unit">SAR/year</td></tr>
+        <td class="num mono" data-audit-source="{{ sc.audit_source }} · annualized_capex_sar">{{ sc.annualized_capex_sar | sar }}</td><td class="unit">SAR/year</td></tr>
       <tr class="cost-total-row"><td>Annual OPEX</td>
-        <td class="num mono">{{ sc.annual_opex_sar | sar }}</td><td class="unit">SAR/year</td></tr>
+        <td class="num mono" data-audit-source="{{ sc.audit_source }} · annual_opex_sar">{{ sc.annual_opex_sar | sar }}</td><td class="unit">SAR/year</td></tr>
       <tr class="cost-total-row cost-grand-total"><td>Total annual cost</td>
-        <td class="num mono">{{ sc.total_annual_cost_sar | sar }}</td><td class="unit">SAR/year</td></tr>
+        <td class="num mono" data-audit-source="{{ sc.audit_source }} · total_annual_cost_sar">{{ sc.total_annual_cost_sar | sar }}</td><td class="unit">SAR/year</td></tr>
     </tbody>
   </table>
   <details class="assumption-block evidence-block">
@@ -402,7 +513,7 @@ run. Failure messages are in <code>reconciliation_report.json</code>.</p>
 {% endblock %}
 {% block scripts %}
 {% if daily_energy or daily_rainfall or daily_weather or daily_loss or daily_soiling or daily_dew or daily_cementation or daily_cumgain or annual_cost_bars %}
-<script src="/static/chart.umd.js"></script>
+<script src="/static/chart.umd.js?v=20260714b"></script>
 <script>
   window.solarcleanCharts = {
     dailyEnergy: {{ daily_energy | tojson if daily_energy else 'null' }},
