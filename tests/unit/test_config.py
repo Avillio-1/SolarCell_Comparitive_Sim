@@ -139,6 +139,39 @@ def test_site_and_simulation_timezones_must_match() -> None:
         SolarCleanConfig.model_validate(payload)
 
 
+def test_dst_timezone_accepts_offsets_that_match_each_local_date() -> None:
+    payload = load_config(Path("configs/default.yaml")).model_dump(mode="python")
+    timezone = ZoneInfo("Europe/Berlin")
+    payload["simulation"].update(
+        {
+            "start": datetime(2025, 6, 1, tzinfo=timezone),
+            "end": datetime(2025, 12, 31, 23, tzinfo=timezone),
+            "target_timezone": "Europe/Berlin",
+        }
+    )
+    payload["site"]["timezone"] = "Europe/Berlin"
+
+    config = SolarCleanConfig.model_validate(payload)
+
+    assert config.simulation.start.isoformat() == "2025-06-01T00:00:00+02:00"
+    assert config.simulation.end.isoformat() == "2025-12-31T23:00:00+01:00"
+
+
+def test_timezone_name_with_incorrect_numeric_offset_is_rejected() -> None:
+    payload = load_config(Path("configs/default.yaml")).model_dump(mode="python")
+    payload["simulation"].update(
+        {
+            "start": datetime.fromisoformat("2025-06-01T00:00:00+03:00"),
+            "end": datetime.fromisoformat("2025-12-31T23:00:00+03:00"),
+            "target_timezone": "Europe/Berlin",
+        }
+    )
+    payload["site"]["timezone"] = "Europe/Berlin"
+
+    with pytest.raises(ValueError, match="UTC offset does not match"):
+        SolarCleanConfig.model_validate(payload)
+
+
 @pytest.mark.parametrize("field", ["partial_rain_threshold_mm", "full_rain_cleaning_threshold_mm"])
 def test_zero_rain_threshold_is_rejected(field: str) -> None:
     with pytest.raises(ValueError):

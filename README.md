@@ -111,7 +111,9 @@ After a successful NASA fetch, keep `weather.cache_enabled: true` and rerun any 
 
 ## Offline Tests
 
-Tests derive deterministic fixture configurations programmatically from `configs/default.yaml` through `tests/config_factory.py`. These fixtures are test-only and are not scientifically representative Riyadh data.
+Tests derive deterministic fixture configurations programmatically from the immutable packaged
+Riyadh factory preset through `tests/config_factory.py`. They do not inherit dashboard edits to
+`configs/default.yaml`; the fixtures are test-only and are not scientifically representative data.
 
 ## Local Riyadh CSV Replacement
 

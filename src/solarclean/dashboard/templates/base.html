@@ -16,16 +16,18 @@
     } catch (e) { /* storage unavailable: Daylight remains the default */ }
   })();
 </script>
-<link rel="stylesheet" href="/static/dashboard.css?v=20260714d">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='4' fill='%23f3b43f'/%3E%3Ccircle cx='16' cy='16' r='6' fill='none' stroke='%2317232b' stroke-width='2.5'/%3E%3Cpath d='M16 3v4M16 25v4M3 16h4M25 16h4' stroke='%2317232b' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/dashboard.css?v=20260716a">
 </head>
 <body class="{% block body_class %}{% endblock %}">
+<a class="skip-link" href="#main-content">Skip to content</a>
 <header class="topbar">
   <a class="brand" href="/" aria-label="SolarClean-DT home">
     <span class="brand-mark" aria-hidden="true"><span class="brand-sun"></span></span>
     <span><strong>SolarClean-DT</strong><small>PV strategy simulator</small></span>
   </a>
   <nav>
-    <a class="nav-current" href="/">Runs &amp; analysis</a>
+    <a {% if request.url.path == "/" %}class="nav-current" aria-current="page" {% endif %}href="/">Runs &amp; analysis</a>
     <button id="audit-toggle" type="button" class="audit-toggle" aria-pressed="false"
             title="Reveal the artifact source behind displayed figures">
       <span class="audit-dot" aria-hidden="true"></span><span>Audit mode</span>
@@ -37,7 +39,7 @@
     </button>
   </nav>
 </header>
-<main>
+<main id="main-content">
 {% block content %}{% endblock %}
 </main>
 <footer>
@@ -53,7 +55,7 @@
   <p id="audit-popover-detail"></p>
   <p id="audit-popover-check" class="audit-check"></p>
 </aside>
-<script src="/static/dashboard.js?v=20260714e"></script>
+<script src="/static/dashboard.js?v=20260716a"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

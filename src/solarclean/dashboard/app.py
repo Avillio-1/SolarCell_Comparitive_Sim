@@ -27,15 +27,17 @@ import zipfile
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime
 from datetime import time as datetime_time
+from functools import lru_cache
 from pathlib import Path
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, Field, model_validator
+from timezonefinder import TimezoneFinder
 
 from solarclean.application.comparison import CompareAllScenarios
 from solarclean.application.monte_carlo import MonteCarloExperiment
@@ -54,6 +56,7 @@ from solarclean.domain.environment.weather import CANONICAL_WEATHER_COLUMNS, Wea
 from solarclean.infrastructure.weather.cache import WeatherCache
 
 _PACKAGE_DIR = Path(__file__).parent
+_RIYADH_DEFAULT_CONFIG_PATH = _PACKAGE_DIR / "defaults" / "riyadh_default.yaml"
 
 DEFAULT_CONFIG_NAME = "default.yaml"
 DEFAULT_CONFIG_LABEL = "Default"
@@ -126,17 +129,19 @@ def _display_number(value: str) -> str:
     Display formatting only -- exports keep the exact figures, and the KPI
     section links to the CSV for anyone who needs all the decimals.
     """
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return "–"  # a stored blank (e.g. baseline payback) reads as "no value"
     try:
         number = float(value)
     except (TypeError, ValueError):
         return value
     if math.isnan(number):  # e.g. baseline payback_years
         return "–"
+    if number == 0:
+        return "0"  # exact stored zero; "0.0000" implied spurious precision
     if abs(number) >= 1000:
         return f"{number:,.0f}"
-    if abs(number) >= 1:
-        return f"{number:,.2f}"
-    return f"{number:.4f}"
+    return f"{number:,.2f}" if abs(number) >= 1 else f"{number:.4f}"
 
 
 def _format_sar(value: str | float) -> str:
@@ -1180,6 +1185,7 @@ def index(request: Request) -> HTMLResponse:
             "runs": runs,
             "run_total": total_runs,
             "run_total_pages": total_pages,
+            "run_kinds": sorted({entry.kind for entry in run_entries}),
             "jobs": visible_jobs,
             "parameters": _parameter_catalog(),
             "config_cockpits": _config_cockpits(config_names, run_entries),
@@ -1379,6 +1385,15 @@ def config_page(request: Request, name: str) -> HTMLResponse:
 def config_parameters(name: str) -> JSONResponse:
     """Return the sensitivity catalog selected by one dashboard config."""
     return JSONResponse(_parameter_catalog(_config_path(name)))
+
+
+@app.get("/api/configs/{name}/factory-default")
+def config_factory_default(name: str) -> JSONResponse:
+    """Return the immutable Riyadh preset for resetting the editable Default config."""
+    _config_path(name)
+    if name != DEFAULT_CONFIG_NAME:
+        raise HTTPException(status_code=404, detail="Factory reset is available only for Default")
+    return JSONResponse({"content": _RIYADH_DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")})
 
 
 @app.get("/api/runs/{run_id}/fingerprint")
@@ -1796,6 +1811,121 @@ def download_run(run_id: str) -> StreamingResponse:
 class ConfigBody(BaseModel):
     content: str
     save_as: str | None = None
+
+
+class LocationConfigBody(BaseModel):
+    content: str
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+
+
+@lru_cache(maxsize=1)
+def _timezone_finder() -> TimezoneFinder:
+    """Load the offline boundary dataset once, on the first location update."""
+
+    return TimezoneFinder(in_memory=True)
+
+
+def _timezone_at(latitude: float, longitude: float) -> str:
+    timezone_name = _timezone_finder().timezone_at(lng=longitude, lat=latitude)
+    if timezone_name is None:
+        raise ValueError("could not determine a timezone for those coordinates")
+    return timezone_name
+
+
+def _replace_yaml_section_scalar(
+    content: str,
+    *,
+    section: str,
+    key: str,
+    rendered_value: str,
+) -> str:
+    """Replace one scalar in a top-level block while preserving the rest of the YAML."""
+
+    lines = content.splitlines(keepends=True)
+    section_index: int | None = None
+    for index, line in enumerate(lines):
+        if line.rstrip("\r\n").strip() == f"{section}:":
+            section_index = index
+            break
+    if section_index is None:
+        raise ValueError(f"could not find {section}: section in the YAML")
+
+    key_pattern = re.compile(rf"^(?P<indent>\s+){re.escape(key)}\s*:")
+    for index in range(section_index + 1, len(lines)):
+        raw_line = lines[index].rstrip("\r\n")
+        if raw_line and not raw_line[0].isspace() and not raw_line.startswith("#"):
+            break
+        match = key_pattern.match(raw_line)
+        if match:
+            newline = "\r\n" if lines[index].endswith("\r\n") else "\n"
+            if not lines[index].endswith(("\n", "\r")):
+                newline = ""
+            lines[index] = f"{match.group('indent')}{key}: {rendered_value}{newline}"
+            return "".join(lines)
+    raise ValueError(f"could not find {section}.{key} in the YAML")
+
+
+def _simulation_bound_from_yaml(raw: object, field_name: str) -> datetime:
+    if not isinstance(raw, dict) or not isinstance(raw.get("simulation"), dict):
+        raise ValueError("simulation: section must be a YAML mapping")
+    value = raw["simulation"].get(field_name)
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value)
+        except ValueError as exc:
+            raise ValueError(f"simulation.{field_name} must be an ISO datetime") from exc
+    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"simulation.{field_name} must be a timezone-aware datetime")
+    return value
+
+
+@app.post("/api/configs/{name}/apply-location")
+def apply_location(name: str, body: LocationConfigBody) -> JSONResponse:
+    """Apply coordinates and their detected timezone with DST-correct period offsets."""
+
+    _config_path(name)
+    try:
+        timezone_name = _timezone_at(body.latitude, body.longitude)
+        timezone = ZoneInfo(timezone_name)
+    except (ValueError, ZoneInfoNotFoundError) as exc:
+        return JSONResponse({"valid": False, "error": f"Timezone lookup failed: {exc}"})
+    try:
+        raw = yaml.safe_load(body.content)
+        start = _simulation_bound_from_yaml(raw, "start")
+        end = _simulation_bound_from_yaml(raw, "end")
+        local_start = datetime.combine(start.date(), start.time(), timezone)
+        local_end = datetime.combine(end.date(), end.time(), timezone)
+
+        updated = body.content
+        replacements = (
+            ("simulation", "start", f'"{local_start.isoformat()}"'),
+            ("simulation", "end", f'"{local_end.isoformat()}"'),
+            ("simulation", "target_timezone", timezone_name),
+            ("site", "latitude", str(body.latitude)),
+            ("site", "longitude", str(body.longitude)),
+            ("site", "timezone", timezone_name),
+        )
+        for section, key, rendered_value in replacements:
+            updated = _replace_yaml_section_scalar(
+                updated,
+                section=section,
+                key=key,
+                rendered_value=rendered_value,
+            )
+        SolarCleanConfig.model_validate(yaml.safe_load(updated))
+    except (ValueError, yaml.YAMLError) as exc:
+        return JSONResponse({"valid": False, "error": f"{type(exc).__name__}: {exc}"})
+
+    return JSONResponse(
+        {
+            "valid": True,
+            "content": updated,
+            "timezone": timezone_name,
+            "start": local_start.isoformat(),
+            "end": local_end.isoformat(),
+        }
+    )
 
 
 @app.post("/api/configs/{name}/validate")

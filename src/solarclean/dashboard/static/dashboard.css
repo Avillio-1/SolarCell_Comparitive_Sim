@@ -1306,3 +1306,132 @@ body.audit-mode [data-audit-source]::selection { background: var(--sun); }
     .run-card .run-actions { justify-content: space-between; }
   }
 }
+
+/* usability pass: navigation, filtering, exports, a11y ----------------- */
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Keyboard users get a way past the header; invisible until focused. */
+.skip-link {
+  position: absolute;
+  left: 8px;
+  top: -48px;
+  z-index: 200;
+  padding: 8px 14px;
+  border: 1px solid var(--navy);
+  background: var(--surface);
+  color: var(--navy);
+  font-size: 13px;
+  text-decoration: none;
+}
+.skip-link:focus-visible { top: 8px; }
+
+/* Long record pages: one-line jump nav that stays reachable while scrolling. */
+.section-nav {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: baseline;
+  gap: 4px 14px;
+  flex-wrap: wrap;
+  margin: 0 0 14px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-container);
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(3px);
+  font-size: 12.5px;
+}
+.section-nav-label {
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.section-nav a { color: var(--navy); text-decoration: none; }
+.section-nav a:hover { text-decoration: underline; }
+[id="ranking"], [id="annual-kpis"], [id="daily-charts"], [id="cost-components"],
+[id="artifact-files"], [id="energy-explorer"] { scroll-margin-top: 52px; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+.run-back-link { margin-right: auto; }
+
+/* run archive filter ---------------------------------------------------- */
+.runs-toolbar { align-items: flex-end; row-gap: 8px; }
+.runs-filter-field { min-width: 200px; }
+.runs-filter-field input[type="search"] { min-width: 220px; }
+.runs-filter-status { align-self: center; margin: 0; }
+.runs-toolbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+@media (max-width: 700px) {
+  .runs-toolbar-actions { margin-left: 0; }
+}
+
+/* chart exports and keyboard hints -------------------------------------- */
+.chart-download {
+  display: block;
+  margin: 6px 0 0 auto;
+  padding: 2px 8px;
+  border-color: var(--line);
+  color: var(--muted);
+  font-size: 11px;
+}
+.chart-download:hover { border-color: var(--navy); color: var(--navy); }
+.chart-key-hint { margin-top: 6px; font-size: 11px; }
+#daily-energy-chart:focus-visible { outline: 2px solid var(--sun-deep); outline-offset: 2px; }
+
+/* large KPI tables keep their column headers while scrolling ------------ */
+.kpi-table thead th {
+  position: sticky;
+  top: 40px; /* clears the sticky section nav */
+  z-index: 5;
+  background: var(--surface);
+}
+
+/* config editor dirty state --------------------------------------------- */
+.config-dirty { align-self: center; margin: 0; color: var(--warn); font-weight: 600; }
+
+/* KPI micro-bars: |value| relative to the row's largest, drawn as a thin
+   baseline bar so the dense table can be scanned without reading every
+   number. The printed figures stay the only numbers. */
+.kpi-bar-cell {
+  background-image: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--navy) 26%, transparent) 0 3px,
+    transparent 3px
+  );
+  background-repeat: no-repeat;
+  background-position: left bottom;
+  background-size: var(--kpi-bar, 0%) 100%;
+}
+.kpi-bar-cell.best-cell {
+  background-image: linear-gradient(
+    to top,
+    color-mix(in srgb, var(--pass) 45%, transparent) 0 3px,
+    transparent 3px
+  );
+}
+
+@media print {
+  .skip-link, .section-nav, .chart-download, .chart-key-hint, .run-back-link,
+  .runs-toolbar { display: none !important; }
+}

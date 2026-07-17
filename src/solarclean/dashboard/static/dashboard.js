@@ -416,6 +416,7 @@
           }
           selectEverything = false;
           initRunFingerprints(currentGallery);
+          applyRunFilter();
           updateBulkDeleteState();
           return true;
         } else if (freshGallery && !currentGallery) {
@@ -605,8 +606,12 @@
     });
   }
 
+  function visibleRunCheckboxes() {
+    return Array.from(document.querySelectorAll("#runs-table .run-card:not([hidden]) .run-select"));
+  }
+
   function updateBulkDeleteState() {
-    var checkboxes = Array.from(document.querySelectorAll("#runs-table .run-select"));
+    var checkboxes = visibleRunCheckboxes();
     var bulkButton = document.getElementById("delete-selected-runs");
     var selectedCount = checkboxes.filter(function (checkbox) { return checkbox.checked; }).length;
     if (bulkButton) bulkButton.disabled = selectedCount === 0;
@@ -623,6 +628,47 @@
     }
   }
 
+  // Client-side archive filter. Cards are only hidden/shown — nothing is
+  // fetched or recomputed; the full archive is pulled in first so a search
+  // covers every stored run, not just the loaded pages.
+  function applyRunFilter() {
+    var textInput = document.getElementById("run-filter-text");
+    var kindSelect2 = document.getElementById("run-filter-kind");
+    if (!runsTable || (!textInput && !kindSelect2)) return;
+    var query = ((textInput && textInput.value) || "").trim().toLowerCase();
+    var kind = (kindSelect2 && kindSelect2.value) || "";
+    var filterActive = Boolean(query || kind);
+    if (filterActive && archiveHasMore()) {
+      setArchiveStatus("Loading the full archive to search it…");
+      loadAllRunPages().then(applyRunFilter);
+      return;
+    }
+    var cards = Array.from(runsTable.querySelectorAll(".run-card"));
+    var shown = 0;
+    cards.forEach(function (card) {
+      var matches = (!kind || card.dataset.kind === kind) &&
+        (!query || card.textContent.toLowerCase().indexOf(query) !== -1);
+      card.hidden = !matches;
+      if (matches) {
+        shown += 1;
+      } else {
+        // A hidden card must not stay silently selected for bulk delete.
+        var checkbox = card.querySelector(".run-select");
+        if (checkbox) checkbox.checked = false;
+      }
+    });
+    var status = document.getElementById("run-filter-status");
+    if (status) {
+      status.textContent = filterActive
+        ? (shown ? shown + " of " + cards.length + " runs match" : "No runs match this filter")
+        : "";
+    }
+    if (runArchiveLoader) {
+      runArchiveLoader.hidden = filterActive || !archiveHasMore();
+    }
+    updateBulkDeleteState();
+  }
+
   if (runsTable) {
     var runsError = document.getElementById("runs-delete-error");
     runsTable.addEventListener("click", function (event) {
@@ -637,7 +683,7 @@
     });
     var selectAllButton = document.getElementById("select-all-runs");
     selectAllButton.addEventListener("click", function () {
-      var checkboxes = Array.from(runsTable.querySelectorAll(".run-select"));
+      var checkboxes = visibleRunCheckboxes();
       var allSelected = !archiveHasMore() && checkboxes.length > 0 &&
         checkboxes.every(function (checkbox) { return checkbox.checked; });
       if (allSelected) {
@@ -651,12 +697,16 @@
       loadAllRunPages().then(function (loadedAll) {
         selectEverything = false;
         if (loadedAll) {
-          Array.from(runsTable.querySelectorAll(".run-select"))
-            .forEach(function (checkbox) { checkbox.checked = true; });
+          applyRunFilter();
+          visibleRunCheckboxes().forEach(function (checkbox) { checkbox.checked = true; });
         }
         updateBulkDeleteState();
       });
     });
+    var runFilterText = document.getElementById("run-filter-text");
+    var runFilterKind = document.getElementById("run-filter-kind");
+    if (runFilterText) runFilterText.addEventListener("input", applyRunFilter);
+    if (runFilterKind) runFilterKind.addEventListener("change", applyRunFilter);
     var bulkButton = document.getElementById("delete-selected-runs");
     bulkButton.addEventListener("click", function () {
       var selected = Array.from(document.querySelectorAll(".run-select:checked"))
@@ -717,6 +767,20 @@
   if (configEditor) {
     configEditor.originalContent = configEditor.value;
     configEditor.savedContent = configEditor.value;
+    // Edits only persist through "Validate and save"; navigating away with
+    // unsaved changes silently discards them, so flag it and ask first.
+    var updateDirtyFlag = function () {
+      var dirty = document.getElementById("config-dirty");
+      if (dirty) dirty.hidden = configEditor.value === configEditor.savedContent;
+    };
+    configEditor.addEventListener("input", updateDirtyFlag);
+    window.addEventListener("beforeunload", function (event) {
+      if (configEditor.value !== configEditor.savedContent) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    });
+    configEditor.updateDirtyFlag = updateDirtyFlag;
   }
 
   function syncSiteLocationFromEditor(editor) {
@@ -724,9 +788,11 @@
     var lon = parseFloat(parseYamlScalar(editor.value, "longitude"));
     var latInput = document.getElementById("site-lat");
     var lonInput = document.getElementById("site-lon");
+    var timezoneInput = document.getElementById("site-timezone");
     var marker = document.getElementById("site-map-marker");
     if (latInput) latInput.value = isNaN(lat) ? "" : lat;
     if (lonInput) lonInput.value = isNaN(lon) ? "" : lon;
+    if (timezoneInput) timezoneInput.value = parseYamlScalar(editor.value, "timezone") || "";
     if (marker) {
       marker.hidden = isNaN(lat) || isNaN(lon);
       if (!marker.hidden) {
@@ -756,6 +822,7 @@
           statusEl.textContent = result.error;
         } else if (result.saved) {
           editor.savedContent = payload.content;
+          if (editor.updateDirtyFlag) editor.updateDirtyFlag();
           statusEl.className = "ok";
           statusEl.textContent = "Valid. Saved — the next run uses this configuration.";
         } else if (result.error) {
@@ -786,35 +853,53 @@
       resetConfigButton.addEventListener("click", function () {
         var editor = document.getElementById("config-editor");
         var statusEl = document.getElementById("config-status");
-        var hadEditorChanges = editor.value !== editor.originalContent;
-        var savedValuesDiffer = editor.savedContent !== editor.originalContent;
-        editor.value = editor.originalContent;
-        editor.dispatchEvent(new Event("input", { bubbles: true }));
-        syncSiteLocationFromEditor(editor);
-        var locationStatus = document.getElementById("location-status");
-        if (locationStatus) locationStatus.textContent = "";
-        statusEl.className = savedValuesDiffer || hadEditorChanges ? "ok" : "";
-        if (savedValuesDiffer) {
-          statusEl.textContent = "Page-load values restored in the editor. " +
-            "Validate and save to make them the active Default again.";
-        } else if (hadEditorChanges) {
-          statusEl.textContent = "Unsaved changes reset to the page-load values.";
-        } else {
-          statusEl.textContent = "Already showing the values from when this page opened.";
+        function restoreContent(content, message) {
+          editor.value = content;
+          editor.dispatchEvent(new Event("input", { bubbles: true }));
+          syncSiteLocationFromEditor(editor);
+          var locationStatus = document.getElementById("location-status");
+          if (locationStatus) locationStatus.textContent = "";
+          statusEl.className = "ok";
+          statusEl.textContent = message;
         }
+        if (editor.dataset.isDefault !== "true") {
+          restoreContent(editor.originalContent, "Page-load values restored in the editor.");
+          return;
+        }
+        resetConfigButton.disabled = true;
+        statusEl.className = "";
+        statusEl.textContent = "Loading the original Riyadh defaults…";
+        fetch("/api/configs/" + encodeURIComponent(editor.dataset.name) + "/factory-default")
+          .then(function (response) {
+            return response.json().then(function (result) {
+              if (!response.ok) throw new Error(result.detail || ("HTTP " + response.status));
+              return result;
+            });
+          })
+          .then(function (result) {
+            restoreContent(
+              result.content,
+              "Original Riyadh defaults restored in the editor. " +
+                "Validate and save to make them active."
+            );
+          })
+          .catch(function (error) {
+            statusEl.className = "bad";
+            statusEl.textContent = error.message || String(error);
+          })
+          .finally(function () { resetConfigButton.disabled = false; });
       });
     }
   }
 
   // --- site location picker --------------------------------------------
-  // Presentation-only helper: it edits the site.latitude / site.longitude
-  // lines of the YAML in the editor textarea. Whether those coordinates
-  // matter is stated honestly from weather.provider — only nasa_power
-  // fetches weather by location; fixture/csv weather ignores it.
+  // The server applies coordinates, both timezone fields, and DST-correct
+  // simulation offsets as one validated YAML update. Only nasa_power fetches
+  // weather by location; fixture/csv weather still treats coordinates as metadata.
 
   function parseYamlScalar(content, key) {
     var match = content.match(new RegExp("^\\s*" + key + ":\\s*([^\\s#]+)", "m"));
-    return match ? match[1] : null;
+    return match ? match[1].replace(/^["']|["']$/g, "") : null;
   }
 
   function updateProviderNote(content) {
@@ -826,8 +911,9 @@
       warning.textContent =
         "weather.provider is nasa_power: runs fetch live NASA POWER weather for these " +
         "coordinates — hourly irradiance, temperature, wind, humidity, and precipitation " +
-        "all change with the location. Soiling/dust and cost calibration stay on the " +
-        "Riyadh central-v2 assumption set.";
+        "all change with the location. Daily rainfall, seasonal soiling, event dates, and " +
+        "cleaning use the selected timezone. Soiling/dust and cost calibration stay on " +
+        "the Riyadh central-v2 assumption set.";
     } else if (provider) {
       warning.hidden = false;
       warning.textContent =
@@ -850,6 +936,8 @@
     var marker = document.getElementById("site-map-marker");
     var latInput = document.getElementById("site-lat");
     var lonInput = document.getElementById("site-lon");
+    var timezoneInput = document.getElementById("site-timezone");
+    var applyButton = document.getElementById("apply-location");
     var statusEl = document.getElementById("location-status");
 
     function placeMarker(lat, lon) {
@@ -862,8 +950,10 @@
     // Seed inputs and marker from the YAML currently in the editor.
     var initialLat = parseFloat(parseYamlScalar(editor.value, "latitude"));
     var initialLon = parseFloat(parseYamlScalar(editor.value, "longitude"));
+    var initialTimezone = parseYamlScalar(editor.value, "timezone");
     if (!isNaN(initialLat)) latInput.value = initialLat;
     if (!isNaN(initialLon)) lonInput.value = initialLon;
+    if (initialTimezone) timezoneInput.value = initialTimezone;
     placeMarker(initialLat, initialLon);
     updateProviderNote(editor.value);
     editor.addEventListener("input", function () { updateProviderNote(editor.value); });
@@ -878,7 +968,7 @@
       lonInput.value = lon.toFixed(4);
       placeMarker(lat, lon);
       statusEl.textContent = "Picked " + lat.toFixed(4) + ", " + lon.toFixed(4) +
-        " — press \"Apply to config above\" to write it into the YAML.";
+        " — its timezone will be detected automatically when you apply it.";
     });
 
     [latInput, lonInput].forEach(function (input) {
@@ -887,134 +977,46 @@
       });
     });
 
-    document.getElementById("apply-location").addEventListener("click", function () {
+    applyButton.addEventListener("click", function () {
       var lat = parseFloat(latInput.value);
       var lon = parseFloat(lonInput.value);
       if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
         statusEl.textContent = "Latitude must be -90..90 and longitude -180..180.";
         return;
       }
-      var content = editor.value;
-      var latPattern = /^(\s*latitude:\s*).*$/m;
-      var lonPattern = /^(\s*longitude:\s*).*$/m;
-      if (!latPattern.test(content) || !lonPattern.test(content)) {
-        statusEl.textContent =
-          "Could not find latitude:/longitude: lines in the YAML — edit them manually.";
-        return;
-      }
-      editor.value = content
-        .replace(latPattern, "$1" + lat)
-        .replace(lonPattern, "$1" + lon);
-      placeMarker(lat, lon);
-      updateProviderNote(editor.value);
-      statusEl.textContent = "Updated site.latitude / site.longitude in the editor — " +
-        "validate and save to keep it.";
-    });
-  };
-
-  // --- site location picker --------------------------------------------
-  // Presentation-only helper: it edits the site.latitude / site.longitude
-  // lines of the YAML in the editor textarea. Whether those coordinates
-  // matter is stated honestly from weather.provider — only nasa_power
-  // fetches weather by location; fixture/csv weather ignores it.
-
-  function parseYamlScalar(content, key) {
-    var match = content.match(new RegExp("^\\s*" + key + ":\\s*([^\\s#]+)", "m"));
-    return match ? match[1] : null;
-  }
-
-  function updateProviderNote(content) {
-    var warning = document.getElementById("provider-warning");
-    if (!warning) return;
-    var provider = parseYamlScalar(content, "provider");
-    if (provider === "nasa_power") {
-      warning.hidden = false;
-      warning.textContent =
-        "weather.provider is nasa_power: runs fetch live NASA POWER weather for these " +
-        "coordinates — hourly irradiance, temperature, wind, humidity, and precipitation " +
-        "all change with the location. Soiling/dust and cost calibration stay on the " +
-        "Riyadh central-v2 assumption set.";
-    } else if (provider) {
-      warning.hidden = false;
-      warning.textContent =
-        "weather.provider is \"" + provider + "\": weather data is fixed, so the coordinates " +
-        "below are recorded as metadata only and will NOT change simulation results.";
-    } else {
-      warning.hidden = true;
-    }
-  }
-
-  window.initSiteMap = function () {
-    var svg = document.getElementById("site-map");
-    var land = document.getElementById("site-map-land");
-    var editor = document.getElementById("config-editor");
-    if (!svg || !land || !editor) return;
-    if (typeof window.SOLARCLEAN_WORLD_LAND === "string") {
-      land.setAttribute("d", window.SOLARCLEAN_WORLD_LAND);
-    }
-
-    var marker = document.getElementById("site-map-marker");
-    var latInput = document.getElementById("site-lat");
-    var lonInput = document.getElementById("site-lon");
-    var statusEl = document.getElementById("location-status");
-
-    function placeMarker(lat, lon) {
-      if (isNaN(lat) || isNaN(lon)) return;
-      marker.setAttribute("cx", lon);
-      marker.setAttribute("cy", -lat); // SVG y grows downward; viewBox is -90..90
-      marker.hidden = false;
-    }
-
-    // Seed inputs and marker from the YAML currently in the editor.
-    var initialLat = parseFloat(parseYamlScalar(editor.value, "latitude"));
-    var initialLon = parseFloat(parseYamlScalar(editor.value, "longitude"));
-    if (!isNaN(initialLat)) latInput.value = initialLat;
-    if (!isNaN(initialLon)) lonInput.value = initialLon;
-    placeMarker(initialLat, initialLon);
-    updateProviderNote(editor.value);
-    editor.addEventListener("input", function () { updateProviderNote(editor.value); });
-
-    svg.addEventListener("click", function (event) {
-      var point = new DOMPoint(event.clientX, event.clientY).matrixTransform(
-        svg.getScreenCTM().inverse()
-      );
-      var lon = Math.min(180, Math.max(-180, point.x));
-      var lat = Math.min(90, Math.max(-90, -point.y));
-      latInput.value = lat.toFixed(4);
-      lonInput.value = lon.toFixed(4);
-      placeMarker(lat, lon);
-      statusEl.textContent = "Picked " + lat.toFixed(4) + ", " + lon.toFixed(4) +
-        " — press \"Apply to config above\" to write it into the YAML.";
-    });
-
-    [latInput, lonInput].forEach(function (input) {
-      input.addEventListener("input", function () {
-        placeMarker(parseFloat(latInput.value), parseFloat(lonInput.value));
-      });
-    });
-
-    document.getElementById("apply-location").addEventListener("click", function () {
-      var lat = parseFloat(latInput.value);
-      var lon = parseFloat(lonInput.value);
-      if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
-        statusEl.textContent = "Latitude must be -90..90 and longitude -180..180.";
-        return;
-      }
-      var content = editor.value;
-      var latPattern = /^(\s*latitude:\s*).*$/m;
-      var lonPattern = /^(\s*longitude:\s*).*$/m;
-      if (!latPattern.test(content) || !lonPattern.test(content)) {
-        statusEl.textContent =
-          "Could not find latitude:/longitude: lines in the YAML — edit them manually.";
-        return;
-      }
-      editor.value = content
-        .replace(latPattern, "$1" + lat)
-        .replace(lonPattern, "$1" + lon);
-      placeMarker(lat, lon);
-      updateProviderNote(editor.value);
-      statusEl.textContent = "Updated site.latitude / site.longitude in the editor — " +
-        "validate and save to keep it.";
+      applyButton.disabled = true;
+      statusEl.textContent = "Detecting the timezone and calculating local UTC offsets…";
+      fetch("/api/configs/" + encodeURIComponent(editor.dataset.name) + "/apply-location", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: editor.value,
+          latitude: lat,
+          longitude: lon,
+        }),
+      })
+        .then(function (response) {
+          return response.json().then(function (result) {
+            if (!response.ok) throw new Error(JSON.stringify(result.detail || result));
+            return result;
+          });
+        })
+        .then(function (result) {
+          if (!result.valid) throw new Error(result.error);
+          editor.value = result.content;
+          editor.dispatchEvent(new Event("input", { bubbles: true }));
+          syncSiteLocationFromEditor(editor);
+          statusEl.textContent = "Updated coordinates and timezone " + result.timezone +
+            "; local period offsets are " + result.start.slice(-6) + " / " +
+            result.end.slice(-6) + ". Validate and save to keep it.";
+          var configStatus = document.getElementById("config-status");
+          configStatus.className = "ok";
+          configStatus.textContent = "The location/timezone update is valid but not saved yet.";
+        })
+        .catch(function (error) {
+          statusEl.textContent = error.message || String(error);
+        })
+        .finally(function () { applyButton.disabled = false; });
     });
   };
 
@@ -1063,6 +1065,18 @@
       setText("cockpit-weather-detail", state.weather_status.detail);
       var marker = document.getElementById("cockpit-map-marker");
       if (marker) marker.setAttribute("transform", "translate(" + state.longitude + " " + (-state.latitude) + ")");
+      // Frame the locator window around the configured site so the marker is
+      // always in view, wherever in the world the configuration points.
+      var mapSvg = document.getElementById("cockpit-map");
+      var lon = Number(state.longitude);
+      var lat = Number(state.latitude);
+      if (mapSvg && isFinite(lon) && isFinite(lat)) {
+        var windowW = 29;
+        var windowH = 24;
+        var viewX = clamp(lon - windowW / 2, -180, 180 - windowW);
+        var viewY = clamp(-lat - windowH / 2, -90, 90 - windowH);
+        mapSvg.setAttribute("viewBox", viewX + " " + viewY + " " + windowW + " " + windowH);
+      }
       var winner = document.getElementById("cockpit-last-winner");
       if (winner) {
         winner.replaceChildren();
@@ -1084,6 +1098,26 @@
     configSelect.addEventListener("change", renderCockpit);
     renderCockpit();
   };
+
+  // --- KPI table micro-bars --------------------------------------------
+  // Purely visual scaling of the stored values already printed in each row
+  // (like a chart axis): bar length = |value| / row max. Nothing is derived
+  // or displayed as a number.
+
+  document.querySelectorAll(".kpi-table tbody tr").forEach(function (row) {
+    var cells = Array.from(row.querySelectorAll("td[data-kpi-value]"));
+    var values = cells.map(function (cell) {
+      var value = parseFloat(cell.dataset.kpiValue);
+      return isFinite(value) ? Math.abs(value) : NaN;
+    });
+    var max = Math.max.apply(null, values.filter(isFinite));
+    if (!isFinite(max) || max <= 0) return;
+    cells.forEach(function (cell, index) {
+      if (!isFinite(values[index])) return;
+      cell.classList.add("kpi-bar-cell");
+      cell.style.setProperty("--kpi-bar", (values[index] / max * 100).toFixed(1) + "%");
+    });
+  });
 
   // --- charts ---------------------------------------------------------
 
@@ -1682,6 +1716,20 @@
       options: options,
       plugins: [explorerCursorPlugin],
     }));
+    // Keyboard day-stepping: arrows move the locked selection so the
+    // selected-day panel is usable without a mouse.
+    canvas.addEventListener("keydown", function (event) {
+      var step = event.shiftKey ? 7 : 1;
+      var lastIndex = data.dates.length - 1;
+      var target = null;
+      if (event.key === "ArrowLeft") target = (explorerIndex < 0 ? 0 : explorerIndex) - step;
+      else if (event.key === "ArrowRight") target = (explorerIndex < 0 ? 0 : explorerIndex) + step;
+      else if (event.key === "Home") target = 0;
+      else if (event.key === "End") target = lastIndex;
+      if (target === null) return;
+      event.preventDefault();
+      setExplorerIndex(target, true);
+    });
     drawContextTracks(payload);
     document.querySelectorAll("[data-energy-scenario]").forEach(function (button) {
       button.addEventListener("click", function () {
@@ -1754,6 +1802,40 @@
     render();
   }
 
+  // Offer a PNG export next to each standalone chart. The image is exactly
+  // the rendered canvas on the theme's surface colour — no data is re-read.
+  var _downloadableCharts = [
+    "daily-energy-chart", "daily-loss-chart", "daily-soiling-chart", "daily-dew-chart",
+    "daily-cumgain-chart", "annual-cost-chart", "mc-trials-chart", "mc-win-chart",
+    "mc-benefit-chart", "tornado-chart", "breakeven-chart",
+  ];
+  function addChartDownloads() {
+    _downloadableCharts.forEach(function (id) {
+      var canvas = document.getElementById(id);
+      if (!canvas || canvas.dataset.downloadBound) return;
+      canvas.dataset.downloadBound = "true";
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "chart-download";
+      button.textContent = "download chart PNG";
+      button.addEventListener("click", function () {
+        var out = document.createElement("canvas");
+        out.width = canvas.width;
+        out.height = canvas.height;
+        var context = out.getContext("2d");
+        context.fillStyle = cssVar("--surface", "#ffffff");
+        context.fillRect(0, 0, out.width, out.height);
+        context.drawImage(canvas, 0, 0);
+        var link = document.createElement("a");
+        link.href = out.toDataURL("image/png");
+        link.download = (document.title.split(" · ")[0] || "solarclean") + "-" + id + ".png";
+        link.click();
+      });
+      var host = canvas.closest(".energy-main-chart") || canvas;
+      host.insertAdjacentElement("afterend", button);
+    });
+  }
+
   // Called from the comparison template after Chart.js loads. Data comes
   // straight from the run's stored CSV artifacts via the server.
   window.drawComparisonCharts = function () {
@@ -1770,6 +1852,7 @@
       "daily-cumgain-chart", payload.dailyCumGain, "Cumulative gain vs baseline (kWh)"
     );
 
+    addChartDownloads();
     var bars = payload.annualCostBars;
     var canvas = document.getElementById("annual-cost-chart");
     if (bars && canvas && typeof Chart !== "undefined") {
@@ -1799,6 +1882,7 @@
     drawMcTrialsChart(window.solarcleanMcTrials);
     drawTornadoChart(window.solarcleanTornado);
     drawBreakEvenChart(window.solarcleanBreakEven);
+    addChartDownloads();
   };
 
   // Per-trial net benefit dot plot: one dot per reconciled trial per scenario.

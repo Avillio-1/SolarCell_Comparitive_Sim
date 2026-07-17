@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 
@@ -84,14 +85,15 @@ class MultiYearComparisonResult:
 
 
 def build_year_config(config: SolarCleanConfig, year: int) -> SolarCleanConfig:
-    """Round-trip the base config with the requested Riyadh calendar-year bounds."""
+    """Round-trip the base config with a full year in the configured site timezone."""
 
     payload: dict[str, Any] = config.model_dump(mode="python")
     simulation = payload["simulation"]
     if not isinstance(simulation, dict):
         raise TypeError("config simulation payload must be a mapping")
-    simulation["start"] = datetime.fromisoformat(f"{year}-01-01T00:00:00+03:00")
-    simulation["end"] = datetime.fromisoformat(f"{year}-12-31T23:00:00+03:00")
+    timezone = ZoneInfo(config.simulation.target_timezone)
+    simulation["start"] = datetime(year, 1, 1, 0, tzinfo=timezone)
+    simulation["end"] = datetime(year, 12, 31, 23, tzinfo=timezone)
     return SolarCleanConfig.model_validate(payload)
 
 

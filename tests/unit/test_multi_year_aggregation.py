@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import statistics
-from datetime import timedelta
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 import pytest
 from tests.config_factory import fixture_config
 
 from solarclean.application.multi_year import YearResult, aggregate_years, build_year_config
+from solarclean.config.models import SolarCleanConfig
 
 SCENARIOS = ("baseline", "reactive", "coating")
 
@@ -76,3 +78,23 @@ def test_build_year_config_uses_full_riyadh_calendar_year(year: int) -> None:
     assert config.simulation.end.isoformat() == f"{year}-12-31T23:00:00+03:00"
     assert config.simulation.start.utcoffset() == timedelta(hours=3)
     assert config.simulation.end.utcoffset() == timedelta(hours=3)
+
+
+def test_build_year_config_uses_non_saudi_site_timezone() -> None:
+    payload = fixture_config().model_dump(mode="python")
+    timezone = ZoneInfo("Europe/Berlin")
+    payload["simulation"].update(
+        {
+            "start": datetime(2025, 1, 1, tzinfo=timezone),
+            "end": datetime(2025, 1, 2, 23, tzinfo=timezone),
+            "target_timezone": "Europe/Berlin",
+        }
+    )
+    payload["site"]["timezone"] = "Europe/Berlin"
+    source = SolarCleanConfig.model_validate(payload)
+
+    config = build_year_config(source, 2024)
+
+    assert config.simulation.start.isoformat() == "2024-01-01T00:00:00+01:00"
+    assert config.simulation.end.isoformat() == "2024-12-31T23:00:00+01:00"
+    assert getattr(config.simulation.start.tzinfo, "key", None) == "Europe/Berlin"

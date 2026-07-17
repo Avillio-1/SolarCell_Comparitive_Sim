@@ -37,12 +37,22 @@ class RunEntry:
 
 def _detect_kind(run_id: str) -> str:
     # Run ids follow "<config>-<command>-<timestamp>-<hash>" from OutputWriter.
+    # Ordering matters: "compare-multi-year" must not match "compare-all-scenarios",
+    # and every CLI writer kind is named so run cards never say "unknown" for a
+    # directory the tooling itself produced.
     for kind in (
         "compare-all-scenarios",
+        "compare-multi-year",
         "monte-carlo",
         "sensitivity-oneway",
         "sensitivity-winner-map",
         "break-even",
+        "fetch-weather",
+        "run-clean",
+        "run-baseline",
+        "validate-weather",
+        "validate-phase-3-5",
+        "profile-full-year",
     ):
         if f"-{kind}-" in run_id:
             return kind
@@ -72,13 +82,24 @@ def list_runs(outputs_dir: Path) -> list[RunEntry]:
             with contextlib.suppress(OSError):
                 run_dir.rmdir()
             continue
+        if not any(entry.is_file() for entry in run_dir.iterdir()):
+            # A directory of directories is a container (e.g. a test-output
+            # root), not a run: a run package always has artifact files at its
+            # top level. Listing containers produced unusable "unknown/undated"
+            # cards. Left in place — never swept — because their contents are
+            # not ours to judge.
+            continue
         kind = _detect_kind(run_dir.name)
         winner: str | None = None
         valid: bool | None = None
         recommendation = load_json(run_dir / "recommendation.json")
         if recommendation is not None:
             winner = recommendation.get("winner")  # type: ignore[assignment]
-            raw_valid = recommendation.get("valid")
+            # Same reading as the run page header: calculation_valid is the
+            # stored "arithmetic reconciles" flag; the legacy valid field also
+            # encoded decision-grade policy and made verified exploratory runs
+            # show as failed on their cards.
+            raw_valid = recommendation.get("calculation_valid", recommendation.get("valid"))
             valid = bool(raw_valid) if raw_valid is not None else None
         mc_summary = load_json(run_dir / "monte_carlo_summary.json")
         if mc_summary is not None:

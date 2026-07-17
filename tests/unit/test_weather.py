@@ -103,6 +103,25 @@ def test_fixture_provider_returns_requested_timezone_and_columns() -> None:
     assert dataset.metadata["fixture_profile"] == "riyadh_synthetic"
 
 
+def test_fixture_provider_preserves_local_day_across_dst_transition() -> None:
+    timezone = ZoneInfo("Europe/Berlin")
+    request = WeatherRequest(
+        latitude=52.52,
+        longitude=13.405,
+        start=datetime(2025, 3, 30, tzinfo=timezone),
+        end=datetime(2025, 3, 30, 23, tzinfo=timezone),
+        target_timezone="Europe/Berlin",
+        variables=frozenset(CANONICAL_WEATHER_COLUMNS),
+    )
+
+    dataset = FixtureWeatherProvider().load(request)
+
+    assert len(dataset.hourly) == 23
+    assert set(dataset.hourly.index.date) == {datetime(2025, 3, 30).date()}
+    assert dataset.hourly.index[0].isoformat() == "2025-03-30T00:00:00+01:00"
+    assert dataset.hourly.index[-1].isoformat() == "2025-03-30T23:00:00+02:00"
+
+
 def test_fixture_profiles_expose_favorable_and_dry_weather() -> None:
     favorable = FixtureWeatherProvider(profile="kaust_paper_favorable").load(_request())
     dry = FixtureWeatherProvider(profile="riyadh_dry").load(_request())

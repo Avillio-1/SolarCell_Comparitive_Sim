@@ -279,20 +279,23 @@ artifact list):
 "view / edit config" opens the Default configuration. **Validate** round-trips
 the text through `load_config`, so schema errors are the same Pydantic
 messages a CLI run would raise. **Validate and save** overwrites the Default —
-the next dashboard or CLI run uses it. **Restore page-load values** returns the
-editor to the configuration loaded when the page opened. If the configuration
-was already saved during that page session, save the restored text to make the
-rollback active for subsequent runs.
+the next dashboard or CLI run uses it. **Reset to Riyadh defaults** loads the
+immutable packaged Riyadh factory preset into the editor, even if the active
+Default was previously saved with another site. Press **Validate and save** to
+make the restored preset active for subsequent runs.
 
 ### Map location picker
 
 Below the editor, a "Site location" panel shows a world map (a vendored
 public-domain Natural Earth land outline in `static/world_land.js` — the map
 itself needs no tile servers). Clicking the map, or typing coordinates, sets
-latitude/longitude; **Apply to config above** rewrites the `site.latitude` /
-`site.longitude` lines in the editor, after which the normal validate/save
-flow applies. The picker edits YAML text; the weather change happens at run
-time.
+latitude/longitude. **Apply to config above** looks up the matching IANA
+timezone automatically from an offline timezone-boundary dataset, rewrites
+`site.latitude`, `site.longitude`, `site.timezone`, and
+`simulation.target_timezone`, then rebuilds the simulation start/end values
+at the same local dates and times. The server derives the correct UTC offset
+for each boundary, including DST; the normal validate/save flow then applies.
+The picker edits YAML text; the weather change happens at run time.
 
 **What changes with the location.** The Default config uses `nasa_power`, so
 runs fetch that location's real hourly weather from NASA POWER: irradiance
@@ -301,6 +304,10 @@ precipitation. Those drive clean PV production, rainfall cleaning, coating
 cooling/humidity behaviour, and drone weather cancellations. (Spot check:
 Riyadh vs Berlin for the same June 2025 days differ as expected — mean 33.6 °C
 / 11 % RH vs 19.2 °C / 68 % RH, with ~35 % less irradiance in Berlin.)
+Hourly weather is kept in the selected site timezone, so daily rainfall,
+seasonal soiling, shared event-tape dates, and cleaning decisions all use that
+location's civil-day boundaries. Multi-year runs build each calendar year in
+the same selected timezone rather than assuming Riyadh's `+03:00` offset.
 
 **What does not change.** Soiling/dust-event statistics and all cost
 calibration remain the Riyadh central-v2 assumption set wherever the site is
@@ -320,8 +327,9 @@ the YAML and states the applicable case.
 - Progress and ETA are never estimated beyond measured unit counts reported by
   the use cases themselves (or, for the break-even search, its declared
   evaluation budget — an upper bound, labelled as such).
-- The location picker edits YAML text only and states when coordinates do not
-  affect results; it never implies fixture weather follows the map.
+- The location picker asks the server to make a validated, timezone-consistent
+  YAML edit and states when coordinates do not affect results; it never
+  implies fixture weather follows the map.
 - No second simulation loop, no strategy logic, no direct registry mutation.
 - Artifact and config paths are validated against traversal; run downloads are
   zipped from the run directory as-is.

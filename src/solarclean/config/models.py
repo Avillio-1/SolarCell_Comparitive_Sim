@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -446,6 +446,24 @@ class SolarCleanConfig(StrictModel):
                 "site.timezone must equal simulation.target_timezone so weather and daily "
                 "aggregation use the configured site timezone"
             )
+        target_zone = ZoneInfo(self.simulation.target_timezone)
+        for field_name, value in (
+            ("start", self.simulation.start),
+            ("end", self.simulation.end),
+        ):
+            local_wall_time = value.replace(tzinfo=None)
+            valid_offsets = set()
+            for fold in (0, 1):
+                candidate = local_wall_time.replace(tzinfo=target_zone, fold=fold)
+                round_trip = candidate.astimezone(UTC).astimezone(target_zone)
+                if round_trip.replace(tzinfo=None) == local_wall_time:
+                    valid_offsets.add(candidate.utcoffset())
+            if value.utcoffset() not in valid_offsets:
+                raise ValueError(
+                    f"simulation.{field_name} UTC offset does not match "
+                    f"simulation.target_timezone {self.simulation.target_timezone} "
+                    "at that local date and time"
+                )
         if self.pv_system.panel_count != self.farm.total_panels:
             raise ValueError("pv_system.panel_count must equal farm.total_panels")
         if self.pv_system.panel_capacity_w != self.farm.panel_capacity_w:

@@ -41,6 +41,7 @@ from solarclean.application.sensitivity import (  # noqa: E402
     TwoWaySensitivityExperiment,
 )
 from solarclean.config.loader import load_config  # noqa: E402
+from solarclean.config.models import SolarCleanConfig  # noqa: E402
 from solarclean.dashboard import app as dashboard_app  # noqa: E402
 from solarclean.dashboard import artifacts as artifacts_module  # noqa: E402
 from solarclean.dashboard.__main__ import resolve_bind  # noqa: E402
@@ -752,19 +753,41 @@ def test_config_validation_paths(client: TestClient) -> None:
     assert good.json()["valid"] is True
 
 
-def test_config_page_can_restore_values_after_a_save(client: TestClient) -> None:
+def test_config_page_can_reset_to_riyadh_defaults(client: TestClient) -> None:
     page = client.get(f"/config/{DEFAULT_CONFIG_NAME}")
     assert page.status_code == 200
     assert 'id="reset-config-btn"' in page.text
-    assert "Restore page-load values" in page.text
+    assert "Reset to Riyadh defaults" in page.text
 
     script = client.get("/static/dashboard.js").text
     assert "configEditor.originalContent = configEditor.value" in script
     assert "editor.savedContent = payload.content" in script
-    assert "editor.value = editor.originalContent" in script
-    assert "Validate and save to make them the active Default again." in script
+    assert 'editor.dataset.isDefault !== "true"' in script
+    assert '"/factory-default"' in script
+    assert "Original Riyadh defaults restored in the editor." in script
     assert "resetContent" not in script
     assert "syncSiteLocationFromEditor(editor)" in script
+
+
+def test_factory_default_is_immutable_riyadh_preset(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sandbox = tmp_path / "configs"
+    sandbox.mkdir()
+    (sandbox / DEFAULT_CONFIG_NAME).write_text(
+        DEFAULT_CONFIG_PATH.read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    monkeypatch.setattr(dashboard_app, "_CONFIGS_DIR", sandbox)
+
+    response = client.get(f"/api/configs/{DEFAULT_CONFIG_NAME}/factory-default")
+    assert response.status_code == 200
+    restored = SolarCleanConfig.model_validate(yaml.safe_load(response.json()["content"]))
+    assert restored.site.name == "Riyadh"
+    assert restored.site.latitude == pytest.approx(24.7136)
+    assert restored.site.longitude == pytest.approx(46.6753)
+    assert restored.site.timezone == "Asia/Riyadh"
+    assert restored.simulation.target_timezone == "Asia/Riyadh"
+    assert restored.simulation.run_id_prefix == "default-riyadh"
 
 
 def test_config_save_updates_default(
@@ -810,10 +833,10 @@ def test_nondefault_config_page_is_not_saveable(
     assert 'id="save-default-btn"' not in page.text
 
 
-def test_default_config_runs_live_weather_for_riyadh() -> None:
-    config = load_config(Path("configs") / DEFAULT_CONFIG_NAME)
-    # The Default fetches location-driven NASA POWER weather, so the map picker
-    # genuinely changes simulation inputs; the default site stays Riyadh.
+def test_factory_default_runs_live_weather_for_riyadh() -> None:
+    config = load_config(dashboard_app._RIYADH_DEFAULT_CONFIG_PATH)
+    # The immutable factory preset stays Riyadh even when the editable Default
+    # has been saved with another site through the dashboard.
     assert config.weather.provider == "nasa_power"
     assert config.site.name == "Riyadh"
     assert config.site.latitude == pytest.approx(24.7136)
@@ -835,6 +858,9 @@ def test_config_page_has_offline_map_picker(client: TestClient) -> None:
     assert 'id="site-map"' in page
     assert 'viewBox="-180 -90 360 180"' in page  # equirectangular click mapping
     assert 'id="site-lat"' in page and 'id="site-lon"' in page
+    assert 'id="site-timezone"' in page
+    assert 'id="site-timezone" type="text" readonly' in page
+    assert "timezone is detected automatically" in page
     assert 'id="apply-location"' in page
     assert "/static/world_land.js" in page
 
@@ -844,6 +870,47 @@ def test_config_page_has_offline_map_picker(client: TestClient) -> None:
     assert "SOLARCLEAN_WORLD_LAND" in asset.text
     assert "Natural Earth" in asset.text
     assert "public domain" in asset.text
+
+
+def test_apply_location_updates_timezones_and_dst_offsets(client: TestClient) -> None:
+    content = dashboard_app._RIYADH_DEFAULT_CONFIG_PATH.read_text(encoding="utf-8").replace(
+        'start: "2025-01-01T00:00:00+03:00"',
+        'start: "2025-06-01T00:00:00+03:00"',
+    )
+
+    response = client.post(
+        f"/api/configs/{DEFAULT_CONFIG_NAME}/apply-location",
+        json={
+            "content": content,
+            "latitude": 52.52,
+            "longitude": 13.405,
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["valid"] is True
+    assert result["timezone"] == "Europe/Berlin"
+    assert result["start"] == "2025-06-01T00:00:00+02:00"
+    assert result["end"] == "2025-12-31T23:00:00+01:00"
+    updated = SolarCleanConfig.model_validate(yaml.safe_load(result["content"]))
+    assert updated.site.latitude == pytest.approx(52.52)
+    assert updated.site.longitude == pytest.approx(13.405)
+    assert updated.site.timezone == "Europe/Berlin"
+    assert updated.simulation.target_timezone == "Europe/Berlin"
+
+
+@pytest.mark.parametrize(
+    ("latitude", "longitude", "expected"),
+    [
+        (24.7136, 46.6753, "Asia/Riyadh"),
+        (40.7128, -74.0060, "America/New_York"),
+    ],
+)
+def test_timezone_is_detected_from_coordinates(
+    latitude: float, longitude: float, expected: str
+) -> None:
+    assert dashboard_app._timezone_at(latitude, longitude) == expected
 
 
 # --------------------------------------------------------------------------
@@ -1293,7 +1360,7 @@ def test_home_is_configuration_cockpit_and_run_gallery(
 ) -> None:
     page = client.get("/").text
     assert 'class="config-cockpit"' in page
-    assert "Arabian Peninsula locator" in page
+    assert "Site locator" in page
     assert "Weather readiness" in page
     assert "Simulation plan · Form SC-01" in page
     assert 'class="run-gallery"' in page

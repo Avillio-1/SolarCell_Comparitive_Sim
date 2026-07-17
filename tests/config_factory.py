@@ -13,6 +13,7 @@ from solarclean.config.models import (
 )
 
 DEFAULT_CONFIG_PATH = Path("configs/default.yaml")
+RIYADH_FACTORY_CONFIG_PATH = Path("src/solarclean/dashboard/defaults/riyadh_default.yaml")
 
 
 def _merge(base: dict[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
@@ -26,14 +27,14 @@ def _merge(base: dict[str, Any], override: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def config_from_default(overrides: Mapping[str, Any] | None = None) -> SolarCleanConfig:
-    payload = load_config(DEFAULT_CONFIG_PATH).model_dump(mode="python")
+    payload = load_config(RIYADH_FACTORY_CONFIG_PATH).model_dump(mode="python")
     return SolarCleanConfig.model_validate(_merge(payload, overrides or {}))
 
 
 def fixture_config(overrides: Mapping[str, Any] | None = None) -> SolarCleanConfig:
     """Two-day deterministic test config; not a user-facing YAML preset."""
 
-    payload = load_config(DEFAULT_CONFIG_PATH).model_dump(mode="python")
+    payload = load_config(RIYADH_FACTORY_CONFIG_PATH).model_dump(mode="python")
     payload = _merge(
         payload,
         {

@@ -1,7 +1,7 @@
 {% from "_fingerprint.html" import run_fingerprint %}
 {% from "_strategy.html" import strategy_label %}
 {% for r in runs %}
-<article class="run-card" data-run="{{ r.run_id }}">
+<article class="run-card" data-run="{{ r.run_id }}" data-kind="{{ r.kind }}">
   <header class="run-card-head">
     <label class="run-card-select"><input type="checkbox" class="run-select" value="{{ r.run_id }}" aria-label="select {{ r.run_id }}"><span>select</span></label>
     <span class="run-kind">{{ r.kind|replace('-', ' ') }}</span>

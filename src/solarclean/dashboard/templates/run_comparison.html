@@ -14,6 +14,7 @@
   {% include "_title_block.html" %}
 </div>
 <div class="run-head run-command-bar">
+  <a class="quiet-link run-back-link" href="/">&larr; back to runs</a>
   <span class="run-head-actions">
     {% if rerun_supported %}
     <button type="button" id="rerun-btn" data-run-id="{{ run_id }}" title="Repeat this analysis with the run's own stored config snapshot">re-run this analysis</button>
@@ -23,6 +24,16 @@
   </span>
   <span id="rerun-status" class="hint" role="status"></span>
 </div>
+
+<nav class="section-nav" aria-label="Sections of this record">
+  <span class="section-nav-label">On this record</span>
+  {% if recommendation and ranking and ranking.ranking %}<a href="#ranking">Ranking</a>{% endif %}
+  {% if kpi_table %}<a href="#annual-kpis">Annual KPIs</a>{% endif %}
+  {% if daily_energy %}<a href="#energy-explorer">Daily explorer</a>{% endif %}
+  {% if daily_loss %}<a href="#daily-charts">Charts</a>{% endif %}
+  {% if cost_table %}<a href="#cost-components">Costs</a>{% endif %}
+  <a href="#artifact-files">Artifacts</a>
+</nav>
 
 {% if finding %}
 <p class="finding-statement finding-{{ finding.tone }}" data-audit-source="recommendation.json + reconciliation_report.json"
@@ -103,7 +114,7 @@
 {% endif %}
 
 {% if recommendation and ranking and ranking.ranking %}
-<section class="panel">
+<section class="panel" id="ranking">
   <h2>Ranking by annual financial outcome</h2>
   {% if financial_ranking %}
   <div class="financial-formula" data-audit-source="scenario_annual_summary.csv · stored economics columns">
@@ -230,14 +241,15 @@
 {% endif %}
 
 {% if kpi_table %}
-<section class="panel">
+<section class="panel" id="annual-kpis">
   <h2>Annual KPIs</h2>
   <table class="data-table kpi-table">
-    <thead><tr><th></th>{% for s in kpi_table.scenarios %}<th class="num">{{ strategy_label(s) }}</th>{% endfor %}</tr></thead>
+    <thead><tr><th scope="col"><span class="visually-hidden">KPI</span></th>{% for s in kpi_table.scenarios %}<th class="num" scope="col">{{ strategy_label(s) }}</th>{% endfor %}</tr></thead>
     <tbody>
       {% for row in kpi_table.rows %}
-      <tr><th{% if row.help %} class="has-help" title="{{ row.help }}"{% endif %}>{{ row.label }}</th>
+      <tr><th scope="row"{% if row.help %} class="has-help" title="{{ row.help }}"{% endif %}>{{ row.label }}</th>
         {% for v in row["values"] %}<td class="num mono{{ ' best-cell' if row.best[loop.index0] }}"
+          data-kpi-value="{{ v }}"
           data-audit-source="{{ row.audit_sources[loop.index0] }}"
           data-audit-detail="Stored value shown with display rounding; download the CSV for full precision.">{{ v | display_number }}</td>{% endfor %}
       </tr>
@@ -262,7 +274,7 @@
 
 {% if daily_soiling %}
 <details class="panel dust-calendar-panel">
-  <summary>Strategy rhythm · 365-day dust calendars</summary>
+  <summary>Strategy rhythm · {{ daily_soiling.dates | length }}-day dust calendars</summary>
   <p class="hint">One stored day per cell. Darker cells are dustier; action marks show how each strategy responds.</p>
   <div class="dust-calendars">
     {% for scenario in ["baseline", "reactive", "coating"] %}
@@ -306,8 +318,11 @@
   <div class="energy-explorer-layout">
     <div class="energy-explorer-charts">
       <div class="energy-main-chart">
-        <canvas id="daily-energy-chart" height="115" data-audit-source="scenario_daily_summary.csv · actual_energy_kwh + daily_clean_energy.csv"></canvas>
+        <canvas id="daily-energy-chart" height="115" tabindex="0" role="img"
+                aria-label="Daily energy chart. Hover or focus and use the left and right arrow keys to step through days; Home and End jump to the first and last day. The selected day panel beside the chart reads out the values."
+                data-audit-source="scenario_daily_summary.csv · actual_energy_kwh + daily_clean_energy.csv"></canvas>
       </div>
+      <p class="hint chart-key-hint">Keyboard: focus the chart, then ←/→ steps one day (Shift ←/→ steps a week), Home/End jumps to the period's ends.</p>
 
       <div class="context-tracks" aria-label="Weather and event context aligned by date">
         {% if daily_weather %}
@@ -387,9 +402,10 @@
 {% endif %}
 
 {% if daily_loss %}
-<section class="panel">
+<section class="panel" id="daily-charts">
   <h2>Daily energy loss by scenario</h2>
-  <canvas id="daily-loss-chart" height="110" data-audit-source="scenario_daily_summary.csv · energy_loss_kwh"></canvas>
+  <canvas id="daily-loss-chart" height="110" role="img" aria-label="Line chart of stored daily energy loss per scenario"
+          data-audit-source="scenario_daily_summary.csv · energy_loss_kwh"></canvas>
   <p class="hint">Values are the stored <code>energy_loss_kwh</code> column of
     <a href="/api/runs/{{ run_id }}/artifact/scenario_daily_summary.csv">scenario_daily_summary.csv</a>.</p>
 </section>
@@ -398,7 +414,8 @@
 {% if daily_soiling %}
 <section class="panel">
   <h2>Daily contamination cleanliness by scenario</h2>
-  <canvas id="daily-soiling-chart" height="110" data-audit-source="scenario_daily_summary.csv · stored scenario cleanliness fields"></canvas>
+  <canvas id="daily-soiling-chart" height="110" role="img" aria-label="Line chart of stored daily cleanliness per scenario, 1.0 meaning perfectly clean"
+          data-audit-source="scenario_daily_summary.csv · stored scenario cleanliness fields"></canvas>
   <p class="hint">1.0 = perfectly clean panels. Each scenario uses its stored dust or
     contamination-cleanliness field from the state that produced that day's energy.</p>
 </section>
@@ -407,7 +424,8 @@
 {% if daily_dew or daily_cementation %}
 <section class="panel">
   <h2>Daily dew risk and dust cementation</h2>
-  <canvas id="daily-dew-chart" height="110" data-audit-source="scenario_daily_summary.csv · extension_dew_risk + extension_cementation_index"></canvas>
+  <canvas id="daily-dew-chart" height="110" role="img" aria-label="Line chart of stored daily dew risk and cementation index"
+          data-audit-source="scenario_daily_summary.csv · extension_dew_risk + extension_cementation_index"></canvas>
   <p class="hint">Values come from the stored
     <a href="/api/runs/{{ run_id }}/artifact/scenario_daily_summary.csv">scenario_daily_summary.csv</a>.</p>
 </section>
@@ -416,7 +434,8 @@
 {% if daily_cumgain %}
 <section class="panel">
   <h2>Cumulative energy gain vs baseline</h2>
-  <canvas id="daily-cumgain-chart" height="110" data-audit-source="scenario_daily_summary.csv · cumulative_energy_gain_vs_baseline_kwh"></canvas>
+  <canvas id="daily-cumgain-chart" height="110" role="img" aria-label="Line chart of stored cumulative energy gain versus baseline per scenario"
+          data-audit-source="scenario_daily_summary.csv · cumulative_energy_gain_vs_baseline_kwh"></canvas>
   <p class="hint">Running total of each scenario's daily AC energy minus the baseline's — where a
     curve climbs, the strategy is pulling ahead. Values are the stored
     <code>cumulative_energy_gain_vs_baseline_kwh</code> column of the daily summary; the final
@@ -427,14 +446,15 @@
 {% if annual_cost_bars %}
 <section class="panel">
   <h2>Annual revenue, cost, and benefit</h2>
-  <canvas id="annual-cost-chart" height="110" data-audit-source="scenario_annual_summary.csv · revenue, CAPEX, OPEX, and net benefit columns"></canvas>
+  <canvas id="annual-cost-chart" height="110" role="img" aria-label="Bar chart of stored annual revenue, annualized CAPEX, annual OPEX, and net benefit per scenario"
+          data-audit-source="scenario_annual_summary.csv · revenue, CAPEX, OPEX, and net benefit columns"></canvas>
   <p class="hint">Bars show the stored annual figures (SAR) from
     <a href="/api/runs/{{ run_id }}/artifact/scenario_annual_summary.csv">scenario_annual_summary.csv</a>.</p>
 </section>
 {% endif %}
 
 {% if cost_table %}
-<section class="panel">
+<section class="panel" id="cost-components">
   <h2>Cost components</h2>
   <details class="recon-help cost-help">
     <summary>How to read this table (cost reconciliation)</summary>
@@ -494,20 +514,24 @@
 </section>
 {% endif %}
 
-<section class="panel">
+<section class="panel" id="artifact-files">
   <h2>Artifacts</h2>
+  {% if artifacts %}
   <table class="data-table small">
     <tbody>
       {% for f in artifacts %}
       <tr>
         <td class="mono"><a href="/api/runs/{{ run_id }}/artifact/{{ f.name }}">{{ f.name }}</a></td>
-        <td class="num mono">{{ f.size_bytes }} B</td>
+        <td class="num mono">{{ f.size_bytes | display_number }} B</td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
   <p class="hint">Static PNG plots exported by the backend remain available here for download and
     reports; the sections above chart the same stored data interactively.</p>
+  {% else %}
+  <p class="empty">This directory contains no artifact files to display or download.</p>
+  {% endif %}
 </section>
 
 {% endblock %}

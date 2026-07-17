@@ -15,10 +15,11 @@
     <span class="cockpit-assumptions mono" id="cockpit-assumptions">{{ cockpit.assumption_set or "–" }}</span>
   </div>
   <div class="cockpit-map-wrap">
-    <span class="instrument-label">Arabian Peninsula locator</span>
-    <svg id="cockpit-map" viewBox="34 -34 29 24" preserveAspectRatio="xMidYMid meet"
-         role="img" aria-label="Arabian Peninsula locator map with selected site marked">
-      <rect class="map-sea" x="34" y="-34" width="29" height="24"></rect>
+    <span class="instrument-label" id="cockpit-map-label">Site locator</span>
+    <svg id="cockpit-map" viewBox="{{ (cockpit.longitude or 46.6753) - 14.5 }} {{ -(cockpit.latitude or 24.7136) - 12 }} 29 24"
+         preserveAspectRatio="xMidYMid meet"
+         role="img" aria-label="Site locator map, framed around the selected configuration's coordinates">
+      <rect class="map-sea" x="-180" y="-90" width="360" height="180"></rect>
       <path id="cockpit-map-land" class="map-land" d=""></path>
       <g id="cockpit-map-marker" class="cockpit-map-marker"
          transform="translate({{ cockpit.longitude or 46.6753 }} {{ -(cockpit.latitude or 24.7136) }})">
@@ -226,9 +227,22 @@
   </div>
   {% if runs %}
   <div class="field-row runs-toolbar">
-    <button type="button" id="select-all-runs" aria-pressed="false">Select all</button>
-    <button type="button" id="compare-selected-runs" disabled>Compare 2 selected</button>
-    <button type="button" id="delete-selected-runs" class="danger-quiet" disabled>Delete selected</button>
+    <label class="runs-filter-field"><span>Find a run</span>
+      <input type="search" id="run-filter-text" placeholder="run id, site, or winner…"
+             autocomplete="off" aria-describedby="run-filter-status"></label>
+    <label class="runs-filter-field"><span>Analysis type</span>
+      <select id="run-filter-kind">
+        <option value="">All types</option>
+        {% for kind in run_kinds %}
+        <option value="{{ kind }}">{{ kind | replace('-', ' ') }}</option>
+        {% endfor %}
+      </select></label>
+    <span id="run-filter-status" class="hint runs-filter-status" role="status"></span>
+    <span class="runs-toolbar-actions">
+      <button type="button" id="select-all-runs" aria-pressed="false">Select all</button>
+      <button type="button" id="compare-selected-runs" disabled>Compare 2 selected</button>
+      <button type="button" id="delete-selected-runs" class="danger-quiet" disabled>Delete selected</button>
+    </span>
     <span id="runs-delete-error" class="error-text" role="alert"></span>
   </div>
   <div class="run-gallery" id="runs-table">
