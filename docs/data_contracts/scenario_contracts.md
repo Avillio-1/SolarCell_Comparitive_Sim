@@ -99,6 +99,11 @@ must be finite and non-negative.
 | `cohort_id` | `int | None` | cohort identifier |
 | `metadata` | immutable mapping | event-specific |
 
+In farm/cohort mode, rainfall-event magnitudes remain diagnostic scalar-model
+estimates. The state transition applies the actual rainfall restoration to each
+cohort, so consumers must not treat the event magnitude as the authoritative
+per-cohort restoration amount.
+
 ## AnnualScenarioResult
 
 | Field | Type | Unit |

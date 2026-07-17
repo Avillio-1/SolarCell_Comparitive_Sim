@@ -1,0 +1,19 @@
+<aside id="artifact-preview-drawer" class="artifact-preview-drawer" role="dialog"
+       aria-modal="false" aria-labelledby="artifact-preview-title" hidden>
+  <header class="artifact-preview-head">
+    <div>
+      <span class="eyebrow">Stored document inspector</span>
+      <h2 id="artifact-preview-title">Artifact preview</h2>
+    </div>
+    <button type="button" id="artifact-preview-close" class="artifact-preview-close"
+            aria-label="Close artifact preview">×</button>
+  </header>
+  <div id="artifact-preview-content" class="artifact-preview-content"
+       data-audit-source="selected stored artifact · display-only preview"
+       aria-live="polite"></div>
+  <footer class="artifact-preview-footer">
+    <p id="artifact-preview-note" class="artifact-preview-note"></p>
+    <a id="artifact-preview-download" class="artifact-preview-download" href="#"
+       download>Download full artifact</a>
+  </footer>
+</aside>

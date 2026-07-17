@@ -25,6 +25,8 @@
     </svg>
   </div>
   <div class="field-row">
+    <label class="wide"><span>Site name</span>
+      <input id="site-name" type="text" autocomplete="organization"></label>
     <label><span>Latitude (°N)</span>
       <input id="site-lat" type="number" step="0.0001" min="-90" max="90" autocomplete="off"></label>
     <label><span>Longitude (°E)</span>
@@ -41,22 +43,25 @@
     <button id="apply-location" type="button">Apply to YAML source</button>
     <span id="location-status" class="hint" role="status"></span>
   </div>
-  <p class="hint" id="provider-note">Click the map (or type coordinates) and press
-  "Apply to YAML source". The location's IANA timezone is detected automatically from
-  the coordinates. This updates
-  <code>site.latitude</code>, <code>site.longitude</code>, both configured timezone fields,
-  and the simulation start/end UTC offsets in the YAML source below — including daylight-saving
-  offsets for their local dates. Changing the period dates rewrites whole local days
-  (00:00–23:00). Then validate and save as usual. The Default configuration uses the
-  <code>nasa_power</code> weather provider, so the chosen location changes the real weather
-  the simulation runs on: hourly irradiance (GHI/DNI/DHI), air temperature, wind speed,
-  relative humidity, and precipitation are fetched from NASA POWER for those coordinates
-  (once per location and period, then cached under <code>data/cache/weather</code>).
-  Rainfall totals, seasonal soiling, event-tape dates, and cleaning decisions are grouped by
-  the selected local timezone. Dust-event frequency and cost calibration stay Riyadh
-  central-v2 regardless of location,
-  but humidity-coupled soiling (dew cementation) and coating condensation follow the fetched
-  weather when enabled in the config.</p>
+  <dl class="provider-note" id="provider-note">
+    <div>
+      <dt>What the location changes</dt>
+      <dd>Applying the map position updates <code>site.latitude</code>,
+        <code>site.longitude</code>, both timezone fields, and DST-correct whole-day period
+        offsets (00:00–23:00); the location's IANA timezone is detected automatically from the
+        coordinates. With <code>nasa_power</code>, it also changes the fetched and cached hourly
+        GHI/DNI/DHI, air temperature, wind, humidity, and precipitation. Rainfall, seasonal
+        soiling, event dates, and cleaning decisions then follow that weather and local-time
+        grouping; humidity-coupled soiling (dew cementation) and coating condensation follow the
+        fetched weather when enabled.</dd>
+    </div>
+    <div>
+      <dt>What stays fixed</dt>
+      <dd>Dust-event frequency and the Riyadh <code>central-v2</code> cost calibration do not
+        change with the selected coordinates. Apply the location to the YAML source, then
+        validate and save as usual.</dd>
+    </div>
+  </dl>
   <p class="hint" id="provider-warning" role="note" hidden></p>
 </section>
 

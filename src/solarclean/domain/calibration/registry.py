@@ -156,12 +156,11 @@ class ParameterRegistry:
     def with_central_value(self, name: str, value: float) -> Self:
         """Return a copy of this registry with one parameter's central_value replaced.
 
-        Used by T7 sensitivity/break-even sweeps to perturb a single economics
-        parameter (e.g. ``economics.electricity_tariff_sar_per_kwh``) without
-        mutating the on-disk registry. The replacement value must stay within the
-        parameter's own [low_value, high_value] band — sweeps are only meaningful
-        within the T5-sourced uncertainty range, and CalibrationParameter.validate()
-        enforces this ordering the same way it does when loading from YAML.
+        Used by T7 experiments to perturb a parameter without mutating the
+        on-disk registry. The replacement value must stay within the parameter's
+        own [low_value, high_value] band — sweeps are only meaningful within the
+        T5-sourced uncertainty range, and CalibrationParameter.validate() enforces
+        this ordering the same way it does when loading from YAML.
         """
         existing = self.get(name)
         updated = replace(existing, central_value=float(value))

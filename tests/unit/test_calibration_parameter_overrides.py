@@ -8,6 +8,7 @@ from tests.config_factory import config_from_default
 from solarclean.domain.calibration.parameter_overrides import (
     apply_config_override,
     apply_economics_override,
+    apply_parameter_override,
     build_parameter_catalog,
 )
 from solarclean.domain.calibration.registry import ParameterRegistry
@@ -80,6 +81,22 @@ def test_config_override_does_not_mutate_the_base_config(registry, base_config) 
     original = base_config.coating.costs.useful_life_years
     apply_config_override(base_config, spec, spec.high_value)
     assert base_config.coating.costs.useful_life_years == original
+
+
+def test_config_override_updates_config_and_registry_together(registry, base_config) -> None:
+    supported, _ = build_parameter_catalog(registry)
+    spec = next(item for item in supported if item.name == "coating.dust_accumulation_multiplier")
+
+    new_config, new_registry = apply_parameter_override(
+        config=base_config,
+        registry=registry,
+        spec=spec,
+        value=spec.low_value,
+    )
+
+    assert new_config.coating.physics.dust_accumulation_multiplier == spec.low_value
+    assert new_registry.get(spec.name).central_value == spec.low_value
+    assert registry.get(spec.name).central_value == spec.central_value
 
 
 def test_coating_useful_life_years_override_stays_synchronized(registry, base_config) -> None:

@@ -189,8 +189,14 @@
   <table class="data-table small">
     <tbody>
       {% for f in artifacts %}
-      <tr>
-        <td class="mono"><a href="/api/runs/{{ run_id }}/artifact/{{ f.name }}">{{ f.name }}</a></td>
+      <tr data-audit-source="output package · {{ f.name }}">
+        <td class="artifact-name-cell">
+          <button type="button" class="artifact-preview-trigger mono"
+                  data-artifact-preview data-artifact-name="{{ f.name }}"
+                  data-run-id="{{ run_id }}">{{ f.name }}</button>
+          <a class="artifact-download-link" href="/api/runs/{{ run_id }}/artifact/{{ f.name }}"
+             download>download</a>
+        </td>
         <td class="num mono">{{ f.size_bytes | display_number }} B</td>
       </tr>
       {% endfor %}
@@ -200,6 +206,8 @@
   <p class="empty">This directory contains no artifact files to display or download.</p>
   {% endif %}
 </section>
+
+{% include "_artifact_drawer.html" %}
 
 {% endblock %}
 {% block scripts %}

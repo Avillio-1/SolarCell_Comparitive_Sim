@@ -1,4 +1,7 @@
 {# CAD-style title block. Every field is read from stored run artifacts. #}
+{% set package_artifacts = artifacts if artifacts is defined else [] %}
+{% set package_count = artifact_summary.count if artifact_summary is defined else package_artifacts | length %}
+{% set package_bytes = artifact_summary.total_bytes if artifact_summary is defined else package_artifacts | sum(attribute="size_bytes") %}
 <section class="engineering-title-block" aria-label="Engineering run title block">
   <div class="title-block-name">
     <span class="title-block-kicker">SOLARCLEAN-DT · CALCULATION RECORD</span>
@@ -52,9 +55,12 @@
       <dt>Status <span lang="ar" dir="rtl">الحالة</span></dt>
       <dd>{{ document_status or "ANALYSIS RECORD" }}</dd>
     </div>
-    <div class="tb-sheet">
-      <dt>Sheet <span lang="ar" dir="rtl">اللوحة</span></dt>
-      <dd class="mono">1 OF 1 <span lang="ar" dir="rtl">١ من ١</span></dd>
+    <div class="tb-package">
+      <dt>Package <span lang="ar" dir="rtl">حزمة السجل</span></dt>
+      <dd class="mono" data-audit-source="output package · artifact inventory"
+          data-audit-detail="File count and byte total from the stored run directory.">
+        {{ package_count }} files · {{ package_bytes | display_number }} B
+      </dd>
     </div>
   </dl>
 </section>

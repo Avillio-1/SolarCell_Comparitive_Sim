@@ -334,5 +334,26 @@ def apply_economics_override(
     return registry.with_central_value(spec.name, value)
 
 
+def apply_parameter_override(
+    *,
+    config: SolarCleanConfig,
+    registry: ParameterRegistry,
+    spec: ParameterOverrideSpec,
+    value: float,
+) -> tuple[SolarCleanConfig, ParameterRegistry]:
+    """Apply one T7 override and keep config and registry calibration in sync.
+
+    Config-kind parameters are represented in both ``SolarCleanConfig`` and the
+    calibration registry. Updating both is required because comparison guards
+    validate named config presets against the active registry. Revalidate the
+    completed config here so every T7 experiment shares the same strict boundary.
+    """
+    if spec.kind == "config":
+        updated = apply_config_override(config, spec, value)
+        validated = SolarCleanConfig.model_validate(updated.model_dump(mode="python"))
+        return validated, registry.with_central_value(spec.name, value)
+    return config, apply_economics_override(registry, spec, value)
+
+
 def get_registry_parameter(registry: ParameterRegistry, name: str) -> CalibrationParameter:
     return registry.get(name)

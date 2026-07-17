@@ -24,6 +24,7 @@ import time
 import zipfile
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 import yaml
@@ -257,6 +258,11 @@ def test_registry_delete_semantics() -> None:
     assert registry.get(job.job_id) is None
     assert registry.all() == []
     done.set()
+    deadline = time.time() + 10
+    while job.finished_at is None and time.time() < deadline:
+        time.sleep(0.02)
+    assert job.finished_at is not None
+    assert job.job_id not in registry._jobs
 
 
 # --------------------------------------------------------------------------
@@ -503,7 +509,10 @@ def test_charts_replace_static_plot_grid(client: TestClient, comparison_run: Pat
     assert "applyExplorerScenario" in dashboard_script
     assert "applyExplorerMetric" in dashboard_script
     assert "Resume hover" in dashboard_script
-    assert "annual-cost-chart" in page
+    # The duplicate annual money bar chart was removed; the decision strip,
+    # financial ledger, and KPI table remain the authoritative annual views.
+    assert "annual-cost-chart" not in page
+    assert 'id="annual-chart"' not in page
     # ... and no inline <img> plot grid on the comparison page. PNGs stay
     # downloadable from the artifact list.
     assert '<div class="plot-grid">' not in page
@@ -945,6 +954,15 @@ def test_config_page_has_offline_map_picker(client: TestClient) -> None:
     assert "public domain" in asset.text
 
 
+def test_config_page_prefills_and_sends_site_name(client: TestClient) -> None:
+    page = client.get(f"/config/{DEFAULT_CONFIG_NAME}").text
+    assert 'id="site-name"' in page
+
+    script = client.get("/static/dashboard.js").text
+    assert 'nameInput.value = parseYamlTextScalar(editor.value, "name")' in script
+    assert "site_name: nameInput ? nameInput.value : null" in script
+
+
 def test_apply_location_updates_timezones_and_dst_offsets(client: TestClient) -> None:
     content = dashboard_app._RIYADH_DEFAULT_CONFIG_PATH.read_text(encoding="utf-8").replace(
         'start: "2025-01-01T00:00:00+03:00"',
@@ -971,6 +989,28 @@ def test_apply_location_updates_timezones_and_dst_offsets(client: TestClient) ->
     assert updated.site.longitude == pytest.approx(13.405)
     assert updated.site.timezone == "Europe/Berlin"
     assert updated.simulation.target_timezone == "Europe/Berlin"
+
+
+def test_apply_location_replaces_site_name_with_quoted_yaml(client: TestClient) -> None:
+    content = dashboard_app._RIYADH_DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")
+    site_name = 'Berlin Test Site (East): "Array A"'
+
+    response = client.post(
+        f"/api/configs/{DEFAULT_CONFIG_NAME}/apply-location",
+        json={
+            "content": content,
+            "site_name": site_name,
+            "latitude": 52.52,
+            "longitude": 13.405,
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["valid"] is True
+    assert f"  name: {json.dumps(site_name)}" in result["content"]
+    updated = SolarCleanConfig.model_validate(yaml.safe_load(result["content"]))
+    assert updated.site.name == site_name
 
 
 @pytest.mark.parametrize(
@@ -1184,9 +1224,7 @@ def test_oneway_launch_requires_an_explicit_parameter(client: TestClient) -> Non
     )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == (
-        "Choose at least one parameter for one-way sensitivity."
-    )
+    assert response.json()["detail"] == ("Choose at least one parameter for one-way sensitivity.")
 
 
 def test_launch_form_asks_the_question_first(client: TestClient) -> None:
@@ -1230,7 +1268,10 @@ def test_completed_job_moves_out_of_run_sessions(client: TestClient, comparison_
 
     try:
         page = client.get("/").text
-        assert job.job_id not in page
+        # Completed jobs leave the live-session strip, but remain in the
+        # embedded persisted history that powers launch-time expectations.
+        assert f'data-job="{job.job_id}"' not in page
+        assert job.job_id in page
         assert comparison_run.name in page
     finally:
         dashboard_app.jobs.delete(job.job_id)
@@ -1470,7 +1511,8 @@ def test_engineering_document_fingerprint_and_audit_mode_render(
     assert 'class="engineering-title-block"' in page
     assert "Engineering run record" in page
     assert "سجل التشغيل الهندسي" in page
-    assert "1 OF 1" in page and "١ من ١" in page
+    assert "1 OF 1" not in page and "١ من ١" not in page
+    assert "Package" in page and "files ·" in page
     assert "fingerprint-medium" in page
     assert "fingerprint-full" in page
     assert 'class="dust-calendar"' in page
@@ -1956,3 +1998,304 @@ def test_apply_location_can_rewrite_the_period(client: TestClient) -> None:
     updated = SolarCleanConfig.model_validate(yaml.safe_load(result["content"]))
     assert updated.simulation.start.date().isoformat() == "2025-03-01"
     assert updated.simulation.end.date().isoformat() == "2025-03-31"
+
+
+# --------------------------------------------------------------------------
+# Stored-instrument expansion and audit workflow
+# --------------------------------------------------------------------------
+
+
+def test_detection_coating_and_explorer_instruments_render_stored_series(
+    client: TestClient, comparison_run: Path
+) -> None:
+    page = client.get(f"/run/{comparison_run.name}").text
+
+    assert 'id="detection-performance"' in page
+    assert "Detection performance" in page
+    assert "Whole-farm surveys" in page
+    assert "daily TP/FP/FN fields" in page
+    assert 'id="coating-service-life"' in page
+    assert "Coating service life" in page
+    assert "Stored energy-effect decomposition" in page
+    for canvas_id in (
+        "detection-energy-chart",
+        "detection-queue-chart",
+        "coating-effectiveness-chart",
+        "coating-effects-chart",
+        "coating-dew-margin-chart",
+    ):
+        marker = f'id="{canvas_id}"'
+        start = page.index(marker)
+        assert "data-audit-source=" in page[start : start + 650]
+
+    for metric in ("bird-loss", "collected-water", "queue"):
+        assert f'data-energy-metric="{metric}"' in page
+        assert f'data-selected-field="{metric}"' in page
+    assert "dailyBirdLoss:" in page
+    assert "dailyCollectedWater:" in page
+    assert "dailyQueue:" in page
+    assert 'id="hourly-detail-chart"' in page
+    assert "Stored hourly weather + clean reference" in page
+    assert "does not infer hourly scenario energy" in page
+
+    assert 'id="annual-chart"' not in page
+    assert "annualCostBars" not in page
+    assert 'id="artifact-preview-drawer"' in page
+    assert "data-artifact-preview" in page
+
+
+def test_interactive_chart_frames_use_one_stable_size_owner(client: TestClient) -> None:
+    script = client.get("/static/dashboard.js").text
+    stylesheet = client.get("/static/dashboard.css").text
+
+    # Fixed-height instrument frames must opt out of Chart.js's default
+    # aspect-ratio sizing; mixing both systems stretches the backing bitmap
+    # and can trigger resize-observer repaint loops.
+    assert "function stabilizeFixedHeightChart(options)" in script
+    assert "options.maintainAspectRatio = false" in script
+    assert "var options = stabilizeFixedHeightChart(baseOptions(yLabel))" in script
+    assert 'stabilizeFixedHeightChart(baseOptions("Effectiveness"))' in script
+
+    # Synchronized explorer cursors render at most once per browser frame.
+    assert "window.requestAnimationFrame(function ()" in script
+    assert "var explorerRenderFrame = null" in script
+
+    # Export actions are siblings of the fixed frame, never children that
+    # increase the plot area's scroll height.
+    assert '".energy-main-chart, .record-chart-frame, .hourly-chart-frame"' in script
+    assert ".record-chart > .chart-download" in stylesheet
+    assert ".hourly-detail > .chart-download" in stylesheet
+    assert "overflow: hidden;" in stylesheet
+
+
+def test_detection_and_coating_contexts_pass_through_stored_columns(
+    comparison_run: Path,
+) -> None:
+    detection = dashboard_app._detection_performance(comparison_run)
+    assert detection is not None
+    daily = detection["daily"]
+    assert isinstance(daily, dict)
+    expected_missed = artifacts_module.daily_series(
+        comparison_run,
+        "extension_missed_contamination_estimated_energy_impact_kwh",
+    )
+    assert expected_missed is not None
+    assert daily["dates"] == expected_missed["dates"]
+    assert daily["missed_kwh"] == expected_missed["series"]["reactive"]
+    expected_cancellations = artifacts_module.daily_series(
+        comparison_run, "extension_weather_cancelled_flight"
+    )
+    assert expected_cancellations is not None
+    assert daily["weather_cancelled"] == expected_cancellations["series"]["reactive"]
+    assert set(daily["weather_cancelled"]) <= {0.0, 1.0}
+    # Annual facts come from explicit annual columns; no annual confusion
+    # total is synthesized from daily TP/FP/FN/TN fields.
+    assert set(detection["annual_rows"][0]) == {
+        "scenario_id",
+        "survey_count",
+        "dispatch_count",
+        "panels_cleaned",
+        "audit_source",
+    }
+
+    coating = dashboard_app._coating_service_life(comparison_run)
+    assert coating is not None
+    expected_optical = artifacts_module.daily_series(comparison_run, "extension_optical_effect_kwh")
+    assert expected_optical is not None
+    assert coating["dates"] == expected_optical["dates"]
+    assert coating["optical_effect_kwh"] == expected_optical["series"]["coating"]
+
+
+def test_hourly_day_endpoint_returns_only_stored_weather_and_clean_reference(
+    client: TestClient, comparison_run: Path
+) -> None:
+    weather_header, weather_rows = artifacts_module.read_csv_rows(
+        comparison_run / "weather_hourly.csv"
+    )
+    day = weather_rows[0][weather_header.index("timestamp")][:10]
+
+    response = client.get(f"/api/runs/{comparison_run.name}/hourly/{day}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["date"] == day
+    assert len(payload["timestamps"]) == 24
+    assert payload["ghi_w_m2"][0] == pytest.approx(
+        float(weather_rows[0][weather_header.index("ghi_w_m2")])
+    )
+    assert set(payload) == {
+        "date",
+        "timestamps",
+        "ghi_w_m2",
+        "temp_air_c",
+        "wind_speed_m_s",
+        "relative_humidity_pct",
+        "clean_ac_energy_kwh",
+        "sources",
+    }
+    assert client.get(f"/api/runs/{comparison_run.name}/hourly/1999-01-01").status_code == 404
+
+
+def test_artifact_preview_payloads_are_bounded_and_guarded(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outputs = tmp_path / "outputs"
+    run_dir = outputs / "preview-compare-all-scenarios-20260717T000000Z-a1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "rows.csv").write_text(
+        "row,value\n" + "".join(f"{index},{index * 2}\n" for index in range(60)),
+        encoding="utf-8",
+    )
+    (run_dir / "record.json").write_text(
+        json.dumps({"winner": "coating", "margin": 12.5}), encoding="utf-8"
+    )
+    (run_dir / "config.yaml").write_text("site:\n  name: Preview\n", encoding="utf-8")
+    (run_dir / "plot.png").write_bytes(b"\x89PNG\r\n\x1a\n")
+    monkeypatch.setattr(dashboard_app, "_OUTPUTS_DIR", outputs)
+
+    csv_payload = client.get(f"/api/runs/{run_dir.name}/artifact-preview/rows.csv").json()
+    assert csv_payload["kind"] == "csv"
+    assert len(csv_payload["rows"]) == 50
+    assert csv_payload["total_rows"] == 60
+    assert csv_payload["truncated"] is True
+
+    json_payload = client.get(f"/api/runs/{run_dir.name}/artifact-preview/record.json").json()
+    assert json_payload["kind"] == "json"
+    assert '"winner": "coating"' in json_payload["content"]
+    yaml_payload = client.get(f"/api/runs/{run_dir.name}/artifact-preview/config.yaml").json()
+    assert yaml_payload["kind"] == "text"
+    assert "name: Preview" in yaml_payload["content"]
+    png_payload = client.get(f"/api/runs/{run_dir.name}/artifact-preview/plot.png").json()
+    assert png_payload["kind"] == "png"
+    assert png_payload["url"].endswith("/artifact/plot.png")
+
+    escaped = client.get(f"/api/runs/{run_dir.name}/artifact-preview/..%2Foutside.txt")
+    assert escaped.status_code in (404, 422)
+
+
+def test_study_dossier_and_calibration_priority_join_latest_stored_evidence(
+    client: TestClient,
+    comparison_run: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outputs = tmp_path / "outputs"
+    comparison = outputs / "study-compare-all-scenarios-20260717T000000Z-a1"
+    oneway = outputs / "study-sensitivity-oneway-20260717T010000Z-b2"
+    shutil.copytree(comparison_run, comparison)
+    oneway.mkdir(parents=True)
+    shutil.copy2(comparison / "config_resolved.yaml", oneway / "config_resolved.yaml")
+
+    recommendation = json.loads((comparison / "recommendation.json").read_text(encoding="utf-8"))
+    recommendation["validation_status"] = {
+        "key_uncertain_parameters": [
+            {
+                "name": "test.low_swing",
+                "low_value": 1,
+                "central_value": 2,
+                "high_value": 3,
+                "status": "provisional",
+                "confidence": "low",
+            },
+            {
+                "name": "test.high_swing",
+                "low_value": 10,
+                "central_value": 20,
+                "high_value": 30,
+                "status": "blocked",
+                "confidence": "low",
+            },
+        ]
+    }
+    (comparison / "recommendation.json").write_text(json.dumps(recommendation), encoding="utf-8")
+    (oneway / "sensitivity_oneway_summary.json").write_text(
+        json.dumps(
+            {
+                "parameter_results": [
+                    {
+                        "parameter_name": "test.low_swing",
+                        "swing_sar": {"baseline": 10, "reactive": 20, "coating": 15},
+                        "winner_changed": False,
+                    },
+                    {
+                        "parameter_name": "test.high_swing",
+                        "swing_sar": {"baseline": 90, "reactive": 120, "coating": 80},
+                        "winner_changed": True,
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(dashboard_app, "_OUTPUTS_DIR", outputs)
+
+    comparison_page = client.get(f"/run/{comparison.name}").text
+    assert "Where to spend calibration effort" in comparison_page
+    priority_section = comparison_page[
+        comparison_page.index('id="calibration-priority"') : comparison_page.index(
+            'class="run-head run-command-bar"'
+        )
+    ]
+    assert priority_section.index("test.high_swing") < priority_section.index("test.low_swing")
+    assert oneway.name in comparison_page
+    assert (
+        "data-audit-source="
+        in priority_section[
+            priority_section.index("test.high_swing") - 400 : priority_section.index(
+                "test.high_swing"
+            )
+        ]
+    )
+
+    study = dashboard_app._run_study(comparison)
+    assert study is not None
+    dossier = client.get(f"/study/{quote(study['key'], safe='')}")
+    assert dossier.status_code == 200
+    assert "Study dossier" in dossier.text
+    assert comparison.name in dossier.text
+    assert oneway.name in dossier.text
+    assert "test.high_swing" in dossier.text
+    assert "No Monte Carlo run yet" in dossier.text
+    assert "No break-even run yet" in dossier.text
+    assert "No winner-map run yet" in dossier.text
+
+
+def test_launch_history_and_decluttered_static_copy(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    history = tmp_path / "jobs.json"
+    history.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "jobs": [
+                    {
+                        "job_id": "historic-job",
+                        "kind": "compare",
+                        "config_name": DEFAULT_CONFIG_NAME,
+                        "status": "done",
+                        "created_at": "2026-07-17T10:00:00+00:00",
+                        "finished_at": "2026-07-17T10:04:12+00:00",
+                        "elapsed_seconds": 252,
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(dashboard_app, "jobs", JobRegistry(history_path=history))
+
+    index_page = client.get("/").text
+    assert "window.solarcleanJobHistory" in index_page
+    assert '"elapsed_seconds": 252' in index_page
+    assert 'id="launch-history-expectation"' in index_page
+    assert "Runs &amp; analysis" not in index_page
+
+    config_page = client.get(f"/config/{DEFAULT_CONFIG_NAME}").text
+    assert "What the location changes" in config_page
+    assert "What stays fixed" in config_page
+    assert 'class="provider-note"' in config_page
+
+    script = client.get("/static/dashboard.js").text
+    assert "matchingFinishedJob" in script
+    assert "formatSeconds(record.elapsed_seconds)" in script

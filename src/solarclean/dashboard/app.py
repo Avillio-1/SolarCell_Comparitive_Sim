@@ -8,6 +8,13 @@ reshaping stored values (picking columns, grouping rows) and display
 formatting (rounding, thousands separators, best-of-row highlighting, and the
 display-only delta between two already-stored run values). Display deltas are
 never persisted or fed back into simulation, economics, or ranking.
+
+Daily detection and coating extensions are charted exactly as stored. In
+particular, this layer must not sum daily TP/FP/FN/TN fields into annual
+confusion totals; annual detection facts require explicit backend annual
+columns first. Coating service-life views likewise select stored age,
+effectiveness, energy-effect, temperature, and water columns without adding
+new scientific calculations.
 """
 
 from __future__ import annotations
@@ -15,6 +22,7 @@ from __future__ import annotations
 import base64
 import binascii
 import io
+import json
 import math
 import os
 import re
@@ -80,6 +88,7 @@ _CONFIGS_DIR = _directory_from_env("SOLARCLEAN_CONFIGS_DIR", _REPO_ROOT / "confi
 _OUTPUTS_DIR = _directory_from_env("SOLARCLEAN_OUTPUTS_DIR", _REPO_ROOT / "outputs")
 _CONFIG_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_\-]+\.yaml$")
 _RUNS_PER_PAGE = 24
+_ARTIFACT_PREVIEW_ROWS = 50
 
 app = FastAPI(title="SolarClean-DT dashboard", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=_PACKAGE_DIR / "static"), name="static")
@@ -358,6 +367,125 @@ def _water_balance_card(header: list[str], rows: list[list[str]]) -> dict[str, o
     }
 
 
+def _daily_scenario_columns(
+    run_dir: Path,
+    scenario_id: str,
+    columns: dict[str, str],
+) -> dict[str, object] | None:
+    """Align stored daily columns for one scenario without deriving new values."""
+
+    dates: list[str] = []
+    selected: dict[str, dict[str, float | None]] = {}
+    for output_name, column in columns.items():
+        reshaped = artifacts.daily_series(run_dir, column)
+        if not reshaped:
+            continue
+        raw_dates = reshaped.get("dates")
+        raw_series = reshaped.get("series")
+        values = raw_series.get(scenario_id) if isinstance(raw_series, dict) else None
+        if not isinstance(raw_dates, list) or not isinstance(values, list):
+            continue
+        date_values = {
+            str(raw_date): cast("float | None", value)
+            for raw_date, value in zip(raw_dates, values, strict=False)
+        }
+        selected[output_name] = date_values
+        for raw_date in raw_dates:
+            day = str(raw_date)
+            if day not in dates:
+                dates.append(day)
+
+    if not dates or not selected:
+        return None
+    payload: dict[str, object] = {"dates": dates}
+    has_stored_value = False
+    for output_name in columns:
+        values = [selected.get(output_name, {}).get(day) for day in dates]
+        payload[output_name] = values
+        has_stored_value = has_stored_value or any(value is not None for value in values)
+    return payload if has_stored_value else None
+
+
+def _detection_performance(run_dir: Path) -> dict[str, object] | None:
+    """Stored reactive detection/dispatch facts and date-aligned daily tracks.
+
+    In particular, the daily confusion counts are not summed here. Annual
+    operational facts are selected only from explicit annual columns.
+    """
+
+    daily = _daily_scenario_columns(
+        run_dir,
+        "reactive",
+        {
+            "missed_kwh": "extension_missed_contamination_estimated_energy_impact_kwh",
+            "recovered_kwh": "extension_recovered_loss_estimated_kwh",
+            "queue_length": "extension_queue_length",
+            "backlog_length": "extension_inspection_backlog_length",
+            "weather_cancelled": "extension_weather_cancelled_flight",
+        },
+    )
+    annual_rows: list[dict[str, str]] = []
+    annual_path = run_dir / "scenario_annual_summary.csv"
+    if annual_path.is_file():
+        header, rows = artifacts.read_csv_rows(annual_path)
+        index = {column: position for position, column in enumerate(header)}
+        scenario_column = "scenario_name" if "scenario_name" in index else "scenario_id"
+        columns = {
+            "survey_count": "annual_operational_whole_farm_survey_count",
+            "dispatch_count": "annual_operational_cleaning_dispatch_count",
+            "panels_cleaned": "annual_operational_panels_cleaned",
+        }
+        if scenario_column in index and all(column in index for column in columns.values()):
+            for row in rows:
+                if row[index[scenario_column]] != "reactive":
+                    continue
+                annual_rows.append(
+                    {
+                        "scenario_id": "reactive",
+                        **{key: row[index[column]] for key, column in columns.items()},
+                        "audit_source": (
+                            "scenario_annual_summary.csv · row scenario_name=reactive · "
+                            "stored annual_operational_* detection/dispatch columns"
+                        ),
+                    }
+                )
+                break
+    if daily is None and not annual_rows:
+        return None
+    return {
+        "annual_rows": annual_rows,
+        "daily": daily,
+        "daily_audit_source": (
+            "scenario_daily_summary.csv · row scenario_name=reactive · stored extension_* columns"
+        ),
+    }
+
+
+def _coating_service_life(run_dir: Path) -> dict[str, object] | None:
+    """Stored coating age, effects, dew temperatures, and collected water."""
+
+    payload = _daily_scenario_columns(
+        run_dir,
+        "coating",
+        {
+            "age_days": "extension_coating_age_days",
+            "effectiveness_fraction": "extension_coating_effectiveness_fraction",
+            "optical_effect_kwh": "extension_optical_effect_kwh",
+            "temperature_effect_kwh": "extension_temperature_effect_kwh",
+            "cleanliness_effect_kwh": "extension_cleanliness_effect_kwh",
+            "dew_point_c": "extension_dew_point_c",
+            "coated_surface_temperature_c": "extension_coated_surface_temperature_c",
+            "actually_collected_water_liters": "extension_actually_collected_water_liters",
+        },
+    )
+    if payload is None:
+        return None
+    payload["audit_source"] = (
+        "scenario_daily_summary.csv · row scenario_name=coating · stored extension_* columns"
+    )
+    return payload
+
+
 # Cost component category order and labels for the redesigned cost table.
 _COST_CATEGORY_LABELS = {
     "capex": "Capital costs (CAPEX)",
@@ -525,31 +653,6 @@ def _cost_table(
             }
         )
     return table
-
-
-def _annual_cost_bars(header: list[str], rows: list[list[str]]) -> dict[str, object] | None:
-    """Pick stored annual money columns for the cost/benefit bar chart."""
-    index = {name: position for position, name in enumerate(header)}
-    scenario_col = index.get("scenario_name", index.get("scenario_id"))
-    if scenario_col is None:
-        return None
-    metrics = (
-        ("Annual revenue", "annual_revenue_sar"),
-        ("Annualized CAPEX", "annualized_capex_sar"),
-        ("Annual OPEX", "annual_opex_sar"),
-        ("Net annual benefit", "net_annual_benefit_sar"),
-    )
-    series = []
-    for label, column in metrics:
-        if column not in index:
-            return None
-        series.append(
-            {
-                "label": label,
-                "values": [_parse_finite(row[index[column]]) for row in rows],
-            }
-        )
-    return {"scenarios": [row[scenario_col] for row in rows], "metrics": series}
 
 
 def _financial_ranking(
@@ -1279,6 +1382,81 @@ def _sibling_mc_context(run_id: str, run_dir: Path) -> dict[str, object] | None:
     return None
 
 
+def _calibration_priority(
+    run_id: str,
+    run_dir: Path,
+    validation_status: dict[str, object] | None,
+) -> dict[str, object] | None:
+    """Join weak-evidence parameters to the newest same-study stored swings."""
+
+    uncertain = validation_status.get("key_uncertain_parameters") if validation_status else None
+    if not isinstance(uncertain, list) or not uncertain:
+        return None
+    study = _run_study(run_dir)
+    sensitivity_entry: artifacts.RunEntry | None = None
+    sensitivity_summary: dict[str, object] | None = None
+    if study is not None:
+        for entry in artifacts.list_runs(_OUTPUTS_DIR):
+            if entry.kind != "sensitivity-oneway" or entry.run_id == run_id:
+                continue
+            entry_study = _run_study(entry.path)
+            if entry_study is None or entry_study["key"] != study["key"]:
+                continue
+            summary = artifacts.load_json(entry.path / "sensitivity_oneway_summary.json")
+            if summary is not None:
+                sensitivity_entry = entry
+                sensitivity_summary = summary
+                break
+
+    raw_results = sensitivity_summary.get("parameter_results") if sensitivity_summary else None
+    results_by_name = (
+        {
+            str(result["parameter_name"]): result
+            for result in raw_results
+            if isinstance(result, dict) and result.get("parameter_name")
+        }
+        if isinstance(raw_results, list)
+        else {}
+    )
+    rows: list[dict[str, object]] = []
+    for evidence in uncertain:
+        if not isinstance(evidence, dict) or not isinstance(evidence.get("name"), str):
+            continue
+        parameter_name = str(evidence["name"])
+        sensitivity = results_by_name.get(parameter_name)
+        swings = sensitivity.get("swing_sar") if sensitivity else None
+        numeric_swings = (
+            [float(value) for value in swings.values() if isinstance(value, int | float)]
+            if isinstance(swings, dict)
+            else []
+        )
+        if not numeric_swings:
+            continue
+        low, high = evidence.get("low_value"), evidence.get("high_value")
+        status = str(evidence.get("status", "uncertain"))
+        confidence = str(evidence.get("confidence", "unknown"))
+        rows.append(
+            {
+                "parameter_name": parameter_name,
+                "swing_sar": max(numeric_swings),
+                "evidence_status": f"{status} · {confidence} confidence",
+                "uncertainty_range": f"{low} — {high}",
+                "audit_source": (
+                    "recommendation.json · validation_status.key_uncertain_parameters"
+                    f"[name={parameter_name}] + sensitivity_oneway_summary.json · "
+                    f"parameter_results[name={parameter_name}].swing_sar"
+                ),
+            }
+        )
+    rows.sort(key=lambda row: float(cast(float, row["swing_sar"])), reverse=True)
+    return {
+        "rows": rows[:5],
+        "run_id": sensitivity_entry.run_id if sensitivity_entry else None,
+        "run_url": f"/run/{sensitivity_entry.run_id}" if sensitivity_entry else None,
+        "missing_sensitivity": sensitivity_entry is None,
+    }
+
+
 def _decision_strip(
     financial_ranking: dict[str, object] | None,
     mc_context: dict[str, object] | None,
@@ -1681,6 +1859,166 @@ def _run_cards(
     return runs
 
 
+def _dossier_run_fields(entry: artifacts.RunEntry) -> dict[str, str]:
+    return {
+        "run_id": entry.run_id,
+        "run_url": f"/run/{entry.run_id}",
+        "created": _human_created(entry.created, entry.run_id),
+    }
+
+
+def _dossier_comparison(entry: artifacts.RunEntry | None) -> dict[str, object] | None:
+    if entry is None:
+        return None
+    recommendation = artifacts.load_json(entry.path / "recommendation.json")
+    if recommendation is None:
+        return None
+    return {
+        **_dossier_run_fields(entry),
+        "winner": recommendation.get("winner"),
+        "margin_sar": recommendation.get("decisive_margin_sar"),
+        "recommendation_tier": recommendation.get("recommendation_tier"),
+        "calculation_valid": recommendation.get("calculation_valid", recommendation.get("valid")),
+        "audit_source": "recommendation.json · stored winner and decisive_margin_sar",
+    }
+
+
+def _dossier_monte_carlo(entry: artifacts.RunEntry | None) -> dict[str, object] | None:
+    if entry is None:
+        return None
+    summary = artifacts.load_json(entry.path / "monte_carlo_summary.json")
+    scenario_summaries = summary.get("scenario_summaries") if summary else None
+    if summary is None or not isinstance(scenario_summaries, dict):
+        return None
+    probabilities = [
+        {
+            "scenario_id": str(scenario_id),
+            "win_probability": scenario.get("win_probability"),
+            "audit_source": (
+                f"monte_carlo_summary.json · scenario_summaries.{scenario_id}.win_probability"
+            ),
+        }
+        for scenario_id, scenario in scenario_summaries.items()
+        if isinstance(scenario, dict) and isinstance(scenario.get("win_probability"), int | float)
+    ]
+    return {
+        **_dossier_run_fields(entry),
+        "trial_count": summary.get("trial_count"),
+        "reconciled_trial_count": summary.get("reconciled_trial_count"),
+        "majority_trial_winner": summary.get("majority_trial_winner"),
+        "probabilities": probabilities,
+    }
+
+
+def _dossier_oneway(entry: artifacts.RunEntry | None) -> dict[str, object] | None:
+    if entry is None:
+        return None
+    tornado = _oneway_tornado(artifacts.load_json(entry.path / "sensitivity_oneway_summary.json"))
+    if tornado is None:
+        return None
+    return {
+        **_dossier_run_fields(entry),
+        "top_drivers": cast(list[dict[str, object]], tornado["entries"])[:5],
+        "audit_source": "sensitivity_oneway_summary.json · parameter_results[].swing_sar",
+    }
+
+
+def _dossier_breakeven(entry: artifacts.RunEntry | None) -> dict[str, object] | None:
+    if entry is None:
+        return None
+    report = artifacts.load_json(entry.path / "breakeven_report.json")
+    if report is None:
+        return None
+    crossovers = report.get("crossover_values")
+    return {
+        **_dossier_run_fields(entry),
+        "parameter_name": report.get("parameter_name"),
+        "scenario_a": report.get("scenario_a"),
+        "scenario_b": report.get("scenario_b"),
+        "crossovers": crossovers if isinstance(crossovers, list) else [],
+        "message": report.get("message"),
+        "audit_source": "breakeven_report.json · stored crossover_values",
+    }
+
+
+def _dossier_winner_map(entry: artifacts.RunEntry | None) -> dict[str, object] | None:
+    if entry is None:
+        return None
+    summary = artifacts.load_json(entry.path / "sensitivity_twoway_summary.json")
+    if summary is None:
+        return None
+    raw_grid = summary.get("grid")
+    winners: list[str] = []
+    if isinstance(raw_grid, list):
+        for point in raw_grid:
+            winner = point.get("winner") if isinstance(point, dict) else None
+            if isinstance(winner, str) and winner not in winners:
+                winners.append(winner)
+    return {
+        **_dossier_run_fields(entry),
+        "parameter_a": summary.get("parameter_a"),
+        "parameter_b": summary.get("parameter_b"),
+        "grid_points": summary.get("grid_points"),
+        "failed_grid_point_count": summary.get("failed_grid_point_count"),
+        "winners": winners,
+        "audit_source": "sensitivity_twoway_summary.json · stored grid identity and winners",
+    }
+
+
+def _study_dossier_context(key: str) -> dict[str, object]:
+    """Latest stored evidence of each analysis kind for one study identity."""
+
+    matching: list[artifacts.RunEntry] = []
+    study: dict[str, str] | None = None
+    for entry in artifacts.list_runs(_OUTPUTS_DIR):
+        entry_study = _run_study(entry.path)
+        if entry_study is not None and entry_study["key"] == key:
+            matching.append(entry)
+            study = entry_study
+    if study is None:
+        raise HTTPException(status_code=404, detail="Study not found")
+
+    by_kind: dict[str, artifacts.RunEntry] = {}
+    expected_artifact = {
+        "comparison": "recommendation.json",
+        "monte-carlo": "monte_carlo_summary.json",
+        "sensitivity-oneway": "sensitivity_oneway_summary.json",
+        "break-even": "breakeven_report.json",
+        "sensitivity-winner-map": "sensitivity_twoway_summary.json",
+    }
+    for entry in matching:
+        dossier_kind = (
+            "comparison"
+            if entry.kind in ("compare-all-scenarios", "compare-multi-year")
+            else entry.kind
+        )
+        artifact_name = expected_artifact.get(dossier_kind)
+        if artifact_name is not None and (entry.path / artifact_name).is_file():
+            by_kind.setdefault(dossier_kind, entry)
+    evidence = {
+        "comparison": _dossier_comparison(by_kind.get("comparison")),
+        "monte_carlo": _dossier_monte_carlo(by_kind.get("monte-carlo")),
+        "oneway": _dossier_oneway(by_kind.get("sensitivity-oneway")),
+        "breakeven": _dossier_breakeven(by_kind.get("break-even")),
+        "winner_map": _dossier_winner_map(by_kind.get("sensitivity-winner-map")),
+    }
+    records = [
+        {
+            **_dossier_run_fields(entry),
+            "kind": entry.kind,
+            "kind_label": _RUN_KIND_LABELS.get(entry.kind, entry.kind.replace("-", " ")),
+            "summary": _related_run_summary(entry),
+        }
+        for entry in matching
+    ]
+    return {
+        "study": study,
+        **evidence,
+        "records": records,
+        "gaps": {name: value is None for name, value in evidence.items()},
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request) -> HTMLResponse:
     config_names = _config_names()
@@ -1689,7 +2027,13 @@ def index(request: Request) -> HTMLResponse:
     total_runs = len(grouped)
     total_pages = max(1, math.ceil(total_runs / _RUNS_PER_PAGE))
     runs = _run_cards(grouped[:_RUNS_PER_PAGE], previous_study_key=None)
-    visible_jobs = [record for record in jobs.records() if record.get("status") != "done"]
+    job_records = jobs.records()
+    visible_jobs = [record for record in job_records if record.get("status") != "done"]
+    job_history = [
+        record
+        for record in job_records
+        if record.get("status") == "done" and isinstance(record.get("elapsed_seconds"), int | float)
+    ]
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -1703,10 +2047,19 @@ def index(request: Request) -> HTMLResponse:
             "run_total_pages": total_pages,
             "run_kinds": sorted({entry.kind for entry in run_entries}),
             "jobs": visible_jobs,
+            "job_history": job_history,
             "parameters": _parameter_catalog(),
             "config_cockpits": _config_cockpits(config_names, run_entries),
         },
     )
+
+
+@app.get("/study/{key:path}", response_class=HTMLResponse)
+def study_dossier(request: Request, key: str) -> HTMLResponse:
+    """One study's newest stored verdict from each sibling analysis kind."""
+
+    context = _study_dossier_context(key)
+    return templates.TemplateResponse(request, "study.html", context)
 
 
 @app.get("/api/run-pages/{page}", response_class=HTMLResponse)
@@ -1737,13 +2090,17 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
     run_dir = _run_dir_or_404(run_id)
     kind = artifacts._detect_kind(run_id)
     provenance = _provenance(run_dir)
+    artifact_files = artifacts.list_artifacts(run_dir)
     context: dict[str, object] = {
         "run_id": run_id,
         "kind": kind,
-        "artifacts": artifacts.list_artifacts(run_dir),
-        "plots": [
-            f["name"] for f in artifacts.list_artifacts(run_dir) if str(f["name"]).endswith(".png")
-        ],
+        "artifacts": artifact_files,
+        "artifact_summary": {
+            "count": len(artifact_files),
+            "total_bytes": sum(cast(int, file["size_bytes"]) for file in artifact_files),
+        },
+        "artifact_preview_endpoint": f"/api/runs/{run_id}/artifact-preview",
+        "plots": [f["name"] for f in artifact_files if str(f["name"]).endswith(".png")],
         "summary_text": artifacts.text_preview(run_dir / "summary.txt"),
         "provenance": provenance,
         "fingerprint": artifacts.run_fingerprint(run_dir),
@@ -1772,6 +2129,7 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
                 "validation_status": validation_status,
                 "reconciliation": reconciliation,
                 "certification": _certification(reconciliation, recommendation, validation_status),
+                "calibration_priority": _calibration_priority(run_id, run_dir, validation_status),
                 "headline": _headline_cards(recommendation),
                 "finding": _finding_statement(recommendation, reconciliation),
                 "document_status": (
@@ -1789,6 +2147,14 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
                 ),
                 "daily_dew": artifacts.daily_series(run_dir, "extension_dew_risk"),
                 "daily_cementation": artifacts.daily_series(run_dir, "extension_cementation_index"),
+                "daily_bird_loss": artifacts.daily_series(run_dir, "extension_bird_loss_fraction"),
+                "daily_water_collected": artifacts.daily_series(
+                    run_dir, "extension_actually_collected_water_liters"
+                ),
+                "daily_queue": artifacts.daily_series(run_dir, "extension_queue_length"),
+                "detection_performance": _detection_performance(run_dir),
+                "coating_service_life": _coating_service_life(run_dir),
+                "hourly_detail_endpoint": f"/api/runs/{run_id}/hourly",
             }
         )
         annual_path = run_dir / "scenario_annual_summary.csv"
@@ -1797,7 +2163,6 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
             context["annual_summary"] = {"header": header, "rows": rows}
             context["kpi_table"] = _kpi_table(header, rows)
             context["water_balance"] = _water_balance_card(header, rows)
-            context["annual_cost_bars"] = _annual_cost_bars(header, rows)
             context["financial_ranking"] = _financial_ranking(
                 header,
                 rows,
@@ -1983,6 +2348,74 @@ def run_fingerprint(run_id: str) -> JSONResponse:
         artifacts.run_fingerprint(run_dir) or {},
         headers={"Cache-Control": "private, max-age=300"},
     )
+
+
+@app.get("/api/runs/{run_id}/hourly/{day}")
+def run_hourly_detail(run_id: str, day: date) -> JSONResponse:
+    """Select one date's stored weather and clean-reference hourly columns."""
+
+    run_dir = _run_dir_or_404(run_id)
+    weather_path = run_dir / "weather_hourly.csv"
+    clean_path = run_dir / "clean_energy_hourly.csv"
+    if not weather_path.is_file() or not clean_path.is_file():
+        raise HTTPException(
+            status_code=404,
+            detail="Run does not contain both stored hourly weather and clean-reference files.",
+        )
+
+    weather_header, weather_rows = artifacts.read_csv_rows(weather_path)
+    clean_header, clean_rows = artifacts.read_csv_rows(clean_path)
+    weather_columns = (
+        "timestamp",
+        "ghi_w_m2",
+        "temp_air_c",
+        "wind_speed_m_s",
+        "relative_humidity_pct",
+    )
+    clean_columns = ("timestamp", "clean_ac_energy_kwh")
+    if any(column not in weather_header for column in weather_columns) or any(
+        column not in clean_header for column in clean_columns
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail="Stored hourly files do not contain the dashboard's expected columns.",
+        )
+
+    weather_index = {column: weather_header.index(column) for column in weather_columns}
+    clean_timestamp = clean_header.index("timestamp")
+    clean_energy = clean_header.index("clean_ac_energy_kwh")
+    day_text = day.isoformat()
+    clean_by_timestamp = {
+        row[clean_timestamp]: _parse_finite(row[clean_energy])
+        for row in clean_rows
+        if len(row) > max(clean_timestamp, clean_energy) and row[clean_timestamp][:10] == day_text
+    }
+    selected = [
+        row
+        for row in weather_rows
+        if len(row) > max(weather_index.values())
+        and row[weather_index["timestamp"]][:10] == day_text
+    ]
+    if not selected:
+        raise HTTPException(status_code=404, detail=f"No stored hourly rows for {day_text}.")
+
+    timestamps = [row[weather_index["timestamp"]] for row in selected]
+    payload: dict[str, object] = {
+        "date": day_text,
+        "timestamps": timestamps,
+        "ghi_w_m2": [_parse_finite(row[weather_index["ghi_w_m2"]]) for row in selected],
+        "temp_air_c": [_parse_finite(row[weather_index["temp_air_c"]]) for row in selected],
+        "wind_speed_m_s": [_parse_finite(row[weather_index["wind_speed_m_s"]]) for row in selected],
+        "relative_humidity_pct": [
+            _parse_finite(row[weather_index["relative_humidity_pct"]]) for row in selected
+        ],
+        "clean_ac_energy_kwh": [clean_by_timestamp.get(timestamp) for timestamp in timestamps],
+        "sources": [
+            "weather_hourly.csv · stored timestamp/ghi/temp/wind/humidity columns",
+            "clean_energy_hourly.csv · stored timestamp/clean_ac_energy_kwh columns",
+        ],
+    }
+    return JSONResponse(payload, headers={"Cache-Control": "private, max-age=300"})
 
 
 @app.get("/api/runs/{run_id}/dew-simulator")
@@ -2417,6 +2850,66 @@ def get_artifact(run_id: str, name: str) -> FileResponse:
     return FileResponse(path, filename=name)
 
 
+@app.get("/api/runs/{run_id}/artifact-preview/{name}")
+def preview_artifact(run_id: str, name: str) -> JSONResponse:
+    """Return a bounded, uninterpreted preview of one guarded run artifact."""
+
+    run_dir = _run_dir_or_404(run_id)
+    path = artifacts.resolve_artifact(run_dir, name)
+    if path is None:
+        raise HTTPException(status_code=404, detail=f"No artifact {name} in run {run_id}")
+    suffix = path.suffix.lower()
+    download_url = f"/api/runs/{run_id}/artifact/{name}"
+    payload: dict[str, object] = {
+        "name": name,
+        "size_bytes": path.stat().st_size,
+        "download_url": download_url,
+        "audit_source": name,
+    }
+    if suffix == ".csv":
+        header, rows = artifacts.read_csv_rows(path)
+        shown = rows[:_ARTIFACT_PREVIEW_ROWS]
+        payload.update(
+            {
+                "kind": "csv",
+                "header": header,
+                "rows": shown,
+                "shown_rows": len(shown),
+                "total_rows": len(rows),
+                "truncated": len(shown) < len(rows),
+            }
+        )
+    elif suffix == ".json":
+        json_content = artifacts.load_json(path)
+        if json_content is None:
+            raise HTTPException(
+                status_code=422,
+                detail="JSON artifact is not a valid object and cannot be previewed.",
+            )
+        payload.update(
+            {
+                "kind": "json",
+                "content": json.dumps(json_content, indent=2, ensure_ascii=False),
+            }
+        )
+    elif suffix in {".txt", ".md", ".log", ".yaml", ".yml"}:
+        text_content = artifacts.text_preview(path)
+        if text_content is None:
+            raise HTTPException(
+                status_code=413,
+                detail="Text artifact is too large for an in-page preview; download it instead.",
+            )
+        payload.update({"kind": "text", "content": text_content})
+    elif suffix == ".png":
+        payload.update({"kind": "png", "url": download_url})
+    else:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Preview is not available for {suffix or 'extensionless'} artifacts.",
+        )
+    return JSONResponse(payload, headers={"Cache-Control": "private, max-age=300"})
+
+
 @app.get("/api/runs/{run_id}/download")
 def download_run(run_id: str) -> StreamingResponse:
     run_dir = _run_dir_or_404(run_id)
@@ -2442,6 +2935,7 @@ class LocationConfigBody(BaseModel):
     content: str
     latitude: float = Field(ge=-90, le=90)
     longitude: float = Field(ge=-180, le=180)
+    site_name: str | None = None
     # Optional whole-day period rewrite applied in the same validated YAML
     # edit, so the config essentials form needs no YAML hand-editing.
     start_date: date | None = None
@@ -2544,14 +3038,16 @@ def apply_location(name: str, body: LocationConfigBody) -> JSONResponse:
             local_end = datetime.combine(end.date(), end.time(), timezone)
 
         updated = body.content
-        replacements = (
+        replacements = [
             ("simulation", "start", f'"{local_start.isoformat()}"'),
             ("simulation", "end", f'"{local_end.isoformat()}"'),
             ("simulation", "target_timezone", timezone_name),
             ("site", "latitude", str(body.latitude)),
             ("site", "longitude", str(body.longitude)),
             ("site", "timezone", timezone_name),
-        )
+        ]
+        if body.site_name is not None:
+            replacements.append(("site", "name", json.dumps(body.site_name)))
         for section, key, rendered_value in replacements:
             updated = _replace_yaml_section_scalar(
                 updated,

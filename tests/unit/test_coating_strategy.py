@@ -109,6 +109,26 @@ def test_coating_strategy_is_reproducible() -> None:
     ]
 
 
+def test_coating_strategy_draws_bird_events_without_event_tape() -> None:
+    config = fixture_config(
+        overrides={
+            "bird_droppings": {
+                "event_probability_per_cohort_day": 1.0,
+                "coverage_min_fraction": 0.01,
+                "coverage_max_fraction": 0.01,
+            }
+        }
+    )
+    context = replace(_context(config), event_tape=None, metadata={})
+
+    result = ScenarioSimulationEngine(_strategy(config)).run(context, random_seed=42)
+
+    bird_events = [event for event in result.events if event.event_type == "bird_dropping_event"]
+    assert bird_events
+    assert all(event.magnitude > 0.0 for event in bird_events)
+    assert result.daily_results[0].extensions["bird_loss_fraction"] > 0.0
+
+
 def test_coating_outputs_water_and_cost_quantities_separately() -> None:
     result = ScenarioSimulationEngine(_strategy()).run(_context(), random_seed=42)
 

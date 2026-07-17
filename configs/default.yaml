@@ -8,8 +8,8 @@ simulation:
   run_id_prefix: default-riyadh
 site:
   name: Riyadh
-  latitude: 21.6122
-  longitude: 40.6887
+  latitude: 24.7136
+  longitude: 46.6753
   timezone: Asia/Riyadh
 weather:
   provider: nasa_power

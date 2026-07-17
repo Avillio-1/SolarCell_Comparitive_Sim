@@ -173,9 +173,12 @@ class JobRegistry:
             pass
 
     def _record_finished(self, job: Job) -> None:
-        if job.hidden:
-            return
         with self._lock:
+            if job.hidden:
+                self._jobs.pop(job.job_id, None)
+                return
+            if self._jobs.get(job.job_id) is not job:
+                return
             self._history.append(job.to_record())
             self._history = self._history[-HISTORY_LIMIT:]
             self._save_history()
@@ -204,22 +207,30 @@ class JobRegistry:
             self._jobs[job.job_id] = job
 
         def _run() -> None:
-            job.status = "running"
-            job.started_at = datetime.now(UTC)
+            with self._lock:
+                job.status = "running"
+                job.started_at = datetime.now(UTC)
             try:
                 if job.cancel_requested:
                     raise JobCancelled(f"job {job.job_id} cancelled before start")
-                job.output_directory = work(job)
-                job.status = "done"
+                output_directory = work(job)
+                with self._lock:
+                    job.output_directory = output_directory
+                    job.status = "done"
             except JobCancelled:
-                job.status = "cancelled"
-                job.detail = "Cancelled by user before completion."
+                with self._lock:
+                    job.status = "cancelled"
+                    job.detail = "Cancelled by user before completion."
             except Exception as exc:  # surfaced to the UI, never swallowed silently
-                job.status = "failed"
-                job.error = f"{type(exc).__name__}: {exc}"
-                job.detail = traceback.format_exc(limit=8)
+                error = f"{type(exc).__name__}: {exc}"
+                detail = traceback.format_exc(limit=8)
+                with self._lock:
+                    job.status = "failed"
+                    job.error = error
+                    job.detail = detail
             finally:
-                job.finished_at = datetime.now(UTC)
+                with self._lock:
+                    job.finished_at = datetime.now(UTC)
                 self._record_finished(job)
 
         threading.Thread(target=_run, name=f"dashboard-{kind}-{job.job_id}", daemon=True).start()

@@ -161,10 +161,11 @@ class CoatingStrategy:
                 unscaled_deposition_fraction=cementation_loss * (1.0 - suppression),
             )
             coverage = cohort.bird_drop_coverage_fraction
-            coverage_addition = (
-                day_input.event_inputs.bird_coverage_additions.get(cohort.cohort_id, 0.0)
-                if day_input.event_inputs is not None
-                else 0.0
+            coverage_addition = _bird_coverage_addition(
+                day_input=day_input,
+                cohort_id=cohort.cohort_id,
+                birds=self.birds,
+                rng=rng,
             )
             coverage = min(1.0, coverage + coverage_addition)
             pre_clean_bird_loss = min(
@@ -450,6 +451,25 @@ def _dust_event_losses(events: list[SimulationEvent]) -> tuple[float, float, flo
         event.magnitude for event in events if event.event_type == "dew_cementation_adhesion"
     )
     return daily_loss, dust_event_loss, cementation_loss
+
+
+def _bird_coverage_addition(
+    *,
+    day_input: DailyScenarioInput,
+    cohort_id: int,
+    birds: BirdDroppingConfig,
+    rng: np.random.Generator,
+) -> float:
+    if day_input.event_inputs is not None:
+        return day_input.event_inputs.bird_coverage_additions.get(cohort_id, 0.0)
+    if rng.random() < birds.event_probability_per_cohort_day:
+        return float(
+            rng.uniform(
+                birds.coverage_min_fraction,
+                birds.coverage_max_fraction,
+            )
+        )
+    return 0.0
 
 
 def _cementation_suppression(effectiveness: float, suppression_fraction: float) -> float:

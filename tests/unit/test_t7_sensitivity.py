@@ -8,6 +8,7 @@ import pytest
 from tests.config_factory import fixture_config
 
 import solarclean.application.sensitivity as sensitivity_module
+import solarclean.domain.calibration.parameter_overrides as parameter_overrides_module
 from solarclean.application.comparison import CANONICAL_SCENARIO_IDS, CompareAllScenarios
 from solarclean.application.sensitivity import (
     BreakEvenEvaluation,
@@ -173,6 +174,54 @@ def test_oneway_sweeps_requested_parameters_only(tmp_path: Path) -> None:
     assert result.base_mode == "reference_config"
 
 
+def test_central_preset_config_sweep_reconciles_registry_guarded_points(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = fixture_config(
+        overrides={
+            "simulation": {"end": "2025-12-31T23:00:00+03:00"},
+            "weather": {"provider": "fixture"},
+            "pv_system": {"panel_count": 100},
+            "farm": {
+                "total_panels": 100,
+                "cohort_count": 1,
+                "panels_per_cohort": 100,
+            },
+            "coating": {
+                "preset": "central",
+                "physics": {"dust_accumulation_multiplier": 0.7},
+            },
+            "calibration": {"assumption_set": "riyadh_central_v2"},
+            "output": {"base_directory": tmp_path},
+        }
+    )
+    original = sensitivity_module._run_variant
+    calls = 0
+
+    def counted_run_variant(**kwargs):
+        nonlocal calls
+        calls += 1
+        return original(**kwargs)
+
+    monkeypatch.setattr(sensitivity_module, "_run_variant", counted_run_variant)
+    result = (
+        OneWaySensitivityExperiment(
+            config,
+            parameter_names=("coating.dust_accumulation_multiplier",),
+            steps=3,
+            write_artifacts=False,
+        )
+        .run()
+        .result
+    )
+
+    points = result.parameter_results[0].points
+    assert {point.value for point in points} == {0.5, 0.7, 0.85}
+    assert all(point.reconciled for point in points)
+    assert calls == 3  # base plus low/high; equal config and registry reuse the central result
+
+
 def test_sensitivity_revalidates_completed_config_override(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -182,11 +231,15 @@ def test_sensitivity_revalidates_completed_config_override(
     )
     spec = next(item for item in supported if item.kind == "config")
 
-    def invalid_override(base_config, _spec, _value):
+    def invalid_override(base_config, _value):
         invalid_farm = base_config.farm.model_copy(update={"total_panels": 9999})
         return base_config.model_copy(update={"farm": invalid_farm})
 
-    monkeypatch.setattr(sensitivity_module, "apply_config_override", invalid_override)
+    monkeypatch.setitem(
+        parameter_overrides_module._CONFIG_OVERRIDES,
+        spec.name,
+        invalid_override,
+    )
     with pytest.raises(ValueError):
         sensitivity_module._apply_override(
             base_config=config,

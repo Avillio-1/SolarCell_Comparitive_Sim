@@ -75,6 +75,8 @@
           <strong>Which strategy wins?</strong>
           <span>Compare baseline, reactive cleaning, and coating under identical weather and events.</span>
           <small class="mono">compare all scenarios</small>
+          <span class="question-card-history" data-launch-history data-launch-history-kind="compare"
+                data-kind="compare" data-audit-source="outputs/.dashboard_jobs.json · finished sessions">No prior session for this configuration.</span>
         </span>
       </label>
       <label class="question-card">
@@ -83,6 +85,8 @@
           <strong>How sure are we of the winner?</strong>
           <span>Repeat the comparison across controlled random seeds to measure uncertainty and winner probability.</span>
           <small class="mono">Monte Carlo</small>
+          <span class="question-card-history" data-launch-history data-launch-history-kind="monte-carlo"
+                data-kind="monte-carlo" data-audit-source="outputs/.dashboard_jobs.json · finished sessions">No prior session for this configuration.</span>
         </span>
       </label>
       <label class="question-card">
@@ -91,6 +95,8 @@
           <strong>Which assumption moves the result most?</strong>
           <span>Change one assumption at a time to see which inputs influence the result most.</span>
           <small class="mono">one-way sensitivity</small>
+          <span class="question-card-history" data-launch-history data-launch-history-kind="sensitivity-oneway"
+                data-kind="sensitivity-oneway" data-audit-source="outputs/.dashboard_jobs.json · finished sessions">No prior session for this configuration.</span>
         </span>
       </label>
       <label class="question-card">
@@ -99,6 +105,8 @@
           <strong>Where does the winner flip?</strong>
           <span>Vary two assumptions together and map which strategy wins across the grid.</span>
           <small class="mono">two-way winner map</small>
+          <span class="question-card-history" data-launch-history data-launch-history-kind="winner-map"
+                data-kind="winner-map" data-audit-source="outputs/.dashboard_jobs.json · finished sessions">No prior session for this configuration.</span>
         </span>
       </label>
       <label class="question-card">
@@ -107,6 +115,8 @@
           <strong>At what value do two strategies tie?</strong>
           <span>Find the parameter value where two selected strategies have equal net benefit.</span>
           <small class="mono">break-even search</small>
+          <span class="question-card-history" data-launch-history data-launch-history-kind="break-even"
+                data-kind="break-even" data-audit-source="outputs/.dashboard_jobs.json · finished sessions">No prior session for this configuration.</span>
         </span>
       </label>
     </fieldset>
@@ -197,7 +207,12 @@
     </div>
 
     <div class="launch-footer">
-      <div class="launch-expectation"><strong>Before you start</strong><span>Runs execute one at a time; the new run appears below with live progress and saves a reproducible result package.</span></div>
+      <div class="launch-expectation"><strong>Before you start</strong>
+        <span>Runs execute one at a time; the new run appears below with live progress and saves a reproducible result package.</span>
+        <span id="launch-history-expectation" class="launch-history-expectation"
+              data-audit-source="outputs/.dashboard_jobs.json · finished sessions"
+              aria-live="polite">No prior session for this question and configuration.</span>
+      </div>
       <button id="launch" class="primary launch-button" type="button" {% if not configs %}disabled{% endif %}>Start analysis</button>
       <span id="launch-error" class="error-text" role="alert"></span>
     </div>
@@ -296,6 +311,7 @@
 <script>
   window.solarcleanCockpits = {{ config_cockpits | tojson }};
   window.solarcleanParameters = {{ parameters | tojson }};
+  window.solarcleanJobHistory = {{ job_history | tojson if job_history is defined else '[]' }};
   initConfigurationCockpit();
   initParameterPickers(window.solarcleanParameters);
 </script>

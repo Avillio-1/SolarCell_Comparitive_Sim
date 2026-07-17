@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% from "_strategy.html" import strategy_label %}
+{% block title %}Study dossier · SolarClean-DT{% endblock %}
+{% block body_class %}run-document{% endblock %}
+{% block content %}
+
+<div class="document-head">
+  <div class="document-ident">
+    <span class="eyebrow">Cross-run engineering record</span>
+    <h1>Study dossier</h1>
+    <p>{{ study.label }}</p>
+  </div>
+</div>
+<div class="run-head run-command-bar">
+  <a class="quiet-link run-back-link" href="/">&larr; back to runs</a>
+  <button type="button" class="print-record" onclick="window.print()">print dossier</button>
+</div>
+
+<section class="panel">
+  <h2>Latest comparison verdict</h2>
+  {% if comparison %}
+  <dl class="fact-strip">
+    <div>
+      <dt>Winner</dt>
+      <dd data-audit-source="{{ comparison.audit_source }}">
+        {% if comparison.winner %}{{ strategy_label(comparison.winner) }}{% else %}No certified winner{% endif %}
+      </dd>
+    </div>
+    <div>
+      <dt>Decisive margin</dt>
+      <dd class="mono" data-audit-source="{{ comparison.audit_source }}">
+        {% if comparison.margin_sar is not none %}{{ comparison.margin_sar | sar }} SAR/year{% else %}–{% endif %}
+      </dd>
+    </div>
+    <div><dt>Recommendation tier</dt><dd>{{ comparison.recommendation_tier or "–" }}</dd></div>
+    <div><dt>Calculation</dt><dd>{{ "reconciled" if comparison.calculation_valid else "hold" }}</dd></div>
+  </dl>
+  <p class="hint"><a href="{{ comparison.run_url }}">Open comparison run {{ comparison.run_id }}</a>
+    · {{ comparison.created }}</p>
+  {% else %}
+  <p class="empty">No comparison run yet. <a href="/#launch-form">Launch a comparison</a> to
+    establish the study verdict.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Monte Carlo certainty</h2>
+  {% if monte_carlo %}
+  <p>Majority winner: <strong>{{ strategy_label(monte_carlo.majority_trial_winner) }}</strong>
+    from <span class="mono">{{ monte_carlo.reconciled_trial_count }} /
+    {{ monte_carlo.trial_count }}</span> reconciled trials.</p>
+  <table class="data-table small">
+    <thead><tr><th>Scenario</th><th class="num">Stored win probability</th></tr></thead>
+    <tbody>
+      {% for row in monte_carlo.probabilities %}
+      <tr>
+        <td>{{ strategy_label(row.scenario_id) }}</td>
+        <td class="num mono" data-audit-source="{{ row.audit_source }}">
+          {{ "%.2f"|format(row.win_probability * 100) }}%
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="hint"><a href="{{ monte_carlo.run_url }}">Open Monte Carlo run
+    {{ monte_carlo.run_id }}</a> · {{ monte_carlo.created }}</p>
+  {% else %}
+  <p class="empty">No Monte Carlo run yet. <a href="/#launch-form">Launch Monte Carlo</a> to
+    quantify how often each strategy wins under the stored uncertainty model.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Top sensitivity drivers</h2>
+  {% if oneway %}
+  <table class="data-table small">
+    <thead><tr><th>Parameter</th><th class="num">Stored swing (SAR)</th><th>Winner changed</th></tr></thead>
+    <tbody>
+      {% for row in oneway.top_drivers %}
+      <tr data-audit-source="{{ oneway.audit_source }}">
+        <td class="mono">{{ row.parameter }}</td>
+        <td class="num mono">{{ row.swing_sar | sar }}</td>
+        <td>{{ "yes" if row.winner_changed else "no" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="hint"><a href="{{ oneway.run_url }}">Open one-way sensitivity run
+    {{ oneway.run_id }}</a> · {{ oneway.created }}</p>
+  {% else %}
+  <p class="empty">No one-way sensitivity run yet. <a href="/#launch-form">Launch a sweep</a>
+    to rank which assumptions move the stored outcome most.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Break-even crossing</h2>
+  {% if breakeven %}
+  <p data-audit-source="{{ breakeven.audit_source }}">
+    <code>{{ breakeven.parameter_name }}</code> · {{ strategy_label(breakeven.scenario_a) }}
+    versus {{ strategy_label(breakeven.scenario_b) }}:
+    {% if breakeven.crossovers %}
+      {% for crossing in breakeven.crossovers %}
+      <span class="mono">{{ crossing | display_number }}</span>{% if not loop.last %}, {% endif %}
+      {% endfor %}
+    {% else %}
+      no stored crossing found
+    {% endif %}
+  </p>
+  {% if breakeven.message %}<p class="hint">{{ breakeven.message }}</p>{% endif %}
+  <p class="hint"><a href="{{ breakeven.run_url }}">Open break-even run
+    {{ breakeven.run_id }}</a> · {{ breakeven.created }}</p>
+  {% else %}
+  <p class="empty">No break-even run yet. <a href="/#launch-form">Launch a break-even search</a>
+    to locate a stored strategy tie.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Winner-map coverage</h2>
+  {% if winner_map %}
+  <dl class="fact-strip" data-audit-source="{{ winner_map.audit_source }}">
+    <div><dt>Axes</dt><dd class="mono">{{ winner_map.parameter_a }} × {{ winner_map.parameter_b }}</dd></div>
+    <div><dt>Grid points</dt><dd class="mono">{{ winner_map.grid_points }}</dd></div>
+    <div><dt>Unreconciled points</dt><dd class="mono">{{ winner_map.failed_grid_point_count }}</dd></div>
+    <div><dt>Stored winners present</dt><dd>
+      {% for winner in winner_map.winners %}{{ strategy_label(winner) }}{% if not loop.last %}, {% endif %}{% endfor %}
+    </dd></div>
+  </dl>
+  <p class="hint"><a href="{{ winner_map.run_url }}">Open winner-map run
+    {{ winner_map.run_id }}</a> · {{ winner_map.created }}</p>
+  {% else %}
+  <p class="empty">No winner-map run yet. <a href="/#launch-form">Launch a winner map</a> after
+    one-way sensitivity identifies the two assumptions worth gridding.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <h2>Study records</h2>
+  <table class="data-table small">
+    <thead><tr><th>Run</th><th>Analysis</th><th>Stored finding</th><th>Issued</th></tr></thead>
+    <tbody>
+      {% for record in records %}
+      <tr>
+        <td class="mono"><a href="{{ record.run_url }}">{{ record.run_id }}</a></td>
+        <td>{{ record.kind_label }}</td>
+        <td>{{ record.summary }}</td>
+        <td class="mono">{{ record.created }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% endblock %}

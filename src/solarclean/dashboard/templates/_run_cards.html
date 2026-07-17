@@ -3,7 +3,8 @@
 {% for r in runs %}
 {% if r.new_study %}
 <h3 class="study-header" data-study="{{ r.study_key }}">
-  <span class="study-header-label">{{ r.study_label }}</span>
+  <a class="study-header-label" href="/study/{{ r.study_key | urlencode }}"
+     aria-label="Open study dossier for {{ r.study_label }}">{{ r.study_label }}</a>
 </h3>
 {% endif %}
 <article class="run-card" data-run="{{ r.run_id }}" data-kind="{{ r.kind }}" data-study="{{ r.study_key }}">

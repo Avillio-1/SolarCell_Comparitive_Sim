@@ -220,10 +220,16 @@ def daily_series(run_dir: Path, value_column: str) -> dict[str, object] | None:
         date, scenario, raw = row[date_col], row[scenario_col], row[value_col]
         if date not in dates:
             dates.append(date)
-        try:
-            value: float | None = float(raw)
-        except ValueError:
-            value = None
+        normalized = raw.strip().lower()
+        if normalized == "true":
+            value: float | None = 1.0
+        elif normalized == "false":
+            value = 0.0
+        else:
+            try:
+                value = float(raw)
+            except ValueError:
+                value = None
         series.setdefault(scenario, {})[date] = value
     return {
         "dates": dates,

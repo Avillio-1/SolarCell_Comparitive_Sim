@@ -46,19 +46,27 @@ class WeatherCache:
     def read_normalized(self, key: str) -> WeatherDataset | None:
         csv_path = self.directory / f"{key}.normalized.csv"
         metadata_path = self.directory / f"{key}.metadata.json"
-        if not csv_path.exists() or not metadata_path.exists():
+        try:
+            if not csv_path.exists() or not metadata_path.exists():
+                return None
+            frame = pd.read_csv(csv_path)
+            if "timestamp" not in frame.columns:
+                raise ValueError("cached normalized weather did not contain timestamps")
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+            index = pd.DatetimeIndex(
+                pd.to_datetime(frame.pop("timestamp"), utc=True, format="ISO8601")
+            )
+            timezone = metadata.get("index_timezone")
+            if isinstance(timezone, str):
+                index = index.tz_convert(timezone)
+            frequency = metadata.get("index_freq")
+            if isinstance(frequency, str):
+                index = pd.DatetimeIndex(
+                    index,
+                    freq=pd.tseries.frequencies.to_offset(frequency),
+                )
+            index.name = metadata.get("index_name")
+            frame.index = index
+            return WeatherDataset(hourly=frame, metadata=metadata)
+        except (OSError, ValueError):
             return None
-        frame = pd.read_csv(csv_path, parse_dates=["timestamp"]).set_index("timestamp")
-        if not isinstance(frame.index, pd.DatetimeIndex):
-            raise ValueError("cached normalized weather did not contain datetimes")
-        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
-        index = pd.DatetimeIndex(frame.index)
-        timezone = metadata.get("index_timezone")
-        if isinstance(timezone, str):
-            index = index.tz_convert(timezone)
-        frequency = metadata.get("index_freq")
-        if isinstance(frequency, str):
-            index = pd.DatetimeIndex(index, freq=pd.tseries.frequencies.to_offset(frequency))
-        index.name = metadata.get("index_name")
-        frame.index = index
-        return WeatherDataset(hourly=frame, metadata=metadata)

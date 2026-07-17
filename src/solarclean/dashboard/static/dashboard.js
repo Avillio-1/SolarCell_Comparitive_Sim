@@ -280,6 +280,7 @@
         row.hidden = row.dataset.kind !== selectedKind();
       });
       if (selectedKind() === "sensitivity-oneway") updateOneWayWorkload();
+      updateLaunchExpectations();
     };
     kindCards.addEventListener("change", showOptionsForKind);
     showOptionsForKind();
@@ -336,6 +337,7 @@
     configSelect.addEventListener("change", function () {
       updateConfigLink();
       updateSimulationPeriod();
+      updateLaunchExpectations();
       fetch("/api/configs/" + encodeURIComponent(configSelect.value) + "/parameters")
         .then(function (response) {
           if (!response.ok) throw new Error("HTTP " + response.status);
@@ -443,6 +445,90 @@
     var minutes = Math.floor(total / 60);
     var seconds = total % 60;
     return minutes + "m " + seconds + "s";
+  }
+
+  // Launch timing is a display of persisted dashboard-job history. It is not
+  // an estimate: the newest finished record matching method + config is shown
+  // verbatim, with its stored elapsed_seconds formatted for reading.
+  function launchHistoryRecords() {
+    var payload = window.solarcleanJobHistory;
+    if (Array.isArray(payload)) return payload;
+    if (payload && Array.isArray(payload.jobs)) return payload.jobs;
+    if (payload && Array.isArray(payload.records)) return payload.records;
+    return [];
+  }
+
+  function jobHistoryConfig(record) {
+    return record && (record.config_name || record.config || record.configName);
+  }
+
+  function jobHistoryFinished(record) {
+    return record && ["done", "finished", "complete", "completed"].indexOf(record.status) >= 0 &&
+      typeof record.elapsed_seconds === "number" && isFinite(record.elapsed_seconds);
+  }
+
+  function matchingFinishedJob(kind, configName) {
+    var matches = launchHistoryRecords().filter(function (record) {
+      return jobHistoryFinished(record) && record.kind === kind &&
+        jobHistoryConfig(record) === configName;
+    });
+    matches.sort(function (left, right) {
+      var leftTime = Date.parse(
+        left.finished_at || left.updated_at || left.created_at || ""
+      ) || 0;
+      var rightTime = Date.parse(
+        right.finished_at || right.updated_at || right.created_at || ""
+      ) || 0;
+      return rightTime - leftTime;
+    });
+    return matches[0] || null;
+  }
+
+  function launchKindLabel(kind) {
+    return {
+      compare: "compare-all-scenarios",
+      "monte-carlo": "Monte Carlo",
+      "sensitivity-oneway": "one-way sensitivity",
+      "winner-map": "winner map",
+      "break-even": "break-even",
+    }[kind] || kind;
+  }
+
+  function launchHistoryText(kind, configName, compact) {
+    var record = matchingFinishedJob(kind, configName);
+    if (!record) return compact ? "No prior session with this config." :
+      "No prior " + launchKindLabel(kind) + " session with this config.";
+    var prefix = compact ? "Last session" :
+      "Last " + launchKindLabel(kind) + " with " + configName;
+    return prefix + " took " + formatSeconds(record.elapsed_seconds) + ".";
+  }
+
+  function updateLaunchExpectations() {
+    var configName = configSelect && configSelect.value;
+    if (!configName) return;
+    document.querySelectorAll(
+      "[data-launch-history-kind], [data-launch-history]"
+    ).forEach(function (element) {
+      element.textContent = launchHistoryText(
+        element.dataset.launchHistoryKind || element.dataset.launchHistory ||
+          element.dataset.kind,
+        configName, true
+      );
+    });
+    // A template may place the history node either inside the existing
+    // expectation strip or immediately beside the Start button.
+    ["launch-history-expectation", "launch-expectation-history"].forEach(function (id) {
+      var element = document.getElementById(id);
+      if (element) {
+        element.textContent = launchHistoryText(selectedKind(), configName, false);
+      }
+    });
+  }
+  window.updateLaunchExpectations = updateLaunchExpectations;
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", updateLaunchExpectations);
+  } else {
+    updateLaunchExpectations();
   }
 
   // A launched analysis is one object with one home: a live card in the runs
@@ -1007,6 +1093,244 @@
     });
   }
 
+  // --- artifact preview drawer ----------------------------------------
+  // Artifact names remain real download links. A normal click opens the
+  // stored-file preview; modifier clicks and the drawer's download action
+  // retain the browser's native download/open behaviour.
+
+  function currentRunId() {
+    if (window.solarcleanRunId) return String(window.solarcleanRunId);
+    var runTagged = document.querySelector("[data-run-id]");
+    if (runTagged && runTagged.dataset.runId) return runTagged.dataset.runId;
+    var match = window.location.pathname.match(/^\/run\/([^/]+)/);
+    return match ? decodeURIComponent(match[1]) : "";
+  }
+
+  function ensureArtifactDrawer() {
+    var drawer = document.getElementById("artifact-preview-drawer");
+    if (drawer) return drawer;
+    drawer = document.createElement("dialog");
+    drawer.id = "artifact-preview-drawer";
+    drawer.className = "artifact-preview-drawer";
+    drawer.setAttribute("aria-labelledby", "artifact-preview-title");
+    drawer.innerHTML =
+      '<div class="artifact-preview-head"><div><span class="eyebrow">Stored artifact</span>' +
+      '<h2 id="artifact-preview-title">Artifact preview</h2></div>' +
+      '<button type="button" id="artifact-preview-close" aria-label="Close artifact preview">×</button>' +
+      '</div><div id="artifact-preview-content" class="artifact-preview-content"></div>' +
+      '<p id="artifact-preview-note" class="hint"></p>' +
+      '<a id="artifact-preview-download" class="config-action" href="#">Download full artifact</a>';
+    document.body.appendChild(drawer);
+    return drawer;
+  }
+
+  function artifactDrawerElement(drawer, id, selector) {
+    return document.getElementById(id) || drawer.querySelector(selector);
+  }
+
+  function showArtifactDrawer(drawer) {
+    drawer.hidden = false;
+    if (typeof drawer.showModal === "function" && !drawer.open) drawer.showModal();
+    else {
+      drawer.classList.add("open");
+      drawer.setAttribute("aria-hidden", "false");
+    }
+  }
+
+  function closeArtifactDrawer() {
+    var drawer = document.getElementById("artifact-preview-drawer");
+    if (!drawer) return;
+    if (typeof drawer.close === "function" && drawer.open) drawer.close();
+    drawer.classList.remove("open");
+    if (drawer.tagName !== "DIALOG") {
+      drawer.hidden = true;
+      drawer.setAttribute("aria-hidden", "true");
+    }
+  }
+
+  function previewKind(payload, artifactName) {
+    var kind = String(
+      payload.kind || payload.type || payload.preview_type || payload.format || ""
+    ).toLowerCase();
+    if (kind.indexOf("csv") >= 0) return "csv";
+    if (kind.indexOf("json") >= 0) return "json";
+    if (kind.indexOf("png") >= 0 || kind.indexOf("image") >= 0) return "png";
+    if (kind.indexOf("text") >= 0 || kind.indexOf("yaml") >= 0 ||
+        kind.indexOf("yml") >= 0) return "text";
+    var extension = artifactName.split(".").pop().toLowerCase();
+    if (extension === "csv") return "csv";
+    if (extension === "json") return "json";
+    if (extension === "png") return "png";
+    return "text";
+  }
+
+  function renderArtifactTable(content, payload) {
+    var header = payload.header || payload.columns || [];
+    var rows = payload.rows || [];
+    if (!Array.isArray(header) && rows.length && rows[0] &&
+        typeof rows[0] === "object") {
+      header = Object.keys(rows[0]);
+    }
+    var visibleRows = rows.slice(0, 50);
+    var tableWrap = document.createElement("div");
+    tableWrap.className = "artifact-preview-table-wrap";
+    var table = document.createElement("table");
+    table.className = "data-table small artifact-preview-table";
+    if (header.length) {
+      var thead = document.createElement("thead");
+      var headRow = document.createElement("tr");
+      header.forEach(function (name) {
+        var cell = document.createElement("th");
+        cell.textContent = name;
+        headRow.appendChild(cell);
+      });
+      thead.appendChild(headRow);
+      table.appendChild(thead);
+    }
+    var tbody = document.createElement("tbody");
+    visibleRows.forEach(function (row) {
+      var tableRow = document.createElement("tr");
+      var values = Array.isArray(row) ? row : header.map(function (name) {
+        return row && row[name];
+      });
+      values.forEach(function (value) {
+        var cell = document.createElement("td");
+        cell.textContent = value === null || value === undefined ? "" : String(value);
+        tableRow.appendChild(cell);
+      });
+      tbody.appendChild(tableRow);
+    });
+    table.appendChild(tbody);
+    tableWrap.appendChild(table);
+    content.appendChild(tableWrap);
+    return visibleRows.length;
+  }
+
+  function renderArtifactPreview(drawer, payload, artifactName, downloadUrl) {
+    var title = artifactDrawerElement(drawer, "artifact-preview-title", "h2");
+    var content = artifactDrawerElement(
+      drawer, "artifact-preview-content", ".artifact-preview-content"
+    );
+    var note = artifactDrawerElement(drawer, "artifact-preview-note", ".artifact-preview-note");
+    var download = artifactDrawerElement(
+      drawer, "artifact-preview-download", "[data-artifact-download]"
+    );
+    if (title) title.textContent = payload.name || artifactName;
+    if (content) content.replaceChildren();
+    if (note) note.textContent = "";
+    if (download) {
+      download.href = payload.download_url || downloadUrl;
+      download.hidden = false;
+    }
+    if (!content) return;
+
+    var kind = previewKind(payload, artifactName);
+    if (kind === "csv") {
+      var shown = renderArtifactTable(content, payload);
+      var total = payload.total_rows;
+      if (total === undefined) total = payload.row_count;
+      if (total === undefined) total = (payload.rows || []).length;
+      if (note) {
+        note.textContent = "Showing " + shown + " of " + total +
+          " rows — download for full data.";
+      }
+    } else if (kind === "png") {
+      var image = document.createElement("img");
+      image.className = "artifact-preview-image";
+      image.alt = "Stored artifact preview: " + artifactName;
+      image.src = payload.url || payload.preview_url || downloadUrl;
+      content.appendChild(image);
+      if (note) note.textContent = "Inline preview of the stored PNG.";
+    } else {
+      var pre = document.createElement("pre");
+      pre.className = "summary-pre artifact-preview-pre";
+      var value = payload.content;
+      if (value === undefined) value = payload.data;
+      if (kind === "json") {
+        if (typeof value === "string") {
+          try { value = JSON.parse(value); } catch (error) { /* display original text */ }
+        }
+        pre.textContent = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+      } else {
+        pre.textContent = value === null || value === undefined ? "" : String(value);
+      }
+      content.appendChild(pre);
+      if (note) note.textContent = "Stored file content — download for the original artifact.";
+    }
+  }
+
+  function openArtifactPreview(runId, artifactName, downloadUrl) {
+    var drawer = ensureArtifactDrawer();
+    var content = artifactDrawerElement(
+      drawer, "artifact-preview-content", ".artifact-preview-content"
+    );
+    var title = artifactDrawerElement(drawer, "artifact-preview-title", "h2");
+    var note = artifactDrawerElement(drawer, "artifact-preview-note", ".artifact-preview-note");
+    if (title) title.textContent = artifactName;
+    if (content) content.textContent = "Loading stored artifact…";
+    if (note) note.textContent = "";
+    showArtifactDrawer(drawer);
+    fetch(
+      "/api/runs/" + encodeURIComponent(runId) + "/artifact-preview/" +
+      encodeURIComponent(artifactName)
+    )
+      .then(function (response) {
+        if (!response.ok) {
+          return response.json().catch(function () { return {}; }).then(function (payload) {
+            throw new Error(payload.detail || ("HTTP " + response.status));
+          });
+        }
+        return response.json();
+      })
+      .then(function (payload) {
+        renderArtifactPreview(drawer, payload, artifactName, downloadUrl);
+      })
+      .catch(function (error) {
+        if (content) {
+          content.textContent = "Preview unavailable: " + error.message;
+        }
+        var download = artifactDrawerElement(
+          drawer, "artifact-preview-download", "[data-artifact-download]"
+        );
+        if (download) {
+          download.href = downloadUrl;
+          download.hidden = false;
+        }
+      });
+  }
+
+  document.addEventListener("click", function (event) {
+    var close = event.target.closest("#artifact-preview-close, [data-artifact-preview-close]");
+    if (close) {
+      closeArtifactDrawer();
+      return;
+    }
+    var link = event.target.closest(
+      "#artifact-files a[href*='/artifact/'], [data-artifact-preview]"
+    );
+    if (link && link.matches(".artifact-download-link, [data-artifact-download-direct]")) {
+      return;
+    }
+    if (!link || event.button !== 0 || event.ctrlKey || event.metaKey ||
+        event.shiftKey || event.altKey) return;
+    var href = link.href || link.dataset.downloadUrl || "";
+    var pathMatch = href && new URL(href, window.location.href).pathname.match(
+      /^\/api\/runs\/([^/]+)\/artifact\/(.+)$/
+    );
+    var runId = link.dataset.runId || (pathMatch && decodeURIComponent(pathMatch[1])) ||
+      currentRunId();
+    var artifactName = link.dataset.artifactName || link.dataset.artifactPreview ||
+      (pathMatch && decodeURIComponent(pathMatch[2])) || link.textContent.trim();
+    if (!runId || !artifactName) return;
+    event.preventDefault();
+    openArtifactPreview(runId, artifactName, href ||
+      "/api/runs/" + encodeURIComponent(runId) + "/artifact/" +
+      encodeURIComponent(artifactName));
+  });
+  document.addEventListener("keydown", function (event) {
+    if (event.key === "Escape") closeArtifactDrawer();
+  });
+
   // --- config editor ------------------------------------------------------
 
   var configEditor = document.getElementById("config-editor");
@@ -1032,10 +1356,12 @@
   function syncSiteLocationFromEditor(editor) {
     var lat = parseFloat(parseYamlScalar(editor.value, "latitude"));
     var lon = parseFloat(parseYamlScalar(editor.value, "longitude"));
+    var nameInput = document.getElementById("site-name");
     var latInput = document.getElementById("site-lat");
     var lonInput = document.getElementById("site-lon");
     var timezoneInput = document.getElementById("site-timezone");
     var marker = document.getElementById("site-map-marker");
+    if (nameInput) nameInput.value = parseYamlTextScalar(editor.value, "name") || "";
     if (latInput) latInput.value = isNaN(lat) ? "" : lat;
     if (lonInput) lonInput.value = isNaN(lon) ? "" : lon;
     if (timezoneInput) timezoneInput.value = parseYamlScalar(editor.value, "timezone") || "";
@@ -1154,6 +1480,20 @@
     return match ? match[1].replace(/^["']|["']$/g, "") : null;
   }
 
+  function parseYamlTextScalar(content, key) {
+    var match = content.match(new RegExp("^\\s*" + key + ":\\s*(.*?)\\s*$", "m"));
+    if (!match) return null;
+    var value = match[1].trim();
+    if (value.startsWith('"') && value.endsWith('"')) {
+      try {
+        return JSON.parse(value);
+      } catch (_error) {
+        // Leave malformed YAML text visible so validation can explain the error.
+      }
+    }
+    return value.replace(/^['"]|['"]$/g, "");
+  }
+
   function updateProviderNote(content) {
     var warning = document.getElementById("provider-warning");
     if (!warning) return;
@@ -1186,6 +1526,7 @@
     }
 
     var marker = document.getElementById("site-map-marker");
+    var nameInput = document.getElementById("site-name");
     var latInput = document.getElementById("site-lat");
     var lonInput = document.getElementById("site-lon");
     var timezoneInput = document.getElementById("site-timezone");
@@ -1230,7 +1571,12 @@
         statusEl.textContent = "Latitude must be -90..90 and longitude -180..180.";
         return;
       }
-      var payload = { content: editor.value, latitude: lat, longitude: lon };
+      var payload = {
+        content: editor.value,
+        latitude: lat,
+        longitude: lon,
+        site_name: nameInput ? nameInput.value : null,
+      };
       var startInput = document.getElementById("site-start-date");
       var endInput = document.getElementById("site-end-date");
       var startDate = startInput ? startInput.value : "";
@@ -1873,12 +2219,15 @@
   var explorerCharts = [];
   var energyExplorerChart = null;
   var explorerEventChart = null;
+  var hourlyDetailChart = null;
+  var hourlyRequestKey = "";
   var explorerPayload = null;
   var explorerIndex = -1;
   var explorerLocked = false;
   var explorerScenario = "baseline";
   var explorerMetric = "energy";
   var explorerRange = null; // [firstIndex, lastIndex] when the scrubber zooms
+  var explorerRenderFrame = null;
 
   function cssVar(name, fallback) {
     var value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -1947,10 +2296,25 @@
     return {
       animation: false,
       interaction: { mode: "index", intersect: false },
+      layout: { padding: { top: 4, right: 6, bottom: 0, left: 0 } },
       plugins: {
         legend: {
           position: "bottom",
-          labels: { color: chartInk(), usePointStyle: true, pointStyleWidth: 15 },
+          labels: {
+            color: chartInk(),
+            usePointStyle: true,
+            pointStyleWidth: 13,
+            boxHeight: 8,
+            boxWidth: 13,
+            padding: 14,
+            font: { size: 10.5 },
+          },
+        },
+        tooltip: {
+          padding: 9,
+          titleMarginBottom: 6,
+          bodySpacing: 4,
+          usePointStyle: true,
         },
       },
       scales: {
@@ -1967,6 +2331,17 @@
     };
   }
 
+  // These charts live in deliberately fixed-height instrument frames. Letting
+  // Chart.js preserve its default 2:1 aspect ratio while CSS also forces the
+  // canvas to fill the frame stretches the backing bitmap and can start a
+  // resize-observer feedback loop. Keep one owner for both dimensions.
+  function stabilizeFixedHeightChart(options) {
+    options.responsive = true;
+    options.maintainAspectRatio = false;
+    options.resizeDelay = 100;
+    return options;
+  }
+
   function registerChart(chart) {
     liveCharts.push(chart);
     return chart;
@@ -1978,7 +2353,7 @@
       var ink = chartInk();
       var grid = chartGrid();
       if (chart.options.plugins.legend.labels) chart.options.plugins.legend.labels.color = ink;
-      ["x", "y"].forEach(function (axis) {
+      Object.keys(chart.options.scales || {}).forEach(function (axis) {
         var scale = chart.options.scales[axis];
         if (!scale) return;
         if (scale.ticks) scale.ticks.color = ink;
@@ -2035,6 +2410,18 @@
 
   function energyDisplay(value) {
     return finiteDisplay(value, 1) + " kWh";
+  }
+
+  function fractionDisplay(value) {
+    return finiteDisplay(value, 4);
+  }
+
+  function litersDisplay(value) {
+    return finiteDisplay(value, 1) + " L";
+  }
+
+  function queueDisplay(value) {
+    return finiteDisplay(value, 0);
   }
 
   var explorerCursorPlugin = {
@@ -2115,24 +2502,70 @@
     var scenarios = ["baseline", "reactive", "coating"];
     scenarios.forEach(function (scenario) {
       var row = document.querySelector('[data-selected-scenario="' + scenario + '"]');
-      if (!row) return;
-      row.hidden = explorerScenario !== "compare" && scenario !== explorerScenario;
-      var actual = row.querySelector('[data-selected-field="actual"]');
-      var loss = row.querySelector('[data-selected-field="loss"]');
-      var cleanliness = row.querySelector('[data-selected-field="cleanliness"]');
-      if (actual) actual.textContent = finiteDisplay(
-        valueOnDate(explorerPayload.dailyEnergy, date, scenario), 1
-      );
-      if (loss) loss.textContent = finiteDisplay(
-        valueOnDate(explorerPayload.dailyLoss, date, scenario), 1
-      );
-      if (cleanliness) cleanliness.textContent = finiteDisplay(
-        valueOnDate(explorerPayload.dailySoiling, date, scenario), 4
-      );
+      if (row) {
+        row.hidden = explorerScenario !== "compare" && scenario !== explorerScenario;
+        var actual = row.querySelector('[data-selected-field="actual"]');
+        var loss = row.querySelector('[data-selected-field="loss"]');
+        var cleanliness = row.querySelector('[data-selected-field="cleanliness"]');
+        if (actual) actual.textContent = finiteDisplay(
+          valueOnDate(explorerPayload.dailyEnergy, date, scenario), 1
+        );
+        if (loss) loss.textContent = finiteDisplay(
+          valueOnDate(explorerPayload.dailyLoss, date, scenario), 1
+        );
+        if (cleanliness) cleanliness.textContent = finiteDisplay(
+          valueOnDate(explorerPayload.dailySoiling, date, scenario), 4
+        );
+      }
+      var operational = document.querySelector(
+        '[data-selected-operational="' + scenario + '"]'
+      ) || row;
+      if (!operational) return;
+      operational.hidden = explorerScenario !== "compare" && scenario !== explorerScenario;
+      operational.querySelectorAll(
+        '[data-selected-field="bird-loss"], [data-selected-field="bird_loss"], ' +
+        '[data-selected-field="bird"]'
+      ).forEach(function (field) {
+        field.textContent = fractionDisplay(
+          valueOnDate(explorerPayload.dailyBirdLoss, date, scenario)
+        );
+      });
+      operational.querySelectorAll(
+        '[data-selected-field="collected-water"], [data-selected-field="collected_water"], ' +
+        '[data-selected-field="water"]'
+      ).forEach(function (field) {
+        field.textContent = litersDisplay(
+          valueOnDate(explorerPayload.dailyCollectedWater, date, scenario)
+        );
+      });
+      operational.querySelectorAll(
+        '[data-selected-field="queue-length"], [data-selected-field="queue_length"], ' +
+        '[data-selected-field="queue"]'
+      ).forEach(function (field) {
+        field.textContent = queueDisplay(
+          valueOnDate(explorerPayload.dailyQueue, date, scenario)
+        );
+      });
     });
 
     var reference = valueOnDate(explorerPayload.dailyCleanReference, date);
-    if (explorerScenario === "compare") {
+    var metricSpec = explorerMetricSpec(explorerMetric);
+    if (metricSpec && ["bird", "birdloss", "bird-loss", "water",
+      "collected-water", "queue", "queue-length"].indexOf(explorerMetric) >= 0) {
+      if (explorerScenario === "compare") {
+        setExplorerText(
+          "selected-day-summary",
+          "Compare the stored " + metricSpec.summaryLabel +
+          " for each scenario on this date."
+        );
+      } else {
+        setExplorerText(
+          "selected-day-summary",
+          explorerScenario + " stored " + metricSpec.summaryLabel + " was " +
+          metricSpec.format(valueOnDate(metricSpec.data, date, explorerScenario)) + "."
+        );
+      }
+    } else if (explorerScenario === "compare") {
       setExplorerText(
         "selected-day-summary",
         "The clean reference is shared. Compare each scenario's exact loss and cleanliness gap."
@@ -2174,6 +2607,138 @@
     renderSelectedEvents(date);
   }
 
+  function hourlyLabels(timestamps) {
+    return timestamps.map(function (timestamp) {
+      var text = String(timestamp);
+      var match = text.match(/[T ](\d{2}:\d{2})/);
+      return match ? match[1] : text;
+    });
+  }
+
+  function ensureHourlyCanvas() {
+    var canvas = document.getElementById("hourly-detail-chart");
+    if (canvas) return canvas;
+    var host = document.getElementById("hourly-detail");
+    if (!host) return null;
+    canvas = document.createElement("canvas");
+    canvas.id = "hourly-detail-chart";
+    canvas.height = 135;
+    canvas.setAttribute("role", "img");
+    canvas.setAttribute(
+      "aria-label",
+      "Stored hourly weather and clean-reference energy for the locked day"
+    );
+    canvas.dataset.auditSource = "weather_hourly.csv + clean_energy_hourly.csv";
+    host.appendChild(canvas);
+    return canvas;
+  }
+
+  function hourlyDataset(label, values, color, axis, dash) {
+    return {
+      label: label,
+      data: values || [],
+      borderColor: color,
+      backgroundColor: "transparent",
+      pointRadius: 0,
+      borderWidth: 1.4,
+      borderDash: dash || [],
+      tension: 0,
+      yAxisID: axis,
+    };
+  }
+
+  function drawHourlyDetail(payload) {
+    var canvas = ensureHourlyCanvas();
+    if (!canvas || typeof Chart === "undefined") return;
+    var datasets = [
+      hourlyDataset("GHI (W/m²)", payload.ghi_w_m2, "#c07f0e", "yGhi"),
+      hourlyDataset("Air temperature (°C)", payload.temp_air_c, "#a3453c", "yTemp"),
+      hourlyDataset("Wind (m/s)", payload.wind_speed_m_s, "#2f7d5c", "yWind"),
+      hourlyDataset("Relative humidity (%)", payload.relative_humidity_pct, "#2f7fa3", "yHumidity"),
+      hourlyDataset(
+        "Clean reference (kWh)", payload.clean_ac_energy_kwh,
+        chartInk(), "yEnergy", [7, 4]
+      ),
+    ];
+    var options = baseOptions("");
+    options.maintainAspectRatio = false;
+    options.interaction = { mode: "index", intersect: false };
+    options.scales = {
+      x: {
+        ticks: { maxTicksLimit: 12, font: { size: 11 }, color: chartInk() },
+        grid: { color: chartGrid() },
+        title: { display: true, text: "Site-local hour", font: { size: 11 }, color: chartInk() },
+      },
+      yGhi: {
+        type: "linear", position: "left", beginAtZero: true,
+        title: { display: true, text: "GHI (W/m²)", font: { size: 11 }, color: chartInk() },
+        ticks: { font: { size: 11 }, color: chartInk() },
+        grid: { color: chartGrid() },
+      },
+      yEnergy: {
+        type: "linear", position: "right", beginAtZero: true,
+        title: {
+          display: true, text: "Clean reference (kWh)",
+          font: { size: 11 }, color: chartInk(),
+        },
+        ticks: { font: { size: 11 }, color: chartInk() },
+        grid: { drawOnChartArea: false },
+      },
+      yTemp: { type: "linear", position: "right", display: false },
+      yWind: { type: "linear", position: "right", display: false, beginAtZero: true },
+      yHumidity: {
+        type: "linear", position: "right", display: false, min: 0, max: 100,
+      },
+    };
+    if (hourlyDetailChart) {
+      hourlyDetailChart.data.labels = hourlyLabels(payload.timestamps || []);
+      hourlyDetailChart.data.datasets = datasets;
+      hourlyDetailChart.options = options;
+      hourlyDetailChart.update();
+    } else {
+      hourlyDetailChart = registerChart(new Chart(canvas, {
+        type: "line",
+        data: { labels: hourlyLabels(payload.timestamps || []), datasets: datasets },
+        options: options,
+      }));
+    }
+    addChartDownloads();
+  }
+
+  function loadHourlyDetail(date) {
+    var host = document.getElementById("hourly-detail");
+    var status = document.getElementById("hourly-detail-status");
+    var runId = currentRunId();
+    if (!host || !runId) return;
+    host.hidden = false;
+    if (status) status.textContent = "Loading stored hourly weather + clean reference…";
+    var requestKey = runId + "|" + date;
+    hourlyRequestKey = requestKey;
+    fetch(
+      "/api/runs/" + encodeURIComponent(runId) + "/hourly/" + encodeURIComponent(date)
+    )
+      .then(function (response) {
+        if (!response.ok) {
+          return response.json().catch(function () { return {}; }).then(function (payload) {
+            throw new Error(payload.detail || ("HTTP " + response.status));
+          });
+        }
+        return response.json();
+      })
+      .then(function (payload) {
+        if (hourlyRequestKey !== requestKey) return;
+        drawHourlyDetail(payload);
+        if (status) {
+          status.textContent = "Stored hourly weather + clean reference · " +
+            (payload.timestamps || []).length + " rows · no scenario hourly energy.";
+        }
+      })
+      .catch(function (error) {
+        if (hourlyRequestKey !== requestKey) return;
+        if (status) status.textContent = "Hourly detail unavailable: " + error.message;
+      });
+  }
+
   function updateFollowHoverButton() {
     var button = document.getElementById("follow-hover-button");
     if (!button) return;
@@ -2188,12 +2753,24 @@
     if (lockSelection) explorerLocked = true;
     if (nextIndex === explorerIndex && !lockSelection) return;
     explorerIndex = nextIndex;
-    explorerCharts.forEach(function (chart) {
-      chart.$explorerIndex = nextIndex;
-      chart.draw();
-    });
     updateFollowHoverButton();
-    renderSelectedDay();
+
+    // Pointer events can arrive much faster than the browser paints. Coalesce
+    // the aligned-cursor and selected-day work into one render per frame so
+    // hovering one track does not synchronously redraw every chart many times.
+    if (explorerRenderFrame === null) {
+      explorerRenderFrame = window.requestAnimationFrame(function () {
+        explorerRenderFrame = null;
+        explorerCharts.forEach(function (chart) {
+          chart.$explorerIndex = explorerIndex;
+          chart.draw();
+        });
+        renderSelectedDay();
+      });
+    }
+    if (lockSelection) {
+      loadHourlyDetail(explorerPayload.dailyEnergy.dates[nextIndex]);
+    }
   }
 
   function explorerIndexFromEvent(chart, event) {
@@ -2413,7 +2990,7 @@
     renderSelectedDay();
   }
 
-  // One instrument, four stored metrics: the switcher redraws the same chart
+  // One instrument, stored metrics only: the switcher redraws the same chart
   // from a different stored daily column. Column selection only.
   function explorerMetricSpec(metric) {
     if (!explorerPayload) return null;
@@ -2440,6 +3017,55 @@
         data: explorerPayload.dailyCumGain,
         yLabel: "Cumulative gain vs baseline (kWh)",
         format: energyDisplay,
+        showReference: false,
+      },
+      bird: {
+        data: explorerPayload.dailyBirdLoss,
+        yLabel: "Bird-dropping loss fraction",
+        format: fractionDisplay,
+        summaryLabel: "bird-dropping loss fraction",
+        showReference: false,
+      },
+      birdloss: {
+        data: explorerPayload.dailyBirdLoss,
+        yLabel: "Bird-dropping loss fraction",
+        format: fractionDisplay,
+        summaryLabel: "bird-dropping loss fraction",
+        showReference: false,
+      },
+      "bird-loss": {
+        data: explorerPayload.dailyBirdLoss,
+        yLabel: "Bird-dropping loss fraction",
+        format: fractionDisplay,
+        summaryLabel: "bird-dropping loss fraction",
+        showReference: false,
+      },
+      water: {
+        data: explorerPayload.dailyCollectedWater,
+        yLabel: "Actually collected water (L/day)",
+        format: litersDisplay,
+        summaryLabel: "actually collected water",
+        showReference: false,
+      },
+      "collected-water": {
+        data: explorerPayload.dailyCollectedWater,
+        yLabel: "Actually collected water (L/day)",
+        format: litersDisplay,
+        summaryLabel: "actually collected water",
+        showReference: false,
+      },
+      queue: {
+        data: explorerPayload.dailyQueue,
+        yLabel: "Inspection queue length",
+        format: queueDisplay,
+        summaryLabel: "inspection queue length",
+        showReference: false,
+      },
+      "queue-length": {
+        data: explorerPayload.dailyQueue,
+        yLabel: "Inspection queue length",
+        format: queueDisplay,
+        summaryLabel: "inspection queue length",
         showReference: false,
       },
     };
@@ -2486,6 +3112,7 @@
     }
     energyExplorerChart.$metricFormat = spec.format;
     energyExplorerChart.update();
+    renderSelectedDay();
   }
 
   // The full-width fingerprint doubles as the explorer's scrubber: drag a
@@ -2701,11 +3328,299 @@
     render();
   }
 
+  function firstChartCanvas(ids) {
+    for (var index = 0; index < ids.length; index += 1) {
+      var canvas = document.getElementById(ids[index]);
+      if (canvas) return canvas;
+    }
+    return null;
+  }
+
+  function storedSeries(source) {
+    if (!source) return {};
+    if (source.series && typeof source.series === "object") return source.series;
+    if (Array.isArray(source.values)) return { stored: source.values };
+    if (Array.isArray(source)) return { stored: source };
+    return {};
+  }
+
+  function storedDates(panel, sources) {
+    if (panel && Array.isArray(panel.dates)) return panel.dates;
+    for (var index = 0; index < sources.length; index += 1) {
+      if (sources[index] && Array.isArray(sources[index].dates)) return sources[index].dates;
+    }
+    return [];
+  }
+
+  function seriesColor(seriesName, fallback) {
+    return ["baseline", "reactive", "coating"].indexOf(seriesName) >= 0
+      ? scenarioColor(seriesName) : fallback;
+  }
+
+  function appendStoredDatasets(target, source, label, color, dash, axis) {
+    var series = storedSeries(source);
+    Object.keys(series).forEach(function (seriesName) {
+      var scenarioNamed = ["baseline", "reactive", "coating"].indexOf(seriesName) >= 0;
+      target.push({
+        label: (scenarioNamed ? strategyAxisLabel(seriesName) + " · " : "") + label,
+        _scenario: scenarioNamed ? seriesName : null,
+        data: series[seriesName],
+        borderColor: seriesColor(seriesName, color),
+        backgroundColor: "transparent",
+        pointRadius: 0,
+        borderWidth: 1.5,
+        borderDash: dash || [],
+        tension: 0,
+        yAxisID: axis || "y",
+      });
+    });
+  }
+
+  function drawStoredLineChart(canvas, labels, datasets, yLabel, extraOptions) {
+    if (!canvas || !datasets.length || typeof Chart === "undefined" ||
+        canvas.dataset.chartBound) return null;
+    canvas.dataset.chartBound = "true";
+    var options = stabilizeFixedHeightChart(baseOptions(yLabel));
+    if (extraOptions) extraOptions(options);
+    return registerChart(new Chart(canvas, {
+      type: "line",
+      data: { labels: labels, datasets: datasets },
+      options: options,
+    }));
+  }
+
+  // Detection instruments display the stored daily extensions as-is. In
+  // particular, no daily confusion counts are added into synthetic annual
+  // totals here.
+  function drawDetectionPerformance(panel) {
+    if (!panel) return;
+    var missed = panel.missed || panel.missedKwh || panel.missed_kwh ||
+      panel.missed_energy_impact_kwh;
+    var recovered = panel.recovered || panel.recoveredKwh || panel.recovered_kwh ||
+      panel.recovered_loss_estimated_kwh;
+    var queue = panel.queue || panel.queueLength || panel.queue_length;
+    var backlog = panel.backlog || panel.backlogLength || panel.backlog_length;
+    var cancelled = panel.weatherCancelled || panel.weather_cancelled ||
+      panel.weather_cancelled_flight;
+    var dates = storedDates(panel, [missed, recovered, queue, backlog, cancelled]);
+
+    var energyDatasets = [];
+    appendStoredDatasets(energyDatasets, missed, "Missed contamination impact (kWh)",
+      "#a3453c", [5, 3]);
+    appendStoredDatasets(energyDatasets, recovered, "Recovered loss (kWh)",
+      "#2f7d5c", []);
+    drawStoredLineChart(
+      firstChartCanvas([
+        "detection-energy-chart", "detection-performance-energy-chart",
+        "detection-missed-recovered-chart",
+      ]),
+      dates, energyDatasets, "Stored daily energy impact (kWh)"
+    );
+
+    var queueDatasets = [];
+    appendStoredDatasets(queueDatasets, queue, "Queue", "#c07f0e", []);
+    appendStoredDatasets(queueDatasets, backlog, "Backlog", "#7b5aa6", [5, 3]);
+    var cancellationSeries = storedSeries(cancelled);
+    Object.keys(cancellationSeries).forEach(function (seriesName) {
+      var scenarioNamed = ["baseline", "reactive", "coating"].indexOf(seriesName) >= 0;
+      queueDatasets.push({
+        label: (scenarioNamed ? strategyAxisLabel(seriesName) + " · " : "") +
+          "Weather-cancelled flight",
+        _scenario: scenarioNamed ? seriesName : null,
+        data: cancellationSeries[seriesName].map(function (value) {
+          var cancelledValue = value === true || value === 1 ||
+            String(value).toLowerCase() === "true";
+          return cancelledValue ? 1 : null;
+        }),
+        borderColor: "#2f7fa3",
+        backgroundColor: "#2f7fa3",
+        showLine: false,
+        pointRadius: 4,
+        pointStyle: "rectRot",
+        yAxisID: "yCancel",
+      });
+    });
+    drawStoredLineChart(
+      firstChartCanvas([
+        "detection-queue-chart", "detection-performance-queue-chart",
+        "detection-queue-backlog-chart",
+      ]),
+      dates, queueDatasets, "Stored queue / backlog length", function (options) {
+        options.scales.y.beginAtZero = true;
+        options.scales.yCancel = {
+          display: false, min: 0, max: 1, position: "right",
+          grid: { drawOnChartArea: false },
+        };
+      }
+    );
+  }
+
+  function flatStoredValues(source, preferredSeries) {
+    var series = storedSeries(source);
+    if (preferredSeries && Array.isArray(series[preferredSeries])) {
+      return series[preferredSeries];
+    }
+    var names = Object.keys(series);
+    return names.length ? series[names[0]] : [];
+  }
+
+  function drawCoatingServiceLife(panel) {
+    if (!panel) return;
+    var age = panel.age || panel.ageDays || panel.age_days;
+    var effectiveness = panel.effectiveness || panel.effectivenessFraction ||
+      panel.effectiveness_fraction;
+    var optical = panel.opticalEffect || panel.optical_effect_kwh;
+    var temperature = panel.temperatureEffect || panel.temperature_effect_kwh;
+    var cleanliness = panel.cleanlinessEffect || panel.cleanliness_effect_kwh;
+    var dewPoint = panel.dewPoint || panel.dew_point_c;
+    var surface = panel.surfaceTemperature || panel.coated_surface_temperature_c;
+    var water = panel.collectedWater || panel.actually_collected_water_liters;
+    var dates = storedDates(panel, [
+      age, effectiveness, optical, temperature, cleanliness, dewPoint, surface, water,
+    ]);
+
+    var ageValues = flatStoredValues(age, "coating");
+    var effectivenessValues = flatStoredValues(effectiveness, "coating");
+    var lifeCanvas = firstChartCanvas([
+      "coating-effectiveness-chart", "coating-service-life-chart",
+    ]);
+    if (lifeCanvas && ageValues.length && effectivenessValues.length &&
+        typeof Chart !== "undefined" && !lifeCanvas.dataset.chartBound) {
+      lifeCanvas.dataset.chartBound = "true";
+      var lifeOptions = stabilizeFixedHeightChart(baseOptions("Effectiveness"));
+      lifeOptions.scales.x.type = "linear";
+      lifeOptions.scales.x.beginAtZero = true;
+      lifeOptions.scales.x.title = {
+        display: true, text: "Stored coating age (days)",
+        font: { size: 11 }, color: chartInk(),
+      };
+      lifeOptions.scales.x.ticks.precision = 0;
+      // Keep near-100% traces readable without hiding a genuinely lower
+      // stored value: suggestedMin yields to the data when it falls below 90%.
+      lifeOptions.scales.y.suggestedMin = 0.9;
+      lifeOptions.scales.y.max = 1;
+      lifeOptions.scales.y.ticks.callback = function (value) {
+        return Math.round(Number(value) * 100) + "%";
+      };
+      lifeOptions.plugins.tooltip.callbacks = {
+        label: function (context) {
+          return "Effectiveness: " + finiteDisplay(context.parsed.y * 100, 2) + "%";
+        },
+        title: function (items) {
+          return items.length ? "Coating age " + finiteDisplay(items[0].parsed.x, 0) + " days" : "";
+        },
+      };
+      registerChart(new Chart(lifeCanvas, {
+        type: "line",
+        data: {
+          datasets: [{
+            label: "Coating effectiveness",
+            _scenario: "coating",
+            data: effectivenessValues.map(function (value, index) {
+              return { x: ageValues[index], y: value };
+            }),
+            borderColor: scenarioColor("coating"),
+            backgroundColor: cssVar("--surface", "#fff"),
+            pointRadius: effectivenessValues.length <= 31 ? 2.5 : 0,
+            pointHoverRadius: 4,
+            borderWidth: 1.8,
+            tension: 0,
+          }],
+        },
+        options: lifeOptions,
+      }));
+    }
+
+    var effectDatasets = [];
+    appendStoredDatasets(effectDatasets, optical, "Optical effect", "#7b5aa6", []);
+    appendStoredDatasets(
+      effectDatasets, temperature, "Temperature effect", "#a3453c", []
+    );
+    appendStoredDatasets(
+      effectDatasets, cleanliness, "Cleanliness effect", "#2f7d5c", []
+    );
+    drawStoredLineChart(
+      firstChartCanvas(["coating-effects-chart", "coating-energy-effects-chart"]),
+      dates, effectDatasets, "Stored daily effect (kWh)"
+    );
+
+    var dewDatasets = [];
+    appendStoredDatasets(dewDatasets, dewPoint, "Dew point (°C)", "#2f7fa3", [], "y");
+    appendStoredDatasets(
+      dewDatasets, surface, "Coated surface (°C)", "#a3453c", [], "y"
+    );
+    appendStoredDatasets(
+      dewDatasets, water, "Actually collected water (L)", "#2f7d5c", [], "yWater"
+    );
+    drawStoredLineChart(
+      firstChartCanvas(["coating-dew-margin-chart", "coating-dew-chart"]),
+      dates, dewDatasets, "Stored nighttime temperature (°C)", function (options) {
+        if (Object.keys(storedSeries(water)).length) {
+          options.scales.yWater = {
+            type: "linear", position: "right", beginAtZero: true,
+            title: {
+              display: true, text: "Collected water (L)",
+              font: { size: 11 }, color: chartInk(),
+            },
+            ticks: { font: { size: 11 }, color: chartInk() },
+            grid: { drawOnChartArea: false },
+          };
+        }
+      }
+    );
+  }
+
+  // Small extension hook for future display-only stored-series charts. A
+  // payload entry supplies Chart.js datasets and labels; this helper only
+  // applies the dashboard's common axes and typography.
+  function drawGenericCharts(payload) {
+    var charts = payload && (payload.genericCharts || payload.charts);
+    if (!charts || typeof charts !== "object" || typeof Chart === "undefined") return;
+    Object.keys(charts).forEach(function (key) {
+      var spec = charts[key];
+      if (!spec) return;
+      var canvas = document.getElementById(spec.canvasId || spec.canvas_id || key);
+      if (!canvas || canvas.dataset.chartBound || !Array.isArray(spec.datasets)) return;
+      canvas.dataset.chartBound = "true";
+      var options = baseOptions(spec.yLabel || spec.y_label || "");
+      if (spec.xLabel || spec.x_label) {
+        options.scales.x.title = {
+          display: true, text: spec.xLabel || spec.x_label,
+          font: { size: 11 }, color: chartInk(),
+        };
+      }
+      var datasets = spec.datasets.map(function (dataset) {
+        var copy = Object.assign({}, dataset);
+        if (copy.scenario) {
+          copy._scenario = copy.scenario;
+          copy.borderColor = copy.borderColor || scenarioColor(copy.scenario);
+          copy.backgroundColor = copy.backgroundColor || "transparent";
+          copy.pointStyle = copy.pointStyle || strategyPointStyle(copy.scenario);
+        }
+        return copy;
+      });
+      registerChart(new Chart(canvas, {
+        type: spec.type || "line",
+        data: {
+          labels: spec.labels || spec.dates || [],
+          datasets: datasets,
+        },
+        options: options,
+      }));
+    });
+  }
+
   // Offer a PNG export next to each standalone chart. The image is exactly
   // the rendered canvas on the theme's surface colour — no data is re-read.
   var _downloadableCharts = [
-    "daily-energy-chart", "annual-cost-chart", "mc-trials-chart", "mc-win-chart",
+    "daily-energy-chart", "mc-trials-chart", "mc-win-chart",
     "mc-benefit-chart", "tornado-chart", "breakeven-chart",
+    "detection-energy-chart", "detection-performance-energy-chart",
+    "detection-missed-recovered-chart", "detection-queue-chart",
+    "detection-performance-queue-chart", "detection-queue-backlog-chart",
+    "coating-effectiveness-chart", "coating-service-life-chart",
+    "coating-effects-chart", "coating-energy-effects-chart",
+    "coating-dew-margin-chart", "coating-dew-chart", "hourly-detail-chart",
   ];
   function addChartDownloads() {
     _downloadableCharts.forEach(function (id) {
@@ -2715,7 +3630,8 @@
       var button = document.createElement("button");
       button.type = "button";
       button.className = "chart-download";
-      button.textContent = "download chart PNG";
+      button.textContent = "Export PNG";
+      button.setAttribute("aria-label", "Export " + id.replaceAll("-", " ") + " as PNG");
       button.addEventListener("click", function () {
         var out = document.createElement("canvas");
         out.width = canvas.width;
@@ -2729,7 +3645,9 @@
         link.download = (document.title.split(" · ")[0] || "solarclean") + "-" + id + ".png";
         link.click();
       });
-      var host = canvas.closest(".energy-main-chart") || canvas;
+      var host = canvas.closest(
+        ".energy-main-chart, .record-chart-frame, .hourly-chart-frame"
+      ) || canvas;
       host.insertAdjacentElement("afterend", button);
     });
   }
@@ -2739,28 +3657,30 @@
   window.drawComparisonCharts = function () {
     applyChartTypography();
     var payload = window.solarcleanCharts || {};
+    payload.dailyBirdLoss = payload.dailyBirdLoss || payload.dailyBirdLossFraction;
+    payload.dailyCollectedWater = payload.dailyCollectedWater || payload.dailyWaterCollected;
+    payload.dailyQueue = payload.dailyQueue || payload.dailyQueueLength;
     initDustCalendars(payload);
     drawEnergyExplorer(payload);
+    drawDetectionPerformance(payload.detectionPerformance || payload.detection || {
+      missed: payload.dailyMissedEnergyImpact,
+      recovered: payload.dailyRecoveredLoss,
+      queue: payload.dailyQueue,
+      backlog: payload.dailyBacklog,
+      weatherCancelled: payload.dailyWeatherCancelled,
+    });
+    drawCoatingServiceLife(payload.coatingServiceLife || payload.coatingService || {
+      age: payload.dailyCoatingAge,
+      effectiveness: payload.dailyCoatingEffectiveness,
+      opticalEffect: payload.dailyOpticalEffect,
+      temperatureEffect: payload.dailyTemperatureEffect,
+      cleanlinessEffect: payload.dailyCleanlinessEffect,
+      dewPoint: payload.dailyCoatingDewPoint,
+      surfaceTemperature: payload.dailyCoatedSurfaceTemperature,
+      collectedWater: payload.dailyCollectedWater,
+    });
+    drawGenericCharts(payload);
     addChartDownloads();
-    var bars = payload.annualCostBars;
-    var canvas = document.getElementById("annual-cost-chart");
-    if (bars && canvas && typeof Chart !== "undefined") {
-      var metricColors = ["#2f7d5c", "#8a5a10", "#a3453c", "#16405b"];
-      registerChart(new Chart(canvas, {
-        type: "bar",
-        data: {
-          labels: bars.scenarios.map(strategyAxisLabel),
-          datasets: bars.metrics.map(function (metric, i) {
-            return {
-              label: metric.label,
-              data: metric.values,
-              backgroundColor: metricColors[i % metricColors.length],
-            };
-          }),
-        },
-        options: baseOptions("SAR/year"),
-      }));
-    }
   };
 
   // Analysis results pages: charts of stored artifact values only.

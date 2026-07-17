@@ -33,8 +33,7 @@ from solarclean.application.comparison import (
 from solarclean.config.models import SolarCleanConfig
 from solarclean.domain.calibration.parameter_overrides import (
     ParameterOverrideSpec,
-    apply_config_override,
-    apply_economics_override,
+    apply_parameter_override,
     build_parameter_catalog,
 )
 from solarclean.domain.calibration.registry import ParameterRegistry
@@ -159,11 +158,12 @@ def _apply_override(
     spec: ParameterOverrideSpec,
     value: float,
 ) -> tuple[SolarCleanConfig, ParameterRegistry]:
-    if spec.kind == "config":
-        updated = apply_config_override(base_config, spec, value)
-        validated = SolarCleanConfig.model_validate(updated.model_dump(mode="python"))
-        return validated, base_registry
-    return base_config, apply_economics_override(base_registry, spec, value)
+    return apply_parameter_override(
+        config=base_config,
+        registry=base_registry,
+        spec=spec,
+        value=value,
+    )
 
 
 def _run_variant(

@@ -232,6 +232,41 @@ def test_weather_cache_round_trips_dataset(tmp_path: Path) -> None:
     assert cached.metadata["provider"] == "fixture"
 
 
+def test_weather_cache_round_trips_across_dst_transition(tmp_path: Path) -> None:
+    index = pd.date_range(
+        "2025-03-29T00:00:00",
+        "2025-03-31T23:00:00",
+        freq="h",
+        tz="Europe/Berlin",
+    )
+    dataset = WeatherDataset(
+        hourly=_canonical_frame(index),
+        metadata={"provider": "test"},
+    )
+    cache = WeatherCache(tmp_path)
+
+    cache.write_normalized("berlin-dst", dataset)
+    cached = cache.read_normalized("berlin-dst")
+
+    assert cached is not None
+    pd.testing.assert_frame_equal(cached.hourly, dataset.hourly)
+    assert cached.hourly.index.tz == dataset.hourly.index.tz
+
+
+def test_weather_cache_returns_none_for_unparseable_timestamp(tmp_path: Path) -> None:
+    cache = WeatherCache(tmp_path)
+    (tmp_path / "corrupt.normalized.csv").write_text(
+        "timestamp,ghi_w_m2\nnot-a-timestamp,0\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "corrupt.metadata.json").write_text(
+        json.dumps({"index_timezone": "Europe/Berlin"}),
+        encoding="utf-8",
+    )
+
+    assert cache.read_normalized("corrupt") is None
+
+
 def test_weather_cache_schema_invalidates_legacy_normalized_files(tmp_path: Path) -> None:
     request = _request()
     cache = WeatherCache(tmp_path)

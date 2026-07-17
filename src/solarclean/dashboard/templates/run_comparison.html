@@ -16,6 +16,53 @@
 
 {% include "_certification.html" %}
 
+{% if calibration_priority %}
+<section class="calibration-priority" id="calibration-priority"
+         aria-labelledby="calibration-priority-title">
+  <div class="calibration-priority-heading">
+    <div>
+      <span class="certification-kicker">CALIBRATION PRIORITY / أولوية المعايرة</span>
+      <h2 id="calibration-priority-title">Where to spend calibration effort</h2>
+    </div>
+    <p>Weak-evidence parameters ranked by their stored same-study sensitivity swing. Validating
+      these inputs would most directly improve the recommendation’s evidence tier.</p>
+  </div>
+  {% if calibration_priority.rows %}
+  <div class="scroll-x">
+    <table class="data-table calibration-priority-table">
+      <thead><tr><th>#</th><th>Parameter</th><th>Evidence</th><th>Uncertain range</th>
+        <th class="num">Stored swing</th></tr></thead>
+      <tbody>
+        {% for row in calibration_priority.rows %}
+        <tr data-audit-source="{{ row.audit_source }}"
+            data-audit-detail="Display-only join of the recommendation's weak-evidence list and the newest same-study one-way sensitivity ranking.">
+          <td class="mono">{{ loop.index }}</td>
+          <th scope="row"><code>{{ row.parameter_name }}</code></th>
+          <td><span class="chip chip-evidence">{{ row.evidence_status }}</span></td>
+          <td class="mono">{{ row.uncertainty_range }}</td>
+          <td class="num mono">{{ row.swing_sar | sar }} SAR</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if calibration_priority.run_id %}
+  <p class="hint">Sensitivity ranking:
+    <a class="mono" href="/run/{{ calibration_priority.run_id }}">{{ calibration_priority.run_id }}</a>.
+    No values were recomputed on this page.</p>
+  {% endif %}
+  {% else %}
+  {% if calibration_priority.missing_sensitivity %}
+  <p class="calibration-nudge">No same-study one-way sensitivity run exists yet. Launch one to
+    rank the low-confidence inputs by stored outcome swing.</p>
+  {% else %}
+  <p class="calibration-nudge">The newest same-study one-way run did not sweep any parameter in
+    this recommendation’s stored weak-evidence list. Re-run the sweep with those inputs selected.</p>
+  {% endif %}
+  {% endif %}
+</section>
+{% endif %}
+
 <div class="run-head run-command-bar">
   <a class="quiet-link run-back-link" href="/">&larr; back to runs</a>
   <span class="run-head-actions">
@@ -36,8 +83,9 @@
   {% if kpi_table %}<a href="#annual-kpis">Annual KPIs</a>{% endif %}
   {% if water_balance %}<a href="#water-balance">Water balance</a>{% endif %}
   {% if dew_simulator %}<a href="#dew-simulator">Dew simulator</a>{% endif %}
+  {% if coating_service_life %}<a href="#coating-service-life">Coating service life</a>{% endif %}
+  {% if detection_performance %}<a href="#detection-performance">Detection</a>{% endif %}
   {% if daily_energy %}<a href="#energy-explorer">Daily explorer</a>{% endif %}
-  {% if annual_cost_bars %}<a href="#annual-chart">Annual money</a>{% endif %}
   {% if cost_table %}<a href="#cost-components">Costs</a>{% endif %}
   <a href="#artifact-files">Artifacts</a>
 </nav>
@@ -391,6 +439,54 @@
 </section>
 {% endif %}
 
+{% if coating_service_life %}
+<section class="panel service-life-panel" id="coating-service-life">
+  <div class="instrument-section-heading">
+    <div>
+      <span class="eyebrow">Stored annual operating trace</span>
+      <h2>Coating service life</h2>
+    </div>
+    <p>Age, effectiveness, energy effects, and overnight condensation are date-aligned stored
+      coating outputs. The charts do not extrapolate service life or recompute physics.</p>
+  </div>
+  <div class="service-life-grid">
+    <figure class="record-chart record-chart-wide"
+            data-audit-source="scenario_daily_summary.csv · coating.extension_coating_age_days + extension_coating_effectiveness_fraction">
+      <figcaption><strong>Effectiveness vs age</strong>
+        <span>Does the stored coating response persist through year-end?</span></figcaption>
+      <div class="record-chart-frame">
+        <canvas id="coating-effectiveness-chart" height="92" role="img"
+                aria-label="Line chart of stored coating effectiveness fraction and coating age across the run"
+                data-audit-source="scenario_daily_summary.csv · coating age and effectiveness columns"></canvas>
+      </div>
+    </figure>
+    <figure class="record-chart record-chart-wide"
+            data-audit-source="scenario_daily_summary.csv · coating optical, temperature, and cleanliness effect kWh columns">
+      <figcaption><strong>Stored energy-effect decomposition</strong>
+        <span>Optical, temperature, and cleanliness effects · kWh/day</span></figcaption>
+      <div class="record-chart-frame">
+        <canvas id="coating-effects-chart" height="92" role="img"
+                aria-label="Date-aligned chart of the stored optical, temperature, and cleanliness coating energy effects"
+                data-audit-source="scenario_daily_summary.csv · coating energy-effect columns"></canvas>
+      </div>
+    </figure>
+    <figure class="record-chart record-chart-wide"
+            data-audit-source="scenario_daily_summary.csv · coating dew point, coated surface temperature, and collected water columns">
+      <figcaption><strong>Dew margin and collection</strong>
+        <span>Stored dew point and coated-surface temperature; collection remains a stored trace</span></figcaption>
+      <div class="record-chart-frame">
+        <canvas id="coating-dew-margin-chart" height="92" role="img"
+                aria-label="Date-aligned track of stored dew point, coated-surface temperature, and actually collected water"
+                data-audit-source="scenario_daily_summary.csv · coating nightly dew and collection columns"></canvas>
+      </div>
+    </figure>
+  </div>
+  <p class="hint">Source:
+    <a href="/api/runs/{{ run_id }}/artifact/scenario_daily_summary.csv">scenario_daily_summary.csv</a>.
+    Lines connect stored daily values only.</p>
+</section>
+{% endif %}
+
 {% if daily_soiling %}
 <details class="panel dust-calendar-panel">
   <summary>Strategy rhythm · {{ daily_soiling.dates | length }}-day dust calendars</summary>
@@ -409,8 +505,60 @@
 </details>
 {% endif %}
 
+{% if detection_performance %}
+<section class="panel detection-panel" id="detection-performance">
+  <div class="instrument-section-heading">
+    <div>
+      <span class="eyebrow">Reactive inspection record</span>
+      <h2>Detection performance</h2>
+    </div>
+    <p>Did the drones see actionable contamination, and did the resulting work queue recover
+      energy? Annual counts stay separate from the stored daily detection fields.</p>
+  </div>
+  {% if detection_performance.annual_rows %}
+  <div class="detection-facts" aria-label="Stored annual reactive operation counts">
+    {% for row in detection_performance.annual_rows %}
+    <article data-audit-source="{{ row.audit_source }}"
+             data-audit-detail="Stored annual operational counts; daily true/false detections are not summed into annual confusion totals.">
+      <h3>{{ strategy_label(row.scenario_id) }}</h3>
+      <dl>
+        <div><dt>Whole-farm surveys</dt><dd class="mono">{{ row.survey_count | display_number }}</dd></div>
+        <div><dt>Cleaning dispatches</dt><dd class="mono">{{ row.dispatch_count | display_number }}</dd></div>
+        <div><dt>Panels cleaned</dt><dd class="mono">{{ row.panels_cleaned | display_number }}</dd></div>
+      </dl>
+    </article>
+    {% endfor %}
+  </div>
+  {% endif %}
+  <div class="detection-chart-grid">
+    <figure class="record-chart"
+            data-audit-source="scenario_daily_summary.csv · reactive missed contamination energy impact + recovered loss kWh">
+      <figcaption><strong>Missed vs recovered energy</strong><span>kWh/day · stored daily tracks</span></figcaption>
+      <div class="record-chart-frame">
+        <canvas id="detection-energy-chart" height="94" role="img"
+                aria-label="Date-aligned chart of stored missed contamination impact and recovered loss energy"
+                data-audit-source="scenario_daily_summary.csv · reactive missed and recovered kWh columns"></canvas>
+      </div>
+    </figure>
+    <figure class="record-chart"
+            data-audit-source="scenario_daily_summary.csv · reactive queue length, backlog length, and weather cancelled flight">
+      <figcaption><strong>Queue and inspection backlog</strong>
+        <span>Daily counts · ticks mark stored weather-cancelled flights</span></figcaption>
+      <div class="record-chart-frame">
+        <canvas id="detection-queue-chart" height="94" role="img"
+                aria-label="Date-aligned chart of reactive queue and inspection backlog with weather-cancellation ticks"
+                data-audit-source="scenario_daily_summary.csv · reactive queue, backlog, and cancellation columns"></canvas>
+      </div>
+    </figure>
+  </div>
+  <p class="hint"><strong>Boundary:</strong> daily TP/FP/FN fields are read as daily diagnostics.
+    They are not added into annual confusion totals because no annual confusion-total artifact is
+    stored.</p>
+</section>
+{% endif %}
+
 {% if daily_energy %}
-<section class="panel energy-explorer" id="energy-explorer">
+<section class="panel energy-explorer" id="energy-explorer" data-run-id="{{ run_id }}">
   <div class="energy-explorer-heading">
     <div>
       <h2>Daily explorer</h2>
@@ -432,6 +580,18 @@
         {% if daily_cumgain %}
         <button type="button" class="metric-choice" data-energy-metric="cumgain"
           aria-pressed="false">Cumulative gain</button>
+        {% endif %}
+        {% if daily_bird_loss %}
+        <button type="button" class="metric-choice" data-energy-metric="bird-loss"
+          aria-pressed="false">Bird loss</button>
+        {% endif %}
+        {% if daily_water_collected %}
+        <button type="button" class="metric-choice" data-energy-metric="collected-water"
+          aria-pressed="false">Dew harvest</button>
+        {% endif %}
+        {% if daily_queue %}
+        <button type="button" class="metric-choice" data-energy-metric="queue"
+          aria-pressed="false">Queue</button>
         {% endif %}
       </div>
       <div class="scenario-picker" role="group" aria-label="Energy scenario">
@@ -510,7 +670,8 @@
       </div>
 
       <table class="selected-scenario-table">
-        <thead><tr><th>Scenario</th><th>Actual</th><th>Loss</th><th>Cleanliness</th></tr></thead>
+        <thead><tr><th>Scenario</th><th>Actual</th><th>Loss</th><th>Cleanliness</th>
+          <th>Bird loss</th><th>Dew water</th><th>Queue</th></tr></thead>
         <tbody>
           {% for scenario in ["baseline", "reactive", "coating"] %}
           <tr data-selected-scenario="{{ scenario }}">
@@ -518,6 +679,9 @@
             <td data-selected-field="actual">–</td>
             <td data-selected-field="loss">–</td>
             <td data-selected-field="cleanliness">–</td>
+            <td data-selected-field="bird-loss">–</td>
+            <td data-selected-field="collected-water">–</td>
+            <td data-selected-field="queue">–</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -541,21 +705,34 @@
         environmental values are context, not independent causal attribution.</p>
     </aside>
   </div>
+  <section class="hourly-detail" id="hourly-detail" data-run-id="{{ run_id }}"
+           data-audit-source="weather_hourly.csv + clean_energy_hourly.csv · selected local date"
+           aria-labelledby="hourly-detail-title">
+    <div class="hourly-detail-heading">
+      <div>
+        <span class="eyebrow">Click-locked date follow-up</span>
+        <h3 id="hourly-detail-title">Stored hourly weather + clean reference</h3>
+      </div>
+      <p id="hourly-detail-status" class="hint" role="status" aria-live="polite">
+        Click a date in the explorer to load its stored hourly rows.
+      </p>
+    </div>
+    <div class="hourly-chart-frame">
+      <canvas id="hourly-detail-chart" height="82" role="img"
+              aria-label="Selected date's stored hourly GHI, temperature, wind, humidity, and clean-reference energy"
+              data-audit-source="weather_hourly.csv + clean_energy_hourly.csv · stored hourly columns"></canvas>
+    </div>
+    <p class="hint">This panel does not infer hourly scenario energy. Actual scenario output is
+      stored daily only; the hourly curve is the shared clean reference.</p>
+  </section>
   <p class="hint">All values come from stored comparison artifacts — the metric switcher redraws
     the same stored daily columns (<code>actual_energy_kwh</code>, <code>energy_loss_kwh</code>,
-    the scenario cleanliness fields, <code>cumulative_energy_gain_vs_baseline_kwh</code>). The
+    the scenario cleanliness fields, <code>cumulative_energy_gain_vs_baseline_kwh</code>,
+    <code>extension_bird_loss_fraction</code>,
+    <code>extension_actually_collected_water_liters</code>, and
+    <code>extension_queue_length</code>). The
     aligned cursor connects the chart with GHI, daylight temperature, rainfall, dew, and scenario
     events for the same date.</p>
-</section>
-{% endif %}
-
-{% if annual_cost_bars %}
-<section class="panel" id="annual-chart">
-  <h2>Annual revenue, cost, and benefit</h2>
-  <canvas id="annual-cost-chart" height="110" role="img" aria-label="Bar chart of stored annual revenue, annualized CAPEX, annual OPEX, and net benefit per scenario"
-          data-audit-source="scenario_annual_summary.csv · revenue, CAPEX, OPEX, and net benefit columns"></canvas>
-  <p class="hint">Bars show the stored annual figures (SAR) from
-    <a href="/api/runs/{{ run_id }}/artifact/scenario_annual_summary.csv">scenario_annual_summary.csv</a>.</p>
 </section>
 {% endif %}
 
@@ -626,8 +803,14 @@
   <table class="data-table small">
     <tbody>
       {% for f in artifacts %}
-      <tr>
-        <td class="mono"><a href="/api/runs/{{ run_id }}/artifact/{{ f.name }}">{{ f.name }}</a></td>
+      <tr data-audit-source="output package · {{ f.name }}">
+        <td class="artifact-name-cell">
+          <button type="button" class="artifact-preview-trigger mono"
+                  data-artifact-preview data-artifact-name="{{ f.name }}"
+                  data-run-id="{{ run_id }}">{{ f.name }}</button>
+          <a class="artifact-download-link" href="/api/runs/{{ run_id }}/artifact/{{ f.name }}"
+             download>download</a>
+        </td>
         <td class="num mono">{{ f.size_bytes | display_number }} B</td>
       </tr>
       {% endfor %}
@@ -640,11 +823,14 @@
   {% endif %}
 </section>
 
+{% include "_artifact_drawer.html" %}
+
 {% endblock %}
 {% block scripts %}
-{% if daily_energy or daily_rainfall or daily_weather or daily_loss or daily_soiling or daily_dew or daily_cementation or daily_cumgain or annual_cost_bars %}
+{% if daily_energy or daily_rainfall or daily_weather or daily_loss or daily_soiling or daily_dew or daily_cementation or daily_cumgain or daily_bird_loss or daily_water_collected or daily_queue or detection_performance or coating_service_life %}
 <script src="/static/chart.umd.js?v=20260714b"></script>
 <script>
+  window.solarcleanRunId = {{ run_id | tojson }};
   window.solarcleanCharts = {
     dailyEnergy: {{ daily_energy | tojson if daily_energy else 'null' }},
     dailyCleanReference: {{ daily_clean_reference | tojson if daily_clean_reference else 'null' }},
@@ -656,7 +842,28 @@
     dailyDew: {{ daily_dew | tojson if daily_dew else 'null' }},
     dailyCementation: {{ daily_cementation | tojson if daily_cementation else 'null' }},
     dailyCumGain: {{ daily_cumgain | tojson if daily_cumgain else 'null' }},
-    annualCostBars: {{ annual_cost_bars | tojson if annual_cost_bars else 'null' }}
+    dailyBirdLoss: {{ daily_bird_loss | tojson if daily_bird_loss else 'null' }},
+    dailyCollectedWater: {{ daily_water_collected | tojson if daily_water_collected else 'null' }},
+    dailyQueue: {{ daily_queue | tojson if daily_queue else 'null' }},
+    detectionPerformance: {% if detection_performance and detection_performance.daily %}{
+      dates: {{ detection_performance.daily.dates | tojson }},
+      missed: {dates: {{ detection_performance.daily.dates | tojson }}, values: {{ detection_performance.daily.missed_kwh | tojson }}},
+      recovered: {dates: {{ detection_performance.daily.dates | tojson }}, values: {{ detection_performance.daily.recovered_kwh | tojson }}},
+      queue: {dates: {{ detection_performance.daily.dates | tojson }}, values: {{ detection_performance.daily.queue_length | tojson }}},
+      backlog: {dates: {{ detection_performance.daily.dates | tojson }}, values: {{ detection_performance.daily.backlog_length | tojson }}},
+      weatherCancelled: {dates: {{ detection_performance.daily.dates | tojson }}, values: {{ detection_performance.daily.weather_cancelled | tojson }}}
+    }{% else %}null{% endif %},
+    coatingServiceLife: {% if coating_service_life %}{
+      dates: {{ coating_service_life.dates | tojson }},
+      age: {dates: {{ coating_service_life.dates | tojson }}, values: {{ coating_service_life.age_days | tojson }}},
+      effectiveness: {dates: {{ coating_service_life.dates | tojson }}, values: {{ coating_service_life.effectiveness_fraction | tojson }}},
+      opticalEffect: {dates: {{ coating_service_life.dates | tojson }}, values: {{ coating_service_life.optical_effect_kwh | tojson }}},
+      temperatureEffect: {dates: {{ coating_service_life.dates | tojson }}, values: {{ coating_service_life.temperature_effect_kwh | tojson }}},
+      cleanlinessEffect: {dates: {{ coating_service_life.dates | tojson }}, values: {{ coating_service_life.cleanliness_effect_kwh | tojson }}},
+      dewPoint: {dates: {{ coating_service_life.dates | tojson }}, values: {{ coating_service_life.dew_point_c | tojson }}},
+      surfaceTemperature: {dates: {{ coating_service_life.dates | tojson }}, values: {{ coating_service_life.coated_surface_temperature_c | tojson }}},
+      collectedWater: {dates: {{ coating_service_life.dates | tojson }}, values: {{ coating_service_life.actually_collected_water_liters | tojson }}}
+    }{% else %}null{% endif %}
   };
   drawComparisonCharts();
 </script>
