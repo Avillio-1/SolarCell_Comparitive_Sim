@@ -1,0 +1,107 @@
+{# One approval block joining the run's stored trust signals: reconciliation
+   verdict, parameter evidence quality, recommendation tier, and warnings.
+   Engineering documents have a single certification area — so does this page.
+   Every figure is read from a stored artifact; nothing is judged here. #}
+{% if certification %}
+<section class="certification" aria-label="Run certification">
+  <span class="certification-kicker">CERTIFICATION / التصديق</span>
+  <div class="certification-grid">
+
+    {% if certification.reconciliation %}
+    {% set recon = certification.reconciliation %}
+    <details class="cert-item {{ 'cert-pass' if recon.passed else 'cert-fail' }}">
+      <summary>
+        <span class="cert-term">Reconciliation</span>
+        <strong>{{ '✓' if recon.passed else '✕' }} {{ recon.passed_count }}/{{ recon.total }} checks</strong>
+      </summary>
+      <div class="cert-detail" data-audit-source="reconciliation_report.json · checks"
+           data-audit-detail="Stored self-audit checks: shared weather and events, annual-to-daily totals, and cost-to-operation reconciliation.">
+        <div class="recon-check-list">
+          {% for check in recon.checks %}
+          <span class="chip {{ 'chip-pass' if check.passed else 'chip-fail' }}" tabindex="0"
+                role="button" data-pop="{{ check.message }}"><span aria-hidden="true">{{ '✓' if check.passed else '✕' }}</span> {{ check.name }}</span>
+          {% endfor %}
+        </div>
+        <p class="hint">The run's self-audit: shared weather and events, annual-to-daily totals,
+          and cost reconciliation — costs must match operational quantities (crew hours × labour
+          rate, water used × water price). Click a chip for its stored message.</p>
+      </div>
+    </details>
+    {% endif %}
+
+    {% if certification.evidence %}
+    {% set evidence = certification.evidence %}
+    <details class="cert-item {{ 'cert-warn' if evidence.grade != 'validated evidence' else 'cert-pass' }}">
+      <summary>
+        <span class="cert-term">Evidence</span>
+        <strong>{{ evidence.grade }}</strong>
+      </summary>
+      <div class="cert-detail" data-audit-source="recommendation.json · validation_status"
+           data-audit-detail="Stored parameter evidence counts and disclaimer.">
+        <p class="cert-counts">
+          <span>Status:</span>
+          {% for status, count in evidence.counts_by_status.items() %}
+            {{ count }} {{ status }}{% if not loop.last %} /{% endif %}
+          {% endfor %}
+          {% if evidence.counts_by_evidence_type %}
+          <span>Evidence:</span>
+          {% for evidence_type, count in evidence.counts_by_evidence_type.items() %}
+            {{ count }} {{ evidence_type }}{% if not loop.last %} /{% endif %}
+          {% endfor %}
+          {% endif %}
+        </p>
+        {% if evidence.disclaimer %}<p>{{ evidence.disclaimer }}</p>{% endif %}
+        {% if evidence.key_uncertain_parameters %}
+        <div class="validation-uncertain">
+          <h3>Most uncertain parameters</h3>
+          <ul>
+            {% for parameter in evidence.key_uncertain_parameters %}
+            <li><span class="mono">{{ parameter.name }}</span>:
+              low {{ parameter.low_value | display_number }},
+              central {{ parameter.central_value | display_number }},
+              high {{ parameter.high_value | display_number }}
+              ({{ parameter.confidence }} confidence, {{ parameter.status }})</li>
+            {% endfor %}
+          </ul>
+        </div>
+        {% endif %}
+      </div>
+    </details>
+    {% endif %}
+
+    {% if certification.tier %}
+    <div class="cert-item cert-static">
+      <span class="cert-term">Tier</span>
+      <strong data-audit-source="recommendation.json · recommendation_tier"
+              data-audit-detail="Stored recommendation tier for this run.">{{ certification.tier }}</strong>
+    </div>
+    {% endif %}
+
+    {% if certification.warnings and certification.warnings.total %}
+    {% set warnings = certification.warnings %}
+    <details class="cert-item cert-warn">
+      <summary>
+        <span class="cert-term">Warnings</span>
+        <strong>{{ warnings.total }}</strong>
+      </summary>
+      <div class="cert-detail" data-audit-source="recommendation.json · warnings"
+           data-audit-detail="Stored recommendation warnings; repeated parameter-status sentences are grouped for reading.">
+        {% if warnings.summary %}<p class="cert-warning-summary">{{ warnings.summary }}</p>{% endif %}
+        {% for group in warnings.groups %}
+        <details class="cert-warning-group">
+          <summary>{{ group.parameters | length }} {{ group.status }} parameter{{ 's' if group.parameters | length != 1 }}</summary>
+          <ul>{% for parameter in group.parameters %}<li class="mono">{{ parameter }}</li>{% endfor %}</ul>
+        </details>
+        {% endfor %}
+        {% if warnings.other %}
+        <ul class="cert-warning-other">
+          {% for message in warnings.other %}<li>{{ message }}</li>{% endfor %}
+        </ul>
+        {% endif %}
+      </div>
+    </details>
+    {% endif %}
+
+  </div>
+</section>
+{% endif %}

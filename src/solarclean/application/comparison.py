@@ -258,10 +258,13 @@ class CompareAllScenarios:
         weather: WeatherDataset | None = None,
         clean_energy: CleanEnergyProfile | None = None,
         event_tape: ExogenousEventTape | None = None,
+        precomputed_scenario_results: Mapping[str, AnnualScenarioResult] | None = None,
+        precomputed_scenario_config_checksum: str | None = None,
         scenario_order: Sequence[str] | None = None,
         parameter_registry_path: Path | None = None,
         parameter_registry: ParameterRegistry | None = None,
         write_artifacts: bool = True,
+        include_reporting_summaries: bool = True,
         progress_callback: ProgressCallback | None = None,
     ) -> None:
         self.config = config
@@ -270,6 +273,16 @@ class CompareAllScenarios:
             raise ValueError("clean_energy injection requires the matching weather dataset")
         self.clean_energy = clean_energy
         self.event_tape = event_tape
+        if (precomputed_scenario_results is None) != (precomputed_scenario_config_checksum is None):
+            raise ValueError(
+                "precomputed scenario results and their config checksum must be supplied together"
+            )
+        if precomputed_scenario_results is not None:
+            if event_tape is None:
+                raise ValueError("precomputed scenario results require their shared event tape")
+            if precomputed_scenario_config_checksum != _config_checksum(config):
+                raise ValueError("precomputed scenario results do not match the active config")
+        self.precomputed_scenario_results = precomputed_scenario_results
         # Reports scenario-level completion to callers (e.g. the dashboard job
         # table). Purely observational: it never alters simulation behaviour,
         # though a callback may raise to abort between scenarios.
@@ -288,6 +301,11 @@ class CompareAllScenarios:
         # ComparisonResult can opt out. A run directory is still created (cheap) so run_id and
         # traceability stay consistent with normal runs.
         self.write_artifacts = write_artifacts
+        if write_artifacts and not include_reporting_summaries:
+            raise ValueError(
+                "include_reporting_summaries=False cannot be used when writing artifacts"
+            )
+        self.include_reporting_summaries = include_reporting_summaries
 
     def run(self) -> CompareAllScenariosResult:
         registry = self.parameter_registry or ParameterRegistry.from_yaml(
@@ -307,22 +325,28 @@ class CompareAllScenarios:
         event_tape = self.event_tape or _generate_event_tape(self.config, profile)
         weather_checksum = _weather_checksum(weather)
         event_tape_checksum = event_tape.checksum()
-        context = ScenarioContext.from_inputs(
-            weather=weather,
-            clean_energy=profile,
-            event_tape=event_tape,
-            farm_config=self.config.farm,
-            metadata={
-                "weather_checksum": weather_checksum,
-                "event_tape_checksum": event_tape_checksum,
-            },
-        )
-        scenario_results = _run_scenarios(
-            config=self.config,
-            context=context,
-            scenario_order=self.scenario_order,
-            progress_callback=self.progress_callback,
-        )
+        if self.precomputed_scenario_results is None:
+            context = ScenarioContext.from_inputs(
+                weather=weather,
+                clean_energy=profile,
+                event_tape=event_tape,
+                farm_config=self.config.farm,
+                metadata={
+                    "weather_checksum": weather_checksum,
+                    "event_tape_checksum": event_tape_checksum,
+                },
+            )
+            scenario_results = _run_scenarios(
+                config=self.config,
+                context=context,
+                scenario_order=self.scenario_order,
+                progress_callback=self.progress_callback,
+            )
+        else:
+            scenario_results = _validate_precomputed_scenario_results(
+                self.precomputed_scenario_results,
+                profile=profile,
+            )
 
         economics = build_economics_from_parameter_registry(registry)
         operational_by_scenario = {
@@ -446,8 +470,13 @@ class CompareAllScenarios:
             registry=registry,
             weather=weather,
         )
-        daily_summaries = _daily_summaries(scenario_results)
-        annual_summaries = _annual_summaries(
+        (
+            daily_summaries,
+            annual_summaries,
+            event_summaries,
+            economic_summaries,
+        ) = _reporting_summaries(
+            include=self.include_reporting_summaries,
             scenario_results=scenario_results,
             economic_results=economic_results,
             energy_gain_vs_baseline=energy_gain,
@@ -455,11 +484,6 @@ class CompareAllScenarios:
             weather_checksum=weather_checksum,
             event_tape_checksum=event_tape_checksum,
         )
-        event_summaries = _event_summaries(scenario_results)
-        economic_summaries = {
-            scenario_id: _economic_summary(economic_results[scenario_id])
-            for scenario_id in CANONICAL_SCENARIO_IDS
-        }
         output_artifacts: tuple[str, ...] = ()
         if self.write_artifacts:
             output_artifacts = _write_comparison_package(
@@ -631,6 +655,45 @@ def _generate_event_tape(
         farm=config.farm,
         birds=config.bird_droppings,
     )
+
+
+def _validate_precomputed_scenario_results(
+    results: Mapping[str, AnnualScenarioResult],
+    *,
+    profile: CleanEnergyProfile,
+) -> dict[str, AnnualScenarioResult]:
+    if set(results) != set(CANONICAL_SCENARIO_IDS):
+        raise ValueError("precomputed scenario results must contain all canonical scenarios")
+    expected_daily = tuple(
+        (
+            pd.Timestamp(str(raw_day)).date(),
+            float(row["clean_ac_energy_kwh"]),
+        )
+        for raw_day, row in profile.daily.iterrows()
+    )
+    validated: dict[str, AnnualScenarioResult] = {}
+    for scenario_id in CANONICAL_SCENARIO_IDS:
+        result = results[scenario_id]
+        if result.scenario_name != scenario_id:
+            raise ValueError(
+                "precomputed scenario result name does not match its canonical key "
+                f"({result.scenario_name!r} != {scenario_id!r})"
+            )
+        if len(result.daily_results) != len(expected_daily):
+            raise ValueError("precomputed scenario results do not match the clean profile period")
+        for daily, (expected_date, expected_clean_energy) in zip(
+            result.daily_results,
+            expected_daily,
+            strict=True,
+        ):
+            if daily.date != expected_date:
+                raise ValueError("precomputed scenario dates do not match the clean profile")
+            if abs(daily.clean_energy_kwh - expected_clean_energy) > ENERGY_TOLERANCE_KWH:
+                raise ValueError(
+                    "precomputed scenario clean energy does not match the clean profile"
+                )
+        validated[scenario_id] = result
+    return validated
 
 
 def _run_scenarios(
@@ -1702,6 +1765,44 @@ def _recommendation_evidence_tier(
     return "decision_grade", counts
 
 
+def _reporting_summaries(
+    *,
+    include: bool,
+    scenario_results: Mapping[str, AnnualScenarioResult],
+    economic_results: Mapping[str, EconomicResult],
+    energy_gain_vs_baseline: Mapping[str, Mapping[str, object]],
+    operational_by_scenario: Mapping[str, OperationalQuantities],
+    weather_checksum: str,
+    event_tape_checksum: str,
+) -> tuple[
+    dict[str, tuple[Mapping[str, object], ...]],
+    dict[str, Mapping[str, object]],
+    dict[str, Mapping[str, object]],
+    dict[str, Mapping[str, object]],
+]:
+    if not include:
+        # Sensitivity variants consume the reconciled outcome, economic
+        # results, and scenario totals only. Building report-shaped daily
+        # frames for every throwaway point is pure overhead.
+        return {}, {}, {}, {}
+    return (
+        _daily_summaries(scenario_results),
+        _annual_summaries(
+            scenario_results=scenario_results,
+            economic_results=economic_results,
+            energy_gain_vs_baseline=energy_gain_vs_baseline,
+            operational_by_scenario=operational_by_scenario,
+            weather_checksum=weather_checksum,
+            event_tape_checksum=event_tape_checksum,
+        ),
+        _event_summaries(scenario_results),
+        {
+            scenario_id: _economic_summary(economic_results[scenario_id])
+            for scenario_id in CANONICAL_SCENARIO_IDS
+        },
+    )
+
+
 def _daily_summaries(
     scenario_results: Mapping[str, AnnualScenarioResult],
 ) -> dict[str, tuple[Mapping[str, object], ...]]:
@@ -1756,7 +1857,12 @@ def _annual_summaries(
                 operational=operational_by_scenario[scenario_id],
             )
         )
-        record.update(_annual_water_balance_summary(result))
+        record.update(
+            _annual_water_balance_summary(
+                result,
+                operational=operational_by_scenario[scenario_id],
+            )
+        )
         record.update(_economic_summary(economic))
         record.update(
             _incremental_mitigation_summary(
@@ -1768,20 +1874,37 @@ def _annual_summaries(
     return summaries
 
 
-def _annual_water_balance_summary(result: AnnualScenarioResult) -> dict[str, object]:
+def _annual_water_balance_summary(
+    result: AnnualScenarioResult,
+    *,
+    operational: OperationalQuantities,
+) -> dict[str, object]:
     """Annual totals of the coating's stored daily water diagnostics.
 
     Zero for scenarios without the extensions (baseline/reactive harvest no
     water), so the CSV columns stay uniform across scenarios. Condensed water
     is dew that formed on the coated surface (it drives passive cleaning);
-    collected water is the smaller share routed to storage, which stays zero
-    unless the config enables collection efficiencies.
+    collected water is the share routed to storage, which stays zero unless
+    the config enables collection efficiencies.
     """
+    condensed_liters = _sum_daily_extension(result, "condensed_water_liters")
+    collected_liters = _sum_daily_extension(result, "actually_collected_water_liters")
+    consumed_liters = float(operational.water_liters)
+    net_liters = collected_liters - consumed_liters
+    tank_basis_liters = 1_000.0
     return {
-        "annual_condensed_water_liters": _sum_daily_extension(result, "condensed_water_liters"),
-        "annual_collected_water_liters": _sum_daily_extension(
-            result, "actually_collected_water_liters"
+        "annual_condensed_water_liters": condensed_liters,
+        "annual_collected_water_liters": collected_liters,
+        "annual_dew_eligible_nights": _count_truthy_daily_extension(
+            result,
+            "condensation_dew_eligible",
         ),
+        "annual_cleaning_water_consumed_cubic_meters": consumed_liters / 1_000.0,
+        "annual_collected_water_cubic_meters": collected_liters / 1_000.0,
+        "annual_net_water_position_liters": net_liters,
+        "annual_net_water_position_cubic_meters": net_liters / 1_000.0,
+        "annual_collected_water_tank_equivalents": collected_liters / tank_basis_liters,
+        "water_storage_tank_basis_liters": tank_basis_liters,
     }
 
 
@@ -1826,6 +1949,10 @@ def _sum_daily_extension(
     if not values:
         return default
     return sum(values)
+
+
+def _count_truthy_daily_extension(result: AnnualScenarioResult, key: str) -> int:
+    return sum(bool(day.extensions.get(key, False)) for day in result.daily_results)
 
 
 def _numeric_value(value: object, *, label: str) -> float:

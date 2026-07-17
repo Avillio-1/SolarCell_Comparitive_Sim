@@ -439,6 +439,10 @@ def test_financial_ranking_explains_total_and_baseline_change(
     assert "Net change" in page and "vs baseline" in page
     assert "0.18 SAR/kWh" in page
     assert "Cost boundary:" in page
+    # The decision strip answers the question visually, above the arithmetic.
+    assert 'class="decision-strip"' in page
+    assert "Net change vs doing nothing" in page
+    assert "0 · reference" in page
     first = ranking_rows[0]
     assert f"How {_format_sar(first['net_annual_benefit_sar'])} SAR/year is calculated" in page
     assert "annual AC energy ×" in page
@@ -480,9 +484,88 @@ def test_charts_replace_static_plot_grid(client: TestClient, comparison_run: Pat
     assert 'id="selected-day-date"' in page
     assert 'id="follow-hover-button"' in page
     assert "environmental values are context, not independent causal attribution" in page
-    assert "daily-loss-chart" in page
-    assert "daily-soiling-chart" in page
-    assert "Daily contamination cleanliness by scenario" in page
+    # The explorer is the single daily instrument: loss, cleanliness, and
+    # cumulative gain are metric-switcher views of the same chart, not
+    # separate panels, and the stored series still reach the page payload.
+    assert 'data-energy-metric="energy"' in page
+    assert 'data-energy-metric="loss"' in page
+    assert 'data-energy-metric="cleanliness"' in page
+    assert "dailyLoss:" in page
+    assert "dailySoiling:" in page
+    assert 'id="daily-loss-chart"' not in page
+    assert 'id="daily-soiling-chart"' not in page
+    # The full-width fingerprint doubles as the range scrubber.
+    assert 'id="explorer-scrubber"' in page
+    assert 'id="scrubber-reset"' in page
+    dashboard_js = Path(dashboard_app.__file__).parent / "static" / "dashboard.js"
+    dashboard_script = dashboard_js.read_text(encoding="utf-8")
+    assert "drawEnergyExplorer" in dashboard_script
+    assert "applyExplorerScenario" in dashboard_script
+    assert "applyExplorerMetric" in dashboard_script
+    assert "Resume hover" in dashboard_script
+    assert "annual-cost-chart" in page
+    # ... and no inline <img> plot grid on the comparison page. PNGs stay
+    # downloadable from the artifact list.
+    assert '<div class="plot-grid">' not in page
+    assert "comparison_daily_energy.png" in page  # still listed as an artifact
+
+
+def test_comparison_page_has_water_balance_and_dew_simulator(
+    client: TestClient,
+    comparison_run: Path,
+) -> None:
+    page = client.get(f"/run/{comparison_run.name}").text
+
+    assert 'id="water-balance"' in page
+    assert "Water balance by strategy" in page
+    assert "Net water position" in page
+    assert "Cleaning water consumed" in page
+    assert "Dew harvested" in page
+    assert "Tank equivalents" in page
+    assert "Dew-eligible nights" in page
+    assert "m³" in page
+    assert "alternative operating strategy" in page
+
+    assert 'id="dew-simulator"' in page
+    assert "Humidity &amp; dew-point simulator" in page
+    assert 'id="dew-relative-humidity"' in page
+    assert 'id="dew-air-temperature"' in page
+    assert 'id="dew-wind-speed"' in page
+    assert 'id="humidity-indicator"' in page
+    assert 'aria-live="polite"' in page
+
+
+def test_dew_simulator_endpoint_uses_the_run_config(
+    client: TestClient,
+    comparison_run: Path,
+) -> None:
+    response = client.get(
+        f"/api/runs/{comparison_run.name}/dew-simulator",
+        params={
+            "relative_humidity_pct": 80,
+            "air_temperature_c": 25,
+            "wind_speed_m_s": 2,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["relative_humidity_pct"] == pytest.approx(80.0)
+    assert payload["air_temperature_c"] == pytest.approx(25.0)
+    assert payload["wind_speed_m_s"] == pytest.approx(2.0)
+    assert payload["coated_area_m2"] == pytest.approx(20_000.0)
+    assert "dew_point_c" in payload
+    assert "coated_surface_temperature_c" in payload
+    assert "harvested_liters_per_m2_hour" in payload
+    assert "whole_farm_harvested_liters_per_hour" in payload
+    # This fixture deliberately resets coating water to the disabled legacy
+    # config; the endpoint must honor that stored snapshot instead of Default.
+    assert payload["status_code"] == "water_model_disabled"
+
+
+def test_explorer_payload_matches_stored_series(client: TestClient, comparison_run: Path) -> None:
+    """The chart payload's series come from aligned stored artifact columns."""
+    page = client.get(f"/run/{comparison_run.name}").text
     cleanliness = artifacts_module.daily_cleanliness_series(comparison_run)
     assert cleanliness is not None
     assert set(cleanliness["series"]) == {"baseline", "reactive", "coating"}
@@ -509,16 +592,6 @@ def test_charts_replace_static_plot_grid(client: TestClient, comparison_run: Pat
     assert "dailyCleanReference:" in page
     assert "dailyWeather:" in page
     assert "dailyEventMarkers:" in page
-    dashboard_js = Path(dashboard_app.__file__).parent / "static" / "dashboard.js"
-    dashboard_script = dashboard_js.read_text(encoding="utf-8")
-    assert "drawEnergyExplorer" in dashboard_script
-    assert "applyExplorerScenario" in dashboard_script
-    assert "Resume hover" in dashboard_script
-    assert "annual-cost-chart" in page
-    # ... and no inline <img> plot grid on the comparison page. PNGs stay
-    # downloadable from the artifact list.
-    assert '<div class="plot-grid">' not in page
-    assert "comparison_daily_energy.png" in page  # still listed as an artifact
 
 
 def test_evidence_status_hidden_by_default(client: TestClient, comparison_run: Path) -> None:
@@ -575,7 +648,7 @@ def test_kpi_table_marks_best_by_metric_direction() -> None:
     assert by_label["Total annual cost (SAR)"]["best"] == [False, True, False]
     assert by_label["Incremental payback vs baseline (yr)"]["best"] == [False, False, True]
     # Operational quantities carry no direction, so nothing is highlighted.
-    assert by_label["Water used (L)"]["best"] == [False, False, False]
+    assert by_label["External cleaning water consumed (L)"]["best"] == [False, False, False]
 
 
 def test_financial_ranking_joins_stored_explanation_values_without_recalculation() -> None:
@@ -1062,6 +1135,12 @@ def test_compare_runs_renders_stored_provenance_and_kpis(
         assert other.name in page.text
         assert "Dammam (humid coastal desert)" in page.text
         assert "Annual KPIs" in page.text
+        # Different sites are alternatives, not iterations: neutral A/B labels.
+        assert "RUN A" in page.text
+        assert "A · BEFORE" not in page.text
+        assert "diff-value-a" in page.text and "diff-value-b" in page.text
+        assert "diff-old" not in page.text and "diff-new" not in page.text
+        assert "Run A and Run B use neutral shading." in page.text
     finally:
         client.delete(f"/api/runs/{other.name}")
 
@@ -1073,27 +1152,73 @@ def test_compare_runs_renders_stored_provenance_and_kpis(
 
 def test_launch_form_offers_parameter_dropdowns(client: TestClient) -> None:
     page = client.get("/").text
+    # Native selects remain the state store and no-JS fallback; the JS picker
+    # (searchable grouped checklist with inline ranges) mounts next to them.
     assert '<select id="parameters" multiple' in page
-    assert '<select id="parameter-a">' in page
-    assert '<select id="be-parameter">' in page
+    assert '<select id="parameter-a"' in page
+    assert '<select id="be-parameter"' in page
+    assert 'data-picker-for="parameters"' in page
+    assert 'data-picker-for="parameter-a"' in page
+    assert 'data-picker-for="be-parameter"' in page
+    assert "window.solarcleanParameters" in page
+    assert 'id="oneway-workload"' in page
+    assert "Choose at least one assumption" in page
     # Options come from the T7-supported registry catalog with their ranges.
     assert 'value="economics.electricity_tariff_sar_per_kwh"' in page
+    assert "data-low=" in page
+    assert "data-high=" in page
     assert "registry range" in page
+    script = client.get("/static/dashboard.js").text
+    assert "initParameterPickers" in script
+    assert "param-range-tick" in script
+    assert 'selectAll.textContent = "Select all"' in script
+    assert "comparison evaluations" in script
+    assert "Choose at least one parameter for one-way sensitivity." in script
+    assert "none selected = all supported" not in script
+
+
+def test_oneway_launch_requires_an_explicit_parameter(client: TestClient) -> None:
+    response = client.post(
+        "/api/runs",
+        json={"kind": "sensitivity-oneway", "config": DEFAULT_CONFIG_NAME, "parameters": []},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Choose at least one parameter for one-way sensitivity."
+    )
+
+
+def test_launch_form_asks_the_question_first(client: TestClient) -> None:
+    # Analysis kinds are question radio cards; the method name is fine print.
+    page = client.get("/").text
+    assert 'id="kind-cards"' in page
+    assert "What question should the model answer?" in page
+    assert "Which strategy wins?" in page
+    assert "How sure are we of the winner?" in page
+    assert "Which assumption moves the result most?" in page
+    assert "Where does the winner flip?" in page
+    assert "At what value do two strategies tie?" in page
+    for kind in ("compare", "monte-carlo", "sensitivity-oneway", "winner-map", "break-even"):
+        assert f'name="kind" value="{kind}"' in page
 
 
 def test_launch_form_explains_advanced_analysis_fields(client: TestClient) -> None:
+    # Explanations sit with the fields they explain (proximity), not in a
+    # separate accordion.
     page = client.get("/").text
-    assert '<details class="analysis-help">' in page
-    assert "Advanced analysis guide" in page
-    assert "repeated simulations using different random seeds." in page
-    assert "how many values are tested across each range." in page
-    assert "assumptions to test; select none to test all." in page
-    assert "two assumptions varied together." in page
-    assert "grid size; 5 means 5 × 5 = 25 comparisons." in page
-    assert "compared to find where their net annual benefits are equal." in page
-    assert "Baseline has no mitigation" in page
-    assert "Reactive detects then cleans" in page
-    assert "Coating uses coating-based mitigation" in page
+    flat = " ".join(page.split())
+    assert '<details class="analysis-help">' not in page
+    assert 'class="field-hint"' in page
+    assert "repeated simulations using different random seeds." in flat
+    assert "how many values are tested across each range." in flat
+    assert "Choose at least one assumption; use Select all only for an exhaustive sweep." in flat
+    assert "assumptions varied together" in flat
+    assert "grid size; 5 means 5 × 5 = 25 comparisons." in flat
+    assert "net annual benefits are equal" in flat
+    assert "Baseline has no mitigation" in flat
+    assert "Reactive detects then cleans" in flat
+    assert "Coating uses coating-based mitigation" in flat
 
 
 def test_completed_job_moves_out_of_run_sessions(client: TestClient, comparison_run: Path) -> None:
@@ -1304,16 +1429,19 @@ def test_comparison_page_validation_banner_is_optional_for_old_runs(
     )
     (old / "recommendation.json").write_text(json.dumps({"valid": False}), encoding="utf-8")
     try:
+        # Evidence quality now lives in the unified certification block next
+        # to the title block, not a separate banner.
         current_page = client.get(f"/run/{current.name}")
         assert current_page.status_code == 200
+        assert 'class="certification"' in current_page.text
         assert "Internally verified simulation calibrated" in current_page.text
-        assert 'class="warn-note validation-banner"' in current_page.text
         assert "economics.test_cost" in current_page.text
+        assert "Most uncertain parameters" in current_page.text
 
         old_page = client.get(f"/run/{old.name}")
         assert old_page.status_code == 200
-        assert 'class="warn-note validation-banner"' not in old_page.text
         assert "Internally verified simulation calibrated" not in old_page.text
+        assert "Most uncertain parameters" not in old_page.text
     finally:
         _delete_run(client, current)
         _delete_run(client, old)
@@ -1439,6 +1567,8 @@ def test_compare_runs_is_diff_with_collapsed_identical_values(
         assert "identical fields collapsed" in page
         assert "Annual KPIs · changed values" in page
         assert "identical KPI values collapsed" in page
+        # Identical resolved configs = same study, so before/after framing applies.
+        assert "A · BEFORE" in page
     finally:
         _delete_run(client, other)
 
@@ -1473,7 +1603,10 @@ def test_cumulative_gain_column_reconciles_and_charts(
     assert last_coating == pytest.approx(annual_gain, abs=1e-6)
 
     page = client.get(f"/run/{comparison_run.name}").text
-    assert 'id="daily-cumgain-chart"' in page
+    # Cumulative gain is a metric view of the daily explorer, fed by the same
+    # stored column.
+    assert 'data-energy-metric="cumgain"' in page
+    assert "dailyCumGain:" in page
 
 
 def test_dew_chart_is_optional_for_old_and_new_comparison_runs(client: TestClient) -> None:
@@ -1661,3 +1794,165 @@ def test_bind_address_is_environment_overridable(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setenv("SOLARCLEAN_DASHBOARD_PORT", "not-a-port")
     with pytest.raises(SystemExit):
         resolve_bind()
+
+
+# --------------------------------------------------------------------------
+# Redesign: unified run identity, studies, certification, decision aids
+# --------------------------------------------------------------------------
+
+
+def test_home_unifies_sessions_into_run_cards(client: TestClient) -> None:
+    """The sessions table is gone: a launched run is one card in one place."""
+
+    def failing_work(job: object) -> Path:
+        raise RuntimeError("kaboom for the card")
+
+    job = dashboard_app.jobs.submit("compare", "boom.yaml", failing_work)
+    deadline = time.time() + 10
+    while job.status != "failed" and time.time() < deadline:
+        time.sleep(0.01)
+    assert job.status == "failed"
+
+    try:
+        page = client.get("/").text
+        assert 'id="jobs-table"' not in page
+        assert 'id="job-cards"' in page
+        assert "job-card job-card-failed" in page
+        assert "kaboom for the card" in page
+        assert "Dismiss" in page
+    finally:
+        dashboard_app.jobs.delete(job.job_id)
+
+
+def test_runs_archive_is_grouped_by_study(client: TestClient, comparison_run: Path) -> None:
+    """Cards carry their study identity and render under study headers."""
+    page = client.get("/").text
+    assert 'class="study-header"' in page
+    assert "data-study=" in page
+    # The fixture run's study fields come from its own config_resolved.yaml.
+    study = dashboard_app._run_study(comparison_run)
+    assert study is not None
+    assert study["label"] in page
+
+
+def test_related_runs_strip_links_same_study_siblings(
+    client: TestClient, comparison_run: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outputs = tmp_path / "outputs"
+    run_a = outputs / "study-a-compare-all-scenarios-20260717T000000Z-aaa111"
+    run_b = outputs / "study-b-compare-all-scenarios-20260717T010000Z-bbb222"
+    shutil.copytree(comparison_run, run_a)
+    shutil.copytree(comparison_run, run_b)
+    monkeypatch.setattr(dashboard_app, "_OUTPUTS_DIR", outputs)
+
+    page = client.get(f"/run/{run_a.name}").text
+    assert 'class="related-runs"' in page
+    assert run_b.name in page  # same config_resolved.yaml = same study
+    assert "Compare against" in page
+    assert f'name="a" value="{run_a.name}"' in page
+
+
+def test_certification_groups_repeated_parameter_warnings() -> None:
+    aggregated = dashboard_app._aggregate_warnings(
+        [
+            {
+                "message": "economics.a has status blocked; allow_blocked_with_warnings "
+                "permits use for research/sensitivity only."
+            },
+            {
+                "message": "economics.b has status blocked; allow_blocked_with_warnings "
+                "permits use for research/sensitivity only."
+            },
+            {
+                "message": "economics.c has status provisional; allow_blocked_with_warnings "
+                "permits use for research/sensitivity only."
+            },
+            "Coating cost assumptions are provisional, not validated field costs.",
+        ]
+    )
+    assert aggregated["total"] == 4
+    assert "3 parameters" in aggregated["summary"]
+    assert "2 blocked" in aggregated["summary"] and "1 provisional" in aggregated["summary"]
+    statuses = {group["status"]: group["parameters"] for group in aggregated["groups"]}
+    assert statuses["blocked"] == ["economics.a", "economics.b"]
+    assert statuses["provisional"] == ["economics.c"]
+    assert aggregated["other"] == [
+        "Coating cost assumptions are provisional, not validated field costs."
+    ]
+
+
+def test_headline_relabels_when_baseline_wins() -> None:
+    """Baseline winning means the stored margin IS the mitigation shortfall,
+    and 'energy gain vs baseline = 0' is a degenerate slot, not a fact."""
+    cards = dashboard_app._headline_cards(
+        {
+            "valid": True,
+            "winner": "baseline",
+            "decisive_margin_sar": 101046.0,
+            "kpi_snapshot": {
+                "baseline": {
+                    "net_annual_benefit_sar": 1045929.0,
+                    "energy_gain_vs_baseline_kwh": 0.0,
+                }
+            },
+        }
+    )
+    labels = [card["label"] for card in cards]
+    assert "Best mitigation falls short by" in labels
+    assert "Margin over runner-up" not in labels
+    assert "Energy gain vs baseline" not in labels
+
+    mitigation_cards = dashboard_app._headline_cards(
+        {
+            "valid": True,
+            "winner": "coating",
+            "decisive_margin_sar": 500.0,
+            "kpi_snapshot": {"coating": {"energy_gain_vs_baseline_kwh": 42.0}},
+        }
+    )
+    mitigation_labels = [card["label"] for card in mitigation_cards]
+    assert "Margin over runner-up" in mitigation_labels
+    assert "Energy gain vs baseline" in mitigation_labels
+
+
+def test_command_index_lists_runs_and_configs(client: TestClient, comparison_run: Path) -> None:
+    response = client.get("/api/command-index")
+    assert response.status_code == 200
+    payload = response.json()
+    assert DEFAULT_CONFIG_NAME in payload["configs"]
+    run_ids = [run["run_id"] for run in payload["runs"]]
+    assert comparison_run.name in run_ids
+
+
+def test_command_palette_and_audit_banner_present(client: TestClient) -> None:
+    page = client.get("/").text
+    assert 'id="command-palette"' in page
+    assert 'id="palette-input"' in page
+    assert 'id="audit-banner"' in page
+    script = client.get("/static/dashboard.js").text
+    assert "openPalette" in script
+    assert "/api/command-index" in script
+
+
+def test_apply_location_can_rewrite_the_period(client: TestClient) -> None:
+    content = dashboard_app._RIYADH_DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")
+
+    response = client.post(
+        f"/api/configs/{DEFAULT_CONFIG_NAME}/apply-location",
+        json={
+            "content": content,
+            "latitude": 24.7136,
+            "longitude": 46.6753,
+            "start_date": "2025-03-01",
+            "end_date": "2025-03-31",
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["valid"] is True
+    assert result["start"] == "2025-03-01T00:00:00+03:00"
+    assert result["end"] == "2025-03-31T23:00:00+03:00"
+    updated = SolarCleanConfig.model_validate(yaml.safe_load(result["content"]))
+    assert updated.simulation.start.date().isoformat() == "2025-03-01"
+    assert updated.simulation.end.date().isoformat() == "2025-03-31"

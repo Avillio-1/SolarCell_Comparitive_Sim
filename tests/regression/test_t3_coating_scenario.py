@@ -121,7 +121,7 @@ def test_run_coating_writes_scenario_outputs() -> None:
 
 def test_default_and_test_calibration_presets_load() -> None:
     for config, preset in [
-        (config_from_default(), "weak"),
+        (config_from_default(), "kaust_paper_strong"),
         (paper_calibration_config(), "paper_calibration"),
         (endpoint_calibration_config(), "paper_endpoint_calibration"),
         (kaust_strong_config(), "kaust_paper_strong"),
@@ -135,7 +135,7 @@ def test_default_and_test_calibration_presets_load() -> None:
     )
     assert paper.coating.physics.daytime_cooling_fraction == pytest.approx(0.0)
     assert paper.coating.physics.passive_cleaning_base_efficiency == pytest.approx(0.0)
-    assert paper.coating.water.actual_collection_efficiency_fraction == pytest.approx(0.0)
+    assert paper.coating.water.actual_collection_efficiency_fraction == pytest.approx(1.0)
     assert paper.coating.deployment.reapplication_supported is False
     assert paper.coating.deployment.reapplication_interval_years is None
 
@@ -152,7 +152,7 @@ def test_paper_calibration_reproduces_water_target() -> None:
         / config.farm.total_panels
         / config.coating.deployment.area_per_panel_m2
     )
-    assert condensed_per_m2 == pytest.approx(0.128, abs=0.035)
+    assert condensed_per_m2 == pytest.approx(0.128, abs=1e-5)
     assert result.summary["period_day_count"] == 1
     assert result.summary["period_is_full_year"] is False
     assert result.summary["calibration_fixture"] is True
@@ -164,7 +164,7 @@ def test_paper_calibration_reproduces_water_target() -> None:
     )
     assert one_night_scale_liters == pytest.approx(2560.0)
     assert result.summary["period_condensed_water_liters"] == pytest.approx(
-        one_night_scale_liters, abs=700.0
+        one_night_scale_liters, abs=0.25
     )
     assert result.summary["period_condensed_water_liters_per_m2"] == pytest.approx(
         result.summary["period_condensed_water_liters"] / result.summary["coated_area_m2"]
@@ -177,12 +177,17 @@ def test_paper_calibration_reproduces_water_target() -> None:
         result.summary["period_potentially_collectable_water_liters"]
         * config.coating.water.actual_collection_efficiency_fraction
     )
-    assert result.summary["period_actually_collected_water_liters"] == pytest.approx(0.0)
+    assert result.summary["period_actually_collected_water_liters"] == pytest.approx(
+        one_night_scale_liters, abs=0.25
+    )
     assert result.summary["annual_condensed_water_liters"] > 0.0
     assert result.summary["annual_potentially_collectable_water_liters"] > 0.0
-    assert result.summary["annual_actually_collected_water_liters"] == pytest.approx(0.0)
+    assert result.summary["annual_actually_collected_water_liters"] == pytest.approx(
+        one_night_scale_liters, abs=0.25
+    )
     assert result.summary["water_revenue_included"] is False
-    assert result.summary["paper_source_status"] == "prompt_quoted_values_only"
+    assert result.summary["paper_source_status"] == "primary_source_verified_open_access"
+    assert result.summary["paper_source_doi"] == "10.1002/eem2.70350"
 
 
 def test_endpoint_calibration_reproduces_six_month_power_loss_targets() -> None:
@@ -214,6 +219,10 @@ def test_kaust_paper_strong_preset_improves_under_favorable_dew() -> None:
     assert result.summary["period_day_count"] == len(daily)
     assert result.summary["period_dew_eligible_day_count"] > 0
     assert result.summary["period_passive_cleaning_day_count"] > 0
+    assert result.summary["period_condensed_water_liters"] > 0
+    assert result.summary["period_actually_collected_water_liters"] == pytest.approx(
+        result.summary["period_condensed_water_liters"]
+    )
     assert (
         result.summary["period_final_coating_loss_percent"]
         < result.summary["period_final_baseline_loss_percent"]

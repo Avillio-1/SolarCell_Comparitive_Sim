@@ -1,8 +1,8 @@
 # T3 Coating Scenario Assumptions
 
-The named coating paper was not available as a PDF or extracted text in the
-workspace. The implementation uses only the prompt-provided paper facts as
-calibration anchors.
+The coating calibration uses the open-access paper
+`https://doi.org/10.1002/eem2.70350` and keeps site-wide extrapolations
+weather-gated.
 
 Prompt-derived anchors:
 
@@ -50,11 +50,13 @@ behavior.
 
 Condensed water, potentially collectable water, and actually collected water are
 reported separately as whole-farm period totals plus liters per square meter.
-The two water efficiencies are sequential: potentially collectable water is
-gross condensation multiplied by collection-hardware efficiency, and actually
-collected water is that amount multiplied by actual harvesting efficiency. With
-no collection infrastructure modeled, the central preset sets actual harvesting
-efficiency to 0.0. The coating scenario assigns no water revenue.
+The two water efficiencies are sequential. In the `kaust_paper_strong` R&D
+preset both are 1.0 because the calibrated 0.0046767 coefficient represents the
+paper's measured collected yield (0.128 L/m2 on a favorable night), rather than
+an unobserved gross-condensation quantity. The coefficient is still applied only
+when modeled humidity, dew point, and coated surface temperature permit
+condensation. Collection cost and water revenue remain excluded, and the result
+must not be read as 0.128 L/m2 on every night.
 
 `coating.physics.optical_transmittance_multiplier` is a relative
 coated-versus-uncoated PV performance multiplier. It is neutral in the central

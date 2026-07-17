@@ -1,0 +1,37 @@
+{# Cross-links to stored sibling runs of the same study (site + period +
+   assumption set), each with a one-line stored finding, plus a plain GET form
+   to open the two-run diff against another stored comparison. Display joins
+   over stored artifacts only. #}
+{% if related and (related.siblings or related.comparables) %}
+<section class="related-runs" aria-label="Related runs in this study">
+  {% if related.study %}
+  <span class="related-study"><span class="related-study-term">This study</span>
+    <span class="mono">{{ related.study.label }}</span></span>
+  {% endif %}
+  {% if related.siblings %}
+  <ul class="related-list">
+    {% for sibling in related.siblings %}
+    <li><a href="/run/{{ sibling.run_id }}" title="{{ sibling.run_id }}">
+      <span class="related-kind">{{ sibling.kind_label }}</span>
+      <span class="related-summary">{{ sibling.summary }}</span>
+      <span class="mono related-date">{{ sibling.created }}</span></a></li>
+    {% endfor %}
+  </ul>
+  {% elif related.study %}
+  <span class="hint">No other stored runs share this study yet — Monte Carlo or a sensitivity
+    sweep would say how robust this result is.</span>
+  {% endif %}
+  {% if related.comparables %}
+  <form class="compare-against" action="/compare-runs" method="get">
+    <input type="hidden" name="a" value="{{ run_id }}">
+    <label><span>Compare against</span>
+      <select name="b">
+        {% for candidate in related.comparables %}
+        <option value="{{ candidate.run_id }}">{{ candidate.label }}{{ ' · this study' if candidate.same_study }}</option>
+        {% endfor %}
+      </select></label>
+    <button type="submit">Open diff</button>
+  </form>
+  {% endif %}
+</section>
+{% endif %}

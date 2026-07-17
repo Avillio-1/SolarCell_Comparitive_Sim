@@ -35,6 +35,8 @@
   <span id="rerun-status" class="hint" role="status"></span>
 </div>
 
+{% include "_related_runs.html" %}
+
 {% if finding %}
 <p class="finding-statement finding-{{ finding.tone }}" data-audit-source="stored analysis summary"
    data-audit-detail="Declarative sentence composed only from stored analysis fields.">{{ finding.text }}</p>
@@ -127,7 +129,7 @@
         <th class="num mono">{{ twoway_grid.values_b_desc[loop.index0] | display_number }}</th>
         {% for cell in row %}
         {% if cell %}
-        <td class="wm-cell wm-{{ cell.winner or 'invalid' }}" title="{{ cell.tooltip }}">
+        <td class="wm-cell wm-{{ cell.winner or 'invalid' }}" tabindex="0" data-pop="{{ cell.tooltip }}">
           {% if cell.winner %}{{ strategy_glyph(cell.winner) }}{% else %}×{% endif %}</td>
         {% else %}<td class="wm-cell wm-missing"></td>{% endif %}
         {% endfor %}

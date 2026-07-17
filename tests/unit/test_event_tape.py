@@ -41,6 +41,32 @@ def test_event_tape_is_immutable_and_json_round_trips() -> None:
     assert restored.to_daily_inputs(date(2025, 1, 1)).date == date(2025, 1, 1)
 
 
+def test_event_tape_checksum_serializes_only_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    tape = generate_event_tape(
+        dates=[date(2025, 1, 1)],
+        seed=123,
+        soiling=SoilingConfig(),
+        rainfall=RainfallCleaningConfig(),
+        farm=FarmConfig(),
+        birds=BirdDroppingConfig(),
+    )
+    original = ExogenousEventTape.to_json
+    calls = 0
+
+    def counted_to_json(self: ExogenousEventTape) -> str:
+        nonlocal calls
+        calls += 1
+        return original(self)
+
+    monkeypatch.setattr(ExogenousEventTape, "to_json", counted_to_json)
+
+    first = tape.checksum()
+    second = tape.checksum()
+
+    assert first == second
+    assert calls == 1
+
+
 def test_rng_streams_are_independent_and_reproducible() -> None:
     first = RngStreamFactory(seed=55)
     second = RngStreamFactory(seed=55)

@@ -8,29 +8,14 @@
   <a class="quiet-link" href="/">back to runs</a>
 </div>
 
-<section class="panel">
-  <p class="hint">Edits are checked with the same loader the simulator uses, so anything that
-  validates here will load for a run.
-  <strong>Validate and save</strong> updates only the {{ default_config_label }} configuration.
-  {% if is_default %}<strong>Reset to Riyadh defaults</strong> restores the original factory
-  preset in the editor; validate and save it to make those settings active.{% else %}
-  <strong>Restore page-load values</strong> returns the editor to the values from when this page
-  opened.{% endif %}</p>
-  <textarea id="config-editor" class="mono" spellcheck="false"
-            data-name="{{ name }}" data-is-default="{{ 'true' if is_default else 'false' }}">{{ content }}</textarea>
-  <div class="field-row">
-    <button class="primary" id="validate-btn" type="button">Validate</button>
-    {% if is_default %}
-    <button class="primary" id="save-default-btn" type="button">Validate and save</button>
-    {% endif %}
-    <button id="reset-config-btn" type="button">{% if is_default %}Reset to Riyadh defaults{% else %}Restore page-load values{% endif %}</button>
-    <span id="config-dirty" class="hint config-dirty" hidden>● Unsaved changes</span>
+<section class="panel" id="site-location">
+  <div class="panel-heading">
+    <div><span class="step-label">Configuration essentials</span>
+      <h2>Site location, timezone, and period</h2>
+      <p>The knobs most runs actually change. Applying writes a validated YAML edit into the
+        source below — coordinates, both timezone fields, DST-correct period offsets, and
+        (optionally) new whole-day period dates in one step.</p></div>
   </div>
-  <p id="config-status" role="status"></p>
-</section>
-
-<section class="panel">
-  <h2>Site location and timezone</h2>
   <div class="map-wrap">
     <svg id="site-map" viewBox="-180 -90 360 180" preserveAspectRatio="xMidYMid meet"
          role="img" aria-label="World map. Click to pick the site location.">
@@ -47,15 +32,22 @@
     <label class="wide"><span>Detected timezone</span>
       <input id="site-timezone" type="text" readonly aria-readonly="true">
     </label>
-    <button id="apply-location" type="button">Apply to config above</button>
+  </div>
+  <div class="field-row">
+    <label><span>Period start</span>
+      <input id="site-start-date" type="date" autocomplete="off"></label>
+    <label><span>Period end</span>
+      <input id="site-end-date" type="date" autocomplete="off"></label>
+    <button id="apply-location" type="button">Apply to YAML source</button>
     <span id="location-status" class="hint" role="status"></span>
   </div>
   <p class="hint" id="provider-note">Click the map (or type coordinates) and press
-  "Apply to config above". The location's IANA timezone is detected automatically from
+  "Apply to YAML source". The location's IANA timezone is detected automatically from
   the coordinates. This updates
   <code>site.latitude</code>, <code>site.longitude</code>, both configured timezone fields,
-  and the simulation start/end UTC offsets in the editor — including daylight-saving
-  offsets for their local dates. Then validate and save as usual. The Default configuration uses the
+  and the simulation start/end UTC offsets in the YAML source below — including daylight-saving
+  offsets for their local dates. Changing the period dates rewrites whole local days
+  (00:00–23:00). Then validate and save as usual. The Default configuration uses the
   <code>nasa_power</code> weather provider, so the chosen location changes the real weather
   the simulation runs on: hourly irradiance (GHI/DNI/DHI), air temperature, wind speed,
   relative humidity, and precipitation are fetched from NASA POWER for those coordinates
@@ -66,6 +58,30 @@
   but humidity-coupled soiling (dew cementation) and coating condensation follow the fetched
   weather when enabled in the config.</p>
   <p class="hint" id="provider-warning" role="note" hidden></p>
+</section>
+
+<section class="panel">
+  <details id="config-editor-details" class="config-editor-details">
+    <summary><h2>YAML source (advanced)</h2>
+      <span id="config-dirty" class="hint config-dirty" hidden>● Unsaved changes</span></summary>
+    <p class="hint">Edits are checked with the same loader the simulator uses, so anything that
+    validates here will load for a run.
+    <strong>Validate and save</strong> updates only the {{ default_config_label }} configuration.
+    {% if is_default %}<strong>Reset to Riyadh defaults</strong> restores the original factory
+    preset in the editor; validate and save it to make those settings active.{% else %}
+    <strong>Restore page-load values</strong> returns the editor to the values from when this page
+    opened.{% endif %}</p>
+    <textarea id="config-editor" class="mono" spellcheck="false"
+              data-name="{{ name }}" data-is-default="{{ 'true' if is_default else 'false' }}">{{ content }}</textarea>
+    <div class="field-row">
+      <button class="primary" id="validate-btn" type="button">Validate</button>
+      {% if is_default %}
+      <button class="primary" id="save-default-btn" type="button">Validate and save</button>
+      {% endif %}
+      <button id="reset-config-btn" type="button">{% if is_default %}Reset to Riyadh defaults{% else %}Restore page-load values{% endif %}</button>
+    </div>
+    <p id="config-status" role="status"></p>
+  </details>
 </section>
 
 {% endblock %}

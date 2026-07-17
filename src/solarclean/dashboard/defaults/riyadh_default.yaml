@@ -69,29 +69,38 @@ logging:
   level: INFO
 coating:
   enabled: true
-  preset: weak
+  # Paper-anchored R&D case. Water yield is weather-gated below rather than
+  # annualizing the favorable-night result across every night.
+  preset: kaust_paper_strong
   physics:
-    optical_transmittance_multiplier: 1.0
+    optical_transmittance_multiplier: 1.014
     source_optical_transmittance_absolute_fraction: null
     emissivity_atmospheric_window: 0.90
     contact_angle_degrees: 167
     sliding_angle_degrees: 3
-    dust_accumulation_multiplier: 0.60
+    dust_accumulation_multiplier: 0.90
     initial_effectiveness_fraction: 1.0
-    annual_degradation_fraction: 0.05
-    max_surface_cooling_c: 6.0
+    annual_degradation_fraction: 0.02
+    max_surface_cooling_c: 7.0
     humidity_cooling_reference_pct: 80
+    humidity_cooling_mode: smooth
+    humidity_cooling_dry_reference_pct: 40
+    humidity_cooling_floor_fraction: 0.70
+    cementation_suppression_fraction: 0.9
     wind_cooling_decay_per_m_s: 0.08
-    daytime_cooling_fraction: 0.05
-    passive_cleaning_base_efficiency: 0.80
+    daytime_cooling_fraction: 0.0
+    passive_cleaning_base_efficiency: 0.11
     passive_cleaning_tilt_reference_degrees: 25
-    bird_removal_efficiency: 0.50
-    max_bird_removal_fraction_per_day: 0.25
+    bird_removal_efficiency: 0.05
+    max_bird_removal_fraction_per_day: 0.01
   water:
-    condensation_liters_per_m2_per_c_hour: 0.0
-    minimum_relative_humidity_pct: 100
-    collectable_water_efficiency_fraction: 0.0
-    actual_collection_efficiency_fraction: 0.0
+    # Effective harvested-yield coefficient calibrated to the KAUST paper's
+    # measured 0.128 L/m2 favorable night. It is applied only when modeled RH
+    # and surface temperature permit dew (not automatically every night).
+    condensation_liters_per_m2_per_c_hour: 0.0046767
+    minimum_relative_humidity_pct: 65
+    collectable_water_efficiency_fraction: 1.0
+    actual_collection_efficiency_fraction: 1.0
   deployment:
     mode: factory_preinstall
     area_per_panel_m2: 2.0
@@ -154,4 +163,4 @@ reactive_cv:
 calibration:
   assumption_set: riyadh_central_v2
   parameter_registry_path: data/calibration/parameter_registry.yaml
-  source_note: "Default dashboard config: live NASA POWER weather for the configured site; general soiling/dust and cost calibration use Riyadh central-v2 assumptions, with the explicit weak coating preset at a 0.60 dust accumulation multiplier. Crew minutes are worker-minutes for a 2-person crew (registry central 120 panels/worker-hour), and water is priced at delivered-to-site cost (registry central 10 SAR/m3)."
+  source_note: "Default dashboard config: live NASA POWER weather for the configured site; general soiling/dust and cost calibration use Riyadh central-v2 assumptions. Coating physics and harvested-water volume use the KAUST paper case (10.1002/eem2.70350): dew is weather-gated from 65% RH and the effective yield coefficient reproduces the measured 0.128 L/m2 favorable-night collected yield. Collection cost and water revenue remain excluded. Crew minutes are worker-minutes for a 2-person crew (registry central 120 panels/worker-hour), and reactive cleaning water is priced at delivered-to-site cost (registry central 10 SAR/m3)."

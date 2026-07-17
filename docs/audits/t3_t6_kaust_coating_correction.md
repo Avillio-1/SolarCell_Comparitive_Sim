@@ -131,3 +131,13 @@ The KAUST favorable normalized performance graph should now behave as expected: 
 - Under `riyadh_dry`, the KAUST strong preset produced zero dew-assisted cleaning in tests and does not get free self-cleaning behavior.
 - The paper source values are prompt-quoted calibration anchors, not a fully ingested primary-source dataset.
 - Coating costs, water collection, and water revenue remain provisional and outside the coating physics validation.
+
+## 2026-07-17 Water Accounting Update
+
+The dashboard R&D configurations now treat the paper's 128 g/m2/night result as
+measured collected yield, not gross condensation. The effective coefficient was
+tightened from `0.0036` to `0.0046767 L/m2/C/hour`, which makes the controlled
+paper-night fixture reproduce `0.128 L/m2` directly. Collection multipliers are
+1.0 in `kaust_paper_strong`; site runs remain weather-gated by humidity, dew
+point, and coated-surface temperature. This does not assume a favorable yield on
+all 365 nights, assign water revenue, or estimate collection-infrastructure cost.

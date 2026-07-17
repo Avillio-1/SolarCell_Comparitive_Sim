@@ -103,10 +103,12 @@ coating:
     bird_removal_efficiency: 0.05
     max_bird_removal_fraction_per_day: 0.01
   water:
-    condensation_liters_per_m2_per_c_hour: 0.0036
+    # The coefficient is an effective harvested-yield calibration to
+    # the paper's measured 0.128 L/m2 favorable night. Weather still gates dew.
+    condensation_liters_per_m2_per_c_hour: 0.0046767
     minimum_relative_humidity_pct: 65
-    collectable_water_efficiency_fraction: 0.0
-    actual_collection_efficiency_fraction: 0.0
+    collectable_water_efficiency_fraction: 1.0
+    actual_collection_efficiency_fraction: 1.0
   deployment:
     mode: factory_preinstall
     area_per_panel_m2: 2.0

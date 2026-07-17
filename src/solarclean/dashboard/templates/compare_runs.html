@@ -9,7 +9,13 @@
   <div>
     <span class="eyebrow">Configuration and result change set</span>
     <h1>Two-run comparison</h1>
-    <p>Read left as the earlier state and right as the later state. Unchanged values stay collapsed.</p>
+    {% if diff_mode == "temporal" %}
+    <p>Both runs belong to the same study, so read left as the earlier state and right as the
+      later state. Unchanged values stay collapsed.</p>
+    {% else %}
+    <p>These runs come from different studies (site, period, or assumptions differ), so A and B
+      are alternatives — neither is “before” the other. Unchanged values stay collapsed.</p>
+    {% endif %}
   </div>
   <a class="quiet-link" href="/">back to runs</a>
 </div>
@@ -17,7 +23,7 @@
 <div class="diff-run-register">
   {% for run in runs %}
   <article class="diff-run-card diff-run-{{ 'before' if loop.first else 'after' }}">
-    <span class="diff-side">{{ 'A · BEFORE' if loop.first else 'B · AFTER' }}</span>
+    <span class="diff-side">{% if diff_mode == "temporal" %}{{ 'A · BEFORE' if loop.first else 'B · AFTER' }}{% else %}{{ 'RUN A' if loop.first else 'RUN B' }}{% endif %}</span>
     <a href="/run/{{ run.run_id }}" class="mono diff-run-id">{{ run.run_id }}</a>
     {{ run_fingerprint(run.fingerprint, "medium", run.run_id ~ " fingerprint") }}
     {% set run_id = run.run_id %}
@@ -56,21 +62,24 @@
   {% if kpi_diff.rows %}
   <div class="scroll-x">
     <table class="data-table kpi-diff-table">
-      <thead><tr><th>Strategy</th><th>KPI</th><th class="num">A · before</th><th class="num">B · after</th><th class="num">Delta</th></tr></thead>
+      <thead><tr><th>Strategy</th><th>KPI</th>
+        <th class="num">{{ 'A · before' if diff_mode == 'temporal' else 'Run A' }}</th>
+        <th class="num">{{ 'B · after' if diff_mode == 'temporal' else 'Run B' }}</th>
+        <th class="num">Delta</th></tr></thead>
       <tbody>
       {% for row in kpi_diff.rows %}
         <tr>
           <td>{{ strategy_label(row.scenario) }}</td>
           <th>{{ row.label }}</th>
-          <td class="num mono diff-old" data-audit-source="{{ runs[0].run_id }} · scenario_annual_summary.csv · {{ row.scenario }}.{{ row.column }}">{{ row.before }}</td>
-          <td class="num mono diff-new" data-audit-source="{{ runs[1].run_id }} · scenario_annual_summary.csv · {{ row.scenario }}.{{ row.column }}">{{ row.after }}</td>
+          <td class="num mono diff-value-a" data-audit-source="{{ runs[0].run_id }} · scenario_annual_summary.csv · {{ row.scenario }}.{{ row.column }}">{{ row.before }}</td>
+          <td class="num mono diff-value-b" data-audit-source="{{ runs[1].run_id }} · scenario_annual_summary.csv · {{ row.scenario }}.{{ row.column }}">{{ row.after }}</td>
           <td class="num mono delta-{{ row.outcome }}">{{ row.delta }} <span aria-label="{{ 'increased' if row.trend == '↑' else 'decreased' if row.trend == '↓' else 'changed' }}">{{ row.trend }}</span></td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
   </div>
-  <p class="hint">Green means the stored change moved in the KPI's preferred direction; red means it moved away. Operational quantities are directional only, not judged.</p>
+  <p class="hint">Run A and Run B use neutral shading. Only the delta is judged: green means the stored change moved in the KPI's preferred direction, and red means it moved away. Operational quantities are directional only, not judged.</p>
   {% else %}
   <p class="empty">No changed annual KPI values were found in the two stored summaries.</p>
   {% endif %}

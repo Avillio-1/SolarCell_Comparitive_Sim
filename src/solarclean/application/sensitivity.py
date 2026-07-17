@@ -15,7 +15,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 
@@ -26,6 +26,8 @@ from solarclean.application.comparison import (
     CompareAllScenarios,
     ComparisonResult,
     ProgressCallback,
+    _config_checksum,
+    _generate_event_tape,
     _load_weather,
 )
 from solarclean.config.models import SolarCleanConfig
@@ -37,7 +39,9 @@ from solarclean.domain.calibration.parameter_overrides import (
 )
 from solarclean.domain.calibration.registry import ParameterRegistry
 from solarclean.domain.environment.weather import WeatherDataset
+from solarclean.domain.events.tape import ExogenousEventTape
 from solarclean.domain.pv.model import CleanEnergyProfile
+from solarclean.domain.scenario.contracts import AnnualScenarioResult
 from solarclean.infrastructure.persistence.outputs import OutputWriter
 from solarclean.infrastructure.persistence.plots import (
     write_breakeven_plot,
@@ -86,6 +90,13 @@ class VariantResult:
     winner: str | None
     reconciled: bool
     failed_reconciliation_checks: tuple[Mapping[str, object], ...]
+    scenario_results: Mapping[str, AnnualScenarioResult] | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+    event_tape: ExogenousEventTape | None = field(default=None, repr=False, compare=False)
+    config_checksum: str | None = field(default=None, repr=False, compare=False)
 
 
 def _failed_reconciliation_checks(
@@ -162,15 +173,25 @@ def _run_variant(
     scenario_order: Sequence[str] | None,
     weather: WeatherDataset | None = None,
     clean_energy: CleanEnergyProfile | None = None,
+    event_tape: ExogenousEventTape | None = None,
+    precomputed_scenario_results: Mapping[str, AnnualScenarioResult] | None = None,
+    precomputed_scenario_config_checksum: str | None = None,
 ) -> VariantResult:
+    resolved_event_tape = event_tape
+    if resolved_event_tape is None and clean_energy is not None:
+        resolved_event_tape = _generate_event_tape(config, clean_energy)
     comparison = (
         CompareAllScenarios(
             config,
             weather=weather,
             clean_energy=clean_energy,
+            event_tape=resolved_event_tape,
+            precomputed_scenario_results=precomputed_scenario_results,
+            precomputed_scenario_config_checksum=precomputed_scenario_config_checksum,
             scenario_order=scenario_order,
             parameter_registry=registry,
             write_artifacts=False,
+            include_reporting_summaries=False,
         )
         .run()
         .comparison
@@ -188,6 +209,23 @@ def _run_variant(
         winner=winner,
         reconciled=reconciled,
         failed_reconciliation_checks=_failed_reconciliation_checks(comparison),
+        scenario_results=comparison.scenario_results,
+        event_tape=resolved_event_tape,
+        config_checksum=_config_checksum(config),
+    )
+
+
+def _copy_variant_result(result: VariantResult) -> VariantResult:
+    """Return a distinct immutable result for a reused, identical input point."""
+
+    return VariantResult(
+        net_annual_benefit_sar=MappingProxyType(dict(result.net_annual_benefit_sar)),
+        winner=result.winner,
+        reconciled=result.reconciled,
+        failed_reconciliation_checks=result.failed_reconciliation_checks,
+        scenario_results=result.scenario_results,
+        event_tape=result.event_tape,
+        config_checksum=result.config_checksum,
     )
 
 
@@ -446,17 +484,38 @@ class OneWaySensitivityExperiment:
         on_point: Callable[[int], None] | None = None,
     ) -> OneWayParameterResult:
         points: list[SweepPoint] = []
+        base_registry_checksum = self.registry.checksum()
         for value in _sweep_points(spec, self.steps):
             config, registry = _apply_override(
                 base_config=self.config, base_registry=self.registry, spec=spec, value=value
             )
-            variant = _run_variant(
-                config=config,
-                registry=registry,
-                scenario_order=self.scenario_order,
-                weather=weather,
-                clean_energy=clean_energy,
-            )
+            if config == self.config and registry.checksum() == base_registry_checksum:
+                # The reference comparison already evaluated this exact
+                # config/registry pair. Most registry central points match the
+                # selected config, so rerunning all three scenarios here would
+                # be duplicate work with identical output.
+                variant = _copy_variant_result(base_variant)
+            else:
+                reuse_physics = (
+                    spec.kind == "economics"
+                    and base_variant.scenario_results is not None
+                    and base_variant.event_tape is not None
+                    and base_variant.config_checksum is not None
+                )
+                variant = _run_variant(
+                    config=config,
+                    registry=registry,
+                    scenario_order=self.scenario_order,
+                    weather=weather,
+                    clean_energy=clean_energy,
+                    event_tape=base_variant.event_tape if reuse_physics else None,
+                    precomputed_scenario_results=(
+                        base_variant.scenario_results if reuse_physics else None
+                    ),
+                    precomputed_scenario_config_checksum=(
+                        base_variant.config_checksum if reuse_physics else None
+                    ),
+                )
             points.append(
                 SweepPoint(
                     value=value,

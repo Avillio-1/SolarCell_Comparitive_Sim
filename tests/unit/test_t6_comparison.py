@@ -7,7 +7,12 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import pytest
-from tests.config_factory import config_from_default, fixture_config, full_year_fixture_config
+from tests.config_factory import (
+    config_from_default,
+    fixture_config,
+    full_year_fixture_config,
+    paper_calibration_config,
+)
 
 import solarclean.application.comparison as comparison_module
 from solarclean.application.comparison import (
@@ -147,20 +152,25 @@ def test_default_derived_full_year_fixture_covers_2025() -> None:
     assert config.reactive_cv.observer.false_positive_rate == pytest.approx(0.08)
     assert 0.0 <= config.reactive_cv.dispatch.estimated_loss_threshold_fraction <= 1.0
     assert config.reactive_cv.crew.water_liters_per_cohort >= 0.0
-    assert config.coating.preset == "weak"
-    assert config.coating.physics.dust_accumulation_multiplier == pytest.approx(0.60)
+    assert config.coating.preset == "kaust_paper_strong"
+    assert config.coating.physics.dust_accumulation_multiplier == pytest.approx(0.90)
+    assert config.coating.water.condensation_liters_per_m2_per_c_hour == pytest.approx(0.0046767)
+    assert config.coating.water.actual_collection_efficiency_fraction == pytest.approx(1.0)
     assert config.coating.costs.maintenance_cost_per_year >= 0.0
     assert config.coating.costs.useful_life_years > 0.0
     assert 0.0 <= config.coating.water.actual_collection_efficiency_fraction <= 1.0
     assert comparison_module._simulation_period_is_full_year(config)
 
 
-def test_default_config_uses_runnable_explicit_weak_coating_multiplier() -> None:
+def test_default_config_uses_runnable_kaust_paper_coating_calibration() -> None:
     config = config_from_default()
     registry = ParameterRegistry.from_yaml(config.calibration.parameter_registry_path)
 
-    assert config.coating.preset == "weak"
-    assert config.coating.physics.dust_accumulation_multiplier == pytest.approx(0.60)
+    assert config.coating.preset == "kaust_paper_strong"
+    assert config.coating.physics.dust_accumulation_multiplier == pytest.approx(0.90)
+    assert config.coating.water.condensation_liters_per_m2_per_c_hour == pytest.approx(0.0046767)
+    assert config.coating.water.collectable_water_efficiency_fraction == pytest.approx(1.0)
+    assert config.coating.water.actual_collection_efficiency_fraction == pytest.approx(1.0)
     comparison_module._validate_comparison_config(config, registry)
 
 
@@ -316,6 +326,42 @@ def test_reactive_annual_summary_splits_survey_units_and_dispatch_counts(
     assert reactive["annual_operational_cleaning_dispatch_count"] == pytest.approx(
         reactive["annual_operational_cleaning_actions_count"]
     )
+
+
+def test_annual_summary_persists_complete_water_balance(tmp_path: Path) -> None:
+    config = paper_calibration_config(overrides={"output": {"base_directory": tmp_path}})
+    annual = pd.read_csv(
+        CompareAllScenarios(config).run().output_directory / "scenario_annual_summary.csv"
+    ).set_index("scenario_id")
+
+    expected_columns = {
+        "annual_dew_eligible_nights",
+        "annual_cleaning_water_consumed_cubic_meters",
+        "annual_collected_water_cubic_meters",
+        "annual_net_water_position_liters",
+        "annual_net_water_position_cubic_meters",
+        "annual_collected_water_tank_equivalents",
+        "water_storage_tank_basis_liters",
+    }
+    assert expected_columns <= set(annual.columns)
+    for _, row in annual.iterrows():
+        consumed_liters = row["annual_operational_water_liters"]
+        harvested_liters = row["annual_collected_water_liters"]
+        assert row["annual_net_water_position_liters"] == pytest.approx(
+            harvested_liters - consumed_liters
+        )
+        assert row["annual_cleaning_water_consumed_cubic_meters"] == pytest.approx(
+            consumed_liters / 1_000.0
+        )
+        assert row["annual_collected_water_cubic_meters"] == pytest.approx(
+            harvested_liters / 1_000.0
+        )
+        assert row["annual_collected_water_tank_equivalents"] == pytest.approx(
+            harvested_liters / 1_000.0
+        )
+        assert row["water_storage_tank_basis_liters"] == pytest.approx(1_000.0)
+
+    assert annual.loc["coating", "annual_dew_eligible_nights"] > 0
 
 
 def test_corrected_t6_economics_include_reactive_overhead_and_coating_life(

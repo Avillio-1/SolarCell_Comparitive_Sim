@@ -1,0 +1,29 @@
+{# Live/failed session cards. A launched analysis is one object with one home:
+   it appears here as a running card and resolves in place into a run card in
+   the gallery below (successful sessions disappear from this strip because
+   the finished run itself takes over). #}
+{% for j in jobs %}
+<article class="job-card job-card-{{ j.status }}" data-job="{{ j.job_id }}">
+  <header class="job-card-head">
+    <span class="run-kind">{{ j.kind }}</span>
+    <span class="job-status"><span class="status status-{{ j.status }}">{{ j.status }}</span></span>
+    <span class="mono job-card-created">{{ j.created_at[:19] }}</span>
+  </header>
+  <strong class="job-card-config mono">{{ j.config_name or "–" }}</strong>
+  <div class="job-card-progress" role="progressbar" aria-label="Run progress"
+       aria-valuemin="0" aria-valuemax="100"
+       {% if j.progress_percent is not none %}aria-valuenow="{{ '%.0f'|format(j.progress_percent) }}"{% endif %}>
+    <div class="progress-track"><div class="progress-fill" style="width: {{ '%.0f'|format(j.progress_percent) if j.progress_percent is not none else 0 }}%"></div></div>
+    <span class="progress-label mono">{% if j.progress_percent is not none %}{{ '%.0f'|format(j.progress_percent) }}%{% else %}–{% endif %}</span>
+  </div>
+  <div class="job-card-meta mono">
+    <span class="job-elapsed">{% if j.elapsed_seconds is not none %}{{ '%d'|format(j.elapsed_seconds) }}s{% else %}–{% endif %}</span>
+    <span class="job-eta">{% if j.eta_seconds is not none %}~{{ '%d'|format(j.eta_seconds) }}s left{% else %}–{% endif %}</span>
+  </div>
+  <p class="job-card-result{% if j.status == 'failed' %} error-text{% endif %}">{% if j.status == "failed" %}{{ j.error }}{% endif %}</p>
+  <div class="run-actions">
+    <button type="button" class="danger-quiet job-delete" data-job-id="{{ j.job_id }}">
+      {% if j.status in ("queued", "running") %}Cancel &amp; remove{% else %}Dismiss{% endif %}</button>
+  </div>
+</article>
+{% endfor %}

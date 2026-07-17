@@ -33,6 +33,11 @@ class RunEntry:
     created: str
     winner: str | None
     valid: bool | None
+    # Stored headline figures read from the same artifacts as winner/valid:
+    # the comparison's decisive margin and the MC majority winner's stored
+    # win probability. Display data only — never computed here.
+    margin_sar: float | None = None
+    win_probability: float | None = None
 
 
 def _detect_kind(run_id: str) -> str:
@@ -92,6 +97,8 @@ def list_runs(outputs_dir: Path) -> list[RunEntry]:
         kind = _detect_kind(run_dir.name)
         winner: str | None = None
         valid: bool | None = None
+        margin_sar: float | None = None
+        win_probability: float | None = None
         recommendation = load_json(run_dir / "recommendation.json")
         if recommendation is not None:
             winner = recommendation.get("winner")  # type: ignore[assignment]
@@ -101,9 +108,22 @@ def list_runs(outputs_dir: Path) -> list[RunEntry]:
             # show as failed on their cards.
             raw_valid = recommendation.get("calculation_valid", recommendation.get("valid"))
             valid = bool(raw_valid) if raw_valid is not None else None
+            raw_margin = recommendation.get("decisive_margin_sar")
+            if isinstance(raw_margin, int | float):
+                margin_sar = float(raw_margin)
         mc_summary = load_json(run_dir / "monte_carlo_summary.json")
         if mc_summary is not None:
             winner = mc_summary.get("majority_trial_winner")  # type: ignore[assignment]
+            summaries = mc_summary.get("scenario_summaries")
+            if isinstance(winner, str) and isinstance(summaries, dict):
+                winner_summary = summaries.get(winner)
+                raw_probability = (
+                    winner_summary.get("win_probability")
+                    if isinstance(winner_summary, dict)
+                    else None
+                )
+                if isinstance(raw_probability, int | float):
+                    win_probability = float(raw_probability)
         created = ""
         metadata = load_json(run_dir / "metadata.json") or load_json(
             run_dir / "comparison_metadata.json"
@@ -120,6 +140,8 @@ def list_runs(outputs_dir: Path) -> list[RunEntry]:
                 created=created,
                 winner=winner,
                 valid=valid,
+                margin_sar=margin_sar,
+                win_probability=win_probability,
             )
         )
     # Timestamps are embedded in the run id, so name order is time order.

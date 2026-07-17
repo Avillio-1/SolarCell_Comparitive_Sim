@@ -14,11 +14,13 @@
     </p>
     <span class="cockpit-assumptions mono" id="cockpit-assumptions">{{ cockpit.assumption_set or "–" }}</span>
   </div>
-  <div class="cockpit-map-wrap">
-    <span class="instrument-label" id="cockpit-map-label">Site locator</span>
+  <a class="cockpit-map-wrap" id="cockpit-map-link"
+     href="/config/{{ default_config_name }}#site-location"
+     title="Open the location picker to change the site">
+    <span class="instrument-label" id="cockpit-map-label">Site locator · click to change</span>
     <svg id="cockpit-map" viewBox="{{ (cockpit.longitude or 46.6753) - 14.5 }} {{ -(cockpit.latitude or 24.7136) - 12 }} 29 24"
          preserveAspectRatio="xMidYMid meet"
-         role="img" aria-label="Site locator map, framed around the selected configuration's coordinates">
+         role="img" aria-label="Site locator map, framed around the selected configuration's coordinates. Opens the location picker.">
       <rect class="map-sea" x="-180" y="-90" width="360" height="180"></rect>
       <path id="cockpit-map-land" class="map-land" d=""></path>
       <g id="cockpit-map-marker" class="cockpit-map-marker"
@@ -26,7 +28,7 @@
         <circle r="1.1"></circle><path d="M-2 0h4M0-2v4"></path>
       </g>
     </svg>
-  </div>
+  </a>
   <dl class="cockpit-readouts">
     <div>
       <dt>Simulation period</dt>
@@ -64,20 +66,53 @@
   <p class="warn-note">No configurations were found under <code>configs/</code>, so runs cannot start.</p>
   {% endif %}
   <form id="launch-form" onsubmit="return false;">
+    <fieldset class="question-cards" id="kind-cards">
+      <legend><strong>What question should the model answer?</strong>
+        <small>Each question maps onto one stored analysis method.</small></legend>
+      <label class="question-card">
+        <input type="radio" name="kind" value="compare" checked>
+        <span class="question-card-body">
+          <strong>Which strategy wins?</strong>
+          <span>Compare baseline, reactive cleaning, and coating under identical weather and events.</span>
+          <small class="mono">compare all scenarios</small>
+        </span>
+      </label>
+      <label class="question-card">
+        <input type="radio" name="kind" value="monte-carlo">
+        <span class="question-card-body">
+          <strong>How sure are we of the winner?</strong>
+          <span>Repeat the comparison across controlled random seeds to measure uncertainty and winner probability.</span>
+          <small class="mono">Monte Carlo</small>
+        </span>
+      </label>
+      <label class="question-card">
+        <input type="radio" name="kind" value="sensitivity-oneway">
+        <span class="question-card-body">
+          <strong>Which assumption moves the result most?</strong>
+          <span>Change one assumption at a time to see which inputs influence the result most.</span>
+          <small class="mono">one-way sensitivity</small>
+        </span>
+      </label>
+      <label class="question-card">
+        <input type="radio" name="kind" value="winner-map">
+        <span class="question-card-body">
+          <strong>Where does the winner flip?</strong>
+          <span>Vary two assumptions together and map which strategy wins across the grid.</span>
+          <small class="mono">two-way winner map</small>
+        </span>
+      </label>
+      <label class="question-card">
+        <input type="radio" name="kind" value="break-even">
+        <span class="question-card-body">
+          <strong>At what value do two strategies tie?</strong>
+          <span>Find the parameter value where two selected strategies have equal net benefit.</span>
+          <small class="mono">break-even search</small>
+        </span>
+      </label>
+    </fieldset>
+
     <div class="launch-grid">
       <label class="launch-field">
-        <span class="field-number">1</span>
-        <span class="field-copy"><strong>Analysis type</strong><small>What question should the model answer?</small></span>
-        <select id="kind" name="kind">
-          <option value="compare">Compare all scenarios</option>
-          <option value="monte-carlo">Monte Carlo</option>
-          <option value="sensitivity-oneway">One-way sensitivity</option>
-          <option value="winner-map">Two-way winner map</option>
-          <option value="break-even">Break-even search</option>
-        </select>
-      </label>
-      <label class="launch-field">
-        <span class="field-number">2</span>
         <span class="field-copy"><strong>Configuration</strong><small>Site, weather, assumptions, and costs</small></span>
         <select id="config" name="config">
           {% for config_name in configs %}
@@ -89,84 +124,80 @@
           {% endfor %}
         </select>
       </label>
-    </div>
-    <div id="analysis-summary" class="analysis-summary" aria-live="polite"></div>
-
-    <div class="field-row advanced-options" id="simulation-period">
-      <label><span>Start date</span><input id="start-date" type="date" required></label>
-      <label><span>End date</span><input id="end-date" type="date" required></label>
-      <span class="hint" id="period-note">Whole days in the configured site timezone.</span>
-    </div>
-
-    <details class="analysis-help">
-      <summary>Advanced analysis guide</summary>
-      <div class="analysis-help-body">
-        <div class="analysis-help-group">
-          <strong>Monte Carlo</strong>
-          <p><span>Trials</span> are repeated simulations using different random seeds.</p>
-        </div>
-        <div class="analysis-help-group">
-          <strong>One-way sensitivity</strong>
-          <p><span>Steps per parameter</span> sets how many values are tested across each range.
-            <span>Parameters</span> are the assumptions to test; select none to test all.</p>
-        </div>
-        <div class="analysis-help-group">
-          <strong>Winner map</strong>
-          <p><span>Parameter A and B</span> are two assumptions varied together.
-            <span>Grid steps</span> sets the grid size; 5 means 5 × 5 = 25 comparisons.</p>
-        </div>
-        <div class="analysis-help-group">
-          <strong>Break-even</strong>
-          <p><span>Scenario A and B</span> are compared to find where their net annual benefits are equal.
-            Baseline has no mitigation; Reactive detects then cleans; Coating uses coating-based mitigation.</p>
-        </div>
+      <div class="launch-field launch-period" id="simulation-period">
+        <span class="field-copy"><strong>Operating period</strong><small>Whole days in the site timezone; the saved YAML is never edited</small></span>
+        <span class="period-inputs">
+          <label><span>Start date</span><input id="start-date" type="date" required></label>
+          <label><span>End date</span><input id="end-date" type="date" required></label>
+        </span>
+        <span class="hint" id="period-note">Whole days in the configured site timezone.</span>
       </div>
-    </details>
+    </div>
 
-    <div class="field-row kind-opts advanced-options" data-kind="monte-carlo" hidden>
-      <label><span>Trials</span><input id="trials" type="number" min="2" max="500" value="25"></label>
-      <label><span>Base seed (optional)</span><input id="base-seed" type="number" placeholder="registry default"></label>
+    <div class="field-row kind-opts" data-kind="monte-carlo" hidden>
+      <label><span>Trials</span><input id="trials" type="number" min="2" max="500" value="25">
+        <small class="field-hint">Trials are repeated simulations using different random seeds.</small></label>
+      <label><span>Base seed (optional)</span><input id="base-seed" type="number" placeholder="registry default">
+        <small class="field-hint">Fix the seed to reproduce a previous trial set exactly.</small></label>
     </div>
-    <div class="field-row kind-opts advanced-options" data-kind="sensitivity-oneway" hidden>
-      <label><span>Steps per parameter</span><input id="steps" type="number" min="3" max="21" value="5"></label>
-      <label class="wide"><span>Parameters (Ctrl-click to select several; none selected = all supported)</span>
-        <select id="parameters" multiple size="6">
+    <div class="field-row kind-opts" data-kind="sensitivity-oneway" hidden>
+      <label><span>Steps per parameter</span><input id="steps" type="number" min="3" max="21" value="5">
+        <small class="field-hint">Sets how many values are tested across each range.</small></label>
+      <div class="wide param-field">
+        <span class="param-field-label">Parameters <small class="field-hint">Choose at least one assumption; use Select all only for an exhaustive sweep.</small></span>
+        <select id="parameters" multiple size="6" class="param-native" aria-label="Parameters to sweep">
+          {% for p in parameters %}
+          <option value="{{ p.name }}" data-low="{{ p.low }}" data-high="{{ p.high }}" title="registry range {{ p.low }} – {{ p.central }} – {{ p.high }} {{ p.unit }}">{{ p.name }} ({{ p.unit }})</option>
+          {% endfor %}
+        </select>
+        <div class="param-picker" data-picker-for="parameters" data-picker-mode="multi" hidden></div>
+        <output id="oneway-workload" class="sensitivity-workload" for="steps parameters" aria-live="polite">Choose at least one parameter to calculate the workload.</output>
+      </div>
+    </div>
+    <div class="field-row kind-opts" data-kind="winner-map" hidden>
+      <div class="wide param-field">
+        <span class="param-field-label">Parameter A <small class="field-hint">Two assumptions varied together across the grid.</small></span>
+        <select id="parameter-a" class="param-native" aria-label="Winner map parameter A">
           {% for p in parameters %}
           <option value="{{ p.name }}" title="registry range {{ p.low }} – {{ p.central }} – {{ p.high }} {{ p.unit }}">{{ p.name }} ({{ p.unit }})</option>
           {% endfor %}
-        </select></label>
-    </div>
-    <div class="field-row kind-opts advanced-options" data-kind="winner-map" hidden>
-      <label class="wide"><span>Parameter A</span>
-        <select id="parameter-a">
-          {% for p in parameters %}
-          <option value="{{ p.name }}" title="registry range {{ p.low }} – {{ p.central }} – {{ p.high }} {{ p.unit }}">{{ p.name }} ({{ p.unit }})</option>
-          {% endfor %}
-        </select></label>
-      <label class="wide"><span>Parameter B</span>
-        <select id="parameter-b">
+        </select>
+        <div class="param-picker" data-picker-for="parameter-a" data-picker-mode="single" hidden></div>
+      </div>
+      <div class="wide param-field">
+        <span class="param-field-label">Parameter B</span>
+        <select id="parameter-b" class="param-native" aria-label="Winner map parameter B">
           {% for p in parameters %}
           <option value="{{ p.name }}" title="registry range {{ p.low }} – {{ p.central }} – {{ p.high }} {{ p.unit }}"
                   {% if loop.index == 2 %}selected{% endif %}>{{ p.name }} ({{ p.unit }})</option>
           {% endfor %}
-        </select></label>
-      <label><span>Grid steps</span><input id="grid-steps" type="number" min="3" max="15" value="5"></label>
+        </select>
+        <div class="param-picker" data-picker-for="parameter-b" data-picker-mode="single" hidden></div>
+      </div>
+      <label><span>Grid steps</span><input id="grid-steps" type="number" min="3" max="15" value="5">
+        <small class="field-hint">Sets the grid size; 5 means 5 × 5 = 25 comparisons.</small></label>
     </div>
-    <div class="field-row kind-opts advanced-options" data-kind="break-even" hidden>
-      <label class="wide"><span>Registry parameter</span>
-        <select id="be-parameter">
+    <div class="field-row kind-opts" data-kind="break-even" hidden>
+      <div class="wide param-field">
+        <span class="param-field-label">Registry parameter <small class="field-hint">The assumption swept until the two strategies' net annual benefits are equal.</small></span>
+        <select id="be-parameter" class="param-native" aria-label="Break-even registry parameter">
           {% for p in parameters %}
           <option value="{{ p.name }}" title="registry range {{ p.low }} – {{ p.central }} – {{ p.high }} {{ p.unit }}">{{ p.name }} ({{ p.unit }})</option>
           {% endfor %}
-        </select></label>
+        </select>
+        <div class="param-picker" data-picker-for="be-parameter" data-picker-mode="single" hidden></div>
+      </div>
       <label><span>Scenario A</span>
         <select id="scenario-a"><option>coating</option><option>reactive</option><option>baseline</option></select></label>
       <label><span>Scenario B</span>
         <select id="scenario-b"><option>baseline</option><option>reactive</option><option>coating</option></select></label>
+      <small class="field-hint wide">Scenario A and B are compared to find where their net annual
+        benefits are equal. Baseline has no mitigation; Reactive detects then cleans; Coating uses
+        coating-based mitigation.</small>
     </div>
 
     <div class="launch-footer">
-      <div class="launch-expectation"><strong>Before you start</strong><span>Runs execute one at a time and save a reproducible result package.</span></div>
+      <div class="launch-expectation"><strong>Before you start</strong><span>Runs execute one at a time; the new run appears below with live progress and saves a reproducible result package.</span></div>
       <button id="launch" class="primary launch-button" type="button" {% if not configs %}disabled{% endif %}>Start analysis</button>
       <span id="launch-error" class="error-text" role="alert"></span>
     </div>
@@ -181,50 +212,24 @@
           only the first run per location needs internet.</li>
       <li>The default configuration is editable here; the other listed configurations are
           read-only.</li>
-      <li>Parameter ranges come from the selected configuration's calibration registry — hover
-          an option to see its range.</li>
+      <li>Parameter ranges come from the selected configuration's calibration registry — each
+          row of the parameter picker shows its low–central–high range.</li>
     </ul>
   </details>
 </section>
 
-<section class="panel" id="jobs-panel" {% if not jobs %}hidden{% endif %}>
-  <h2>Run sessions</h2>
-  <table class="data-table" id="jobs-table">
-    <thead><tr><th>Started</th><th>Analysis</th><th>Configuration</th><th>Status</th><th>Progress</th>
-      <th>Elapsed</th><th>ETA</th><th>Result</th><th></th></tr></thead>
-    <tbody>
-      {% for j in jobs %}
-      <tr data-job="{{ j.job_id }}">
-        <td class="mono">{{ j.created_at[:19] }}</td>
-        <td>{{ j.kind }}</td>
-        <td class="mono">{{ j.config_name or "–" }}</td>
-        <td class="job-status"><span class="status status-{{ j.status }}">{{ j.status }}</span></td>
-        <td class="job-progress">
-          {% if j.progress_percent is not none %}
-          <div class="progress-track"><div class="progress-fill" style="width: {{ '%.0f'|format(j.progress_percent) }}%"></div></div>
-          <span class="progress-label mono">{{ '%.0f'|format(j.progress_percent) }}%</span>
-          {% else %}<span class="progress-label mono">–</span>{% endif %}
-        </td>
-        <td class="job-elapsed mono">{% if j.elapsed_seconds is not none %}{{ '%d'|format(j.elapsed_seconds) }}s{% else %}–{% endif %}</td>
-        <td class="job-eta mono">{% if j.eta_seconds is not none %}~{{ '%d'|format(j.eta_seconds) }}s{% else %}–{% endif %}</td>
-        <td class="job-result">{% if j.run_id and j.status == "done" %}<a href="/run/{{ j.run_id }}">{{ j.run_id }}</a>
-          {% elif j.status == "failed" %}<span class="error-text">{{ j.error }}</span>{% endif %}</td>
-        <td class="job-actions"><button type="button" class="danger-quiet job-delete" data-job-id="{{ j.job_id }}">
-          {% if j.status in ("queued", "running") %}Cancel &amp; remove{% else %}Delete{% endif %}</button></td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  <p class="hint">Successful sessions move to Completed runs automatically. Failed sessions remain
-     here for diagnosis. Deleting a running session asks it to stop at its next checkpoint.</p>
-</section>
-
 <section class="panel" id="runs-panel">
   <div class="panel-heading runs-heading">
-    <div><h2>Completed runs</h2>
-      <p>{{ run_total }} stored runs · scroll to browse the complete archive.</p>
+    <div><h2>Runs</h2>
+      <p>{{ run_total }} stored runs · grouped by study (site · period · assumptions), newest
+        study first. A launched analysis appears here immediately and resolves in place.</p>
     </div>
   </div>
+
+  <div id="job-cards" class="job-cards"{% if not jobs %} hidden{% endif %}>
+    {% include "_job_cards.html" %}
+  </div>
+
   {% if runs %}
   <div class="field-row runs-toolbar">
     <label class="runs-filter-field"><span>Find a run</span>
@@ -240,10 +245,7 @@
     <span id="run-filter-status" class="hint runs-filter-status" role="status"></span>
     <span class="runs-toolbar-actions">
       <button type="button" id="select-all-runs" aria-pressed="false">Select all</button>
-      <button type="button" id="compare-selected-runs" disabled>Compare 2 selected</button>
-      <button type="button" id="delete-selected-runs" class="danger-quiet" disabled>Delete selected</button>
     </span>
-    <span id="runs-delete-error" class="error-text" role="alert"></span>
   </div>
   <div class="run-gallery" id="runs-table">
     {% include "_run_cards.html" %}
@@ -256,6 +258,23 @@
   </div>
   <p class="hint">Deleting a run permanently removes its directory under <code>outputs/</code> —
      download the .zip first if you need the exports.</p>
+  <div class="selection-bar" id="selection-bar" hidden>
+    <span id="selection-count" class="mono">0 selected</span>
+    <button type="button" id="compare-selected-runs" disabled>Compare 2 selected</button>
+    <button type="button" id="delete-selected-runs" class="danger-quiet">Delete selected</button>
+    <button type="button" id="clear-selection">Clear</button>
+    <span id="runs-delete-error" class="error-text" role="alert"></span>
+  </div>
+  <dialog id="bulk-delete-dialog" class="confirm-dialog" aria-labelledby="bulk-delete-title">
+    <h2 id="bulk-delete-title">Delete selected runs</h2>
+    <p id="bulk-delete-text"></p>
+    <p class="hint">This permanently removes each run directory under <code>outputs/</code>,
+      including all exports. Download the .zip files first if you need them.</p>
+    <div class="field-row confirm-dialog-actions">
+      <button type="button" id="bulk-delete-confirm" class="danger-quiet">Delete permanently</button>
+      <button type="button" id="bulk-delete-cancel" class="primary">Keep the runs</button>
+    </div>
+  </dialog>
   {% else %}
   <div class="first-run">
     <p class="first-run-lead">No runs yet. Your first comparison simulates three strategies
@@ -276,6 +295,8 @@
 <script src="/static/world_land.js?v=20260714b"></script>
 <script>
   window.solarcleanCockpits = {{ config_cockpits | tojson }};
+  window.solarcleanParameters = {{ parameters | tojson }};
   initConfigurationCockpit();
+  initParameterPickers(window.solarcleanParameters);
 </script>
 {% endblock %}

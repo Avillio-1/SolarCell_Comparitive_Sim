@@ -100,6 +100,12 @@ class ExogenousEventTape:
         repr=False,
         compare=False,
     )
+    _checksum: str | None = field(
+        init=False,
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         sorted_events = tuple(
@@ -155,7 +161,15 @@ class ExogenousEventTape:
         )
 
     def checksum(self) -> str:
-        return hashlib.sha256(self.to_json().encode("utf-8")).hexdigest()
+        cached = self._checksum
+        if cached is None:
+            cached = hashlib.sha256(self.to_json().encode("utf-8")).hexdigest()
+            # The tape and all nested values are immutable, so its checksum
+            # cannot become stale. Scenario isolation asks for this value
+            # repeatedly; memoizing avoids serializing tens of thousands of
+            # events once per scenario.
+            object.__setattr__(self, "_checksum", cached)
+        return cached
 
     def to_daily_inputs(self, day: date) -> DailyEventInputs:
         dust_multiplier = 1.0

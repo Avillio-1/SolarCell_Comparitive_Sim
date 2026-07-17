@@ -29,10 +29,11 @@ from datetime import date, datetime
 from datetime import time as datetime_time
 from functools import lru_cache
 from pathlib import Path
+from typing import cast
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -40,6 +41,7 @@ from pydantic import BaseModel, Field, model_validator
 from timezonefinder import TimezoneFinder
 
 from solarclean.application.comparison import CompareAllScenarios
+from solarclean.application.dew_simulator import simulate_nighttime_dew
 from solarclean.application.monte_carlo import MonteCarloExperiment
 from solarclean.application.sensitivity import (
     BreakEvenExperiment,
@@ -232,9 +234,9 @@ _KPI_FIELDS: tuple[tuple[str, str, str | None], ...] = (
     ("Incremental ROI vs baseline", "incremental_roi_vs_baseline", "higher"),
     ("Incremental payback vs baseline (yr)", "incremental_payback_years_vs_baseline", "lower"),
     ("Effective LCOE (SAR/kWh)", "effective_lcoe_sar_per_kwh", "lower"),
-    ("Water used (L)", "annual_operational_water_liters", None),
-    ("Water condensed on coating (L)", "annual_condensed_water_liters", None),
-    ("Water collected for reuse (L)", "annual_collected_water_liters", None),
+    ("External cleaning water consumed (L)", "annual_operational_water_liters", None),
+    ("Dew formed on coating (L)", "annual_condensed_water_liters", None),
+    ("Dew harvested from coating (L)", "annual_collected_water_liters", None),
     ("Crew hours", "annual_operational_crew_hours", None),
     ("Drone flight hours", "annual_operational_drone_flight_hours", None),
 )
@@ -297,6 +299,63 @@ def _stored_kpi_table(run_dir: Path) -> dict[str, object] | None:
         return None
     header, rows = artifacts.read_csv_rows(annual_path)
     return _kpi_table(header, rows)
+
+
+def _water_balance_card(header: list[str], rows: list[list[str]]) -> dict[str, object] | None:
+    """Select the stored per-strategy water ledger for presentation."""
+
+    index = {name: position for position, name in enumerate(header)}
+    scenario_column = "scenario_name" if "scenario_name" in index else "scenario_id"
+    required = {
+        scenario_column,
+        "annual_operational_water_liters",
+        "annual_collected_water_liters",
+    }
+    if not required <= index.keys():
+        return None
+
+    optional_columns = (
+        "annual_cleaning_water_consumed_cubic_meters",
+        "annual_collected_water_cubic_meters",
+        "annual_net_water_position_liters",
+        "annual_net_water_position_cubic_meters",
+        "annual_collected_water_tank_equivalents",
+        "annual_dew_eligible_nights",
+    )
+    card_rows: list[dict[str, object]] = []
+    for row in rows:
+        selected: dict[str, object] = {
+            "scenario_id": row[index[scenario_column]],
+            "consumed_liters": row[index["annual_operational_water_liters"]],
+            "harvested_liters": row[index["annual_collected_water_liters"]],
+        }
+        for column in optional_columns:
+            selected[column] = row[index[column]] if column in index else None
+        net = (
+            _parse_finite(str(selected["annual_net_water_position_liters"]))
+            if selected["annual_net_water_position_liters"] is not None
+            else None
+        )
+        if net is not None and net > 0:
+            selected["net_tone"] = "positive"
+        elif net is not None and net < 0:
+            selected["net_tone"] = "negative"
+        else:
+            selected["net_tone"] = "neutral"
+        selected["audit_source"] = (
+            "scenario_annual_summary.csv · "
+            f"row scenario_name={selected['scenario_id']} · stored annual water columns"
+        )
+        card_rows.append(selected)
+
+    tank_basis = None
+    if "water_storage_tank_basis_liters" in index and rows:
+        tank_basis = rows[0][index["water_storage_tank_basis_liters"]]
+    return {
+        "rows": card_rows,
+        "tank_basis_liters": tank_basis,
+        "complete": all(column in index for column in optional_columns),
+    }
 
 
 # Cost component category order and labels for the redesigned cost table.
@@ -653,16 +712,19 @@ _KPI_GLOSSARY: dict[str, str] = {
         "Levelized cost of energy: the strategy's annual cost divided by the energy "
         "delivered — SAR spent per kWh produced. Lower is cheaper energy."
     ),
+    "annual_operational_water_liters": (
+        "External water consumed by active cleaning operations. Coating dew is reported "
+        "separately, so a zero here for the passive coating scenario is expected."
+    ),
     "annual_condensed_water_liters": (
-        "Dew that formed on the coated panels over the year. It powers the coating's "
-        "passive self-cleaning as it rolls off; it is not captured unless collection "
-        "is configured. Zero for uncoated scenarios."
+        "Weather-gated dew formed across the coated panel area. The paper-anchored "
+        "configuration calibrates favorable conditions to 0.128 L/m² per night; drier "
+        "modeled nights contribute zero. Uncoated scenarios stay at zero."
     ),
     "annual_collected_water_liters": (
-        "The share of condensed dew routed to storage for reuse (e.g. irrigation). "
-        "Stays zero unless the config enables collection efficiencies — and enabling "
-        "them should come with a water_collection_infrastructure_cost. Volume only: "
-        "it earns no revenue in the economics."
+        "Paper-equivalent harvested dew routed to storage for reuse (e.g. irrigation). "
+        "The volume is weather- and coated-area-adjusted; it is not a blanket 365-night "
+        "projection. Collection cost and water revenue are not included in the economics."
     ),
 }
 
@@ -949,6 +1011,435 @@ def _provenance(run_dir: Path) -> dict[str, object] | None:
     }
 
 
+# --------------------------------------------------------------------------
+# Studies: grouping runs by the stored identity that produced them
+# --------------------------------------------------------------------------
+# A "study" is the (site, period, assumption set) a run was executed against,
+# read from the run's own config_resolved.yaml. Grouping and cross-linking by
+# study is reshaping only: it joins stored identity fields, never results.
+
+
+@lru_cache(maxsize=1024)
+def _study_info_cached(path_text: str, mtime_ns: int) -> tuple[str, str, str, str, str] | None:
+    """Parse one immutable config_resolved.yaml snapshot into study fields."""
+
+    del mtime_ns  # cache key component; contents are read below
+    try:
+        resolved = yaml.safe_load(Path(path_text).read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        return None
+    if not isinstance(resolved, dict):
+        return None
+    raw_site = resolved.get("site")
+    raw_simulation = resolved.get("simulation")
+    raw_calibration = resolved.get("calibration")
+    site = raw_site if isinstance(raw_site, dict) else {}
+    simulation = raw_simulation if isinstance(raw_simulation, dict) else {}
+    calibration = raw_calibration if isinstance(raw_calibration, dict) else {}
+    # Coordinates are part of the identity: the location picker moves the
+    # site's coordinates without renaming it, so name alone would merge
+    # genuinely different sites into one study.
+    latitude, longitude = site.get("latitude"), site.get("longitude")
+    coordinates = (
+        f"{latitude}, {longitude}"
+        if isinstance(latitude, int | float) and isinstance(longitude, int | float)
+        else ""
+    )
+    return (
+        str(site.get("name", "")),
+        coordinates,
+        str(simulation.get("start", ""))[:10],
+        str(simulation.get("end", ""))[:10],
+        str(calibration.get("assumption_set", "")),
+    )
+
+
+def _run_study(run_dir: Path) -> dict[str, str] | None:
+    """Study identity fields for one run, or None without a stored config."""
+
+    config_path = run_dir / "config_resolved.yaml"
+    try:
+        mtime_ns = config_path.stat().st_mtime_ns
+    except OSError:
+        return None
+    info = _study_info_cached(str(config_path.resolve()), mtime_ns)
+    if info is None:
+        return None
+    site, coordinates, start, end, assumption_set = info
+    if not site and not start:
+        return None
+    key = "|".join((site, coordinates, start, end, assumption_set))
+    label_parts = [site or "Unnamed site"]
+    if coordinates:
+        label_parts.append(coordinates)
+    if start or end:
+        label_parts.append(f"{start or '?'} — {end or '?'}")
+    if assumption_set:
+        label_parts.append(assumption_set)
+    return {"key": key, "label": " · ".join(label_parts)}
+
+
+_UNFILED_STUDY = {"key": "__unfiled__", "label": "No stored configuration"}
+
+
+def _grouped_run_entries(
+    run_entries: list[artifacts.RunEntry],
+) -> list[tuple[artifacts.RunEntry, dict[str, str]]]:
+    """Order runs as contiguous study blocks, studies by their newest run.
+
+    The input is newest-first, so the first appearance order of study keys is
+    already "most recently active study first"; within a study runs keep their
+    newest-first order. Contiguous blocks keep pagination stable: an appended
+    page can only continue the last block or start new ones.
+    """
+
+    blocks: dict[str, list[tuple[artifacts.RunEntry, dict[str, str]]]] = {}
+    order: list[str] = []
+    for entry in run_entries:
+        study = _run_study(entry.path) or _UNFILED_STUDY
+        if study["key"] not in blocks:
+            blocks[study["key"]] = []
+            order.append(study["key"])
+        blocks[study["key"]].append((entry, study))
+    grouped: list[tuple[artifacts.RunEntry, dict[str, str]]] = []
+    for key in order:
+        grouped.extend(blocks[key])
+    return grouped
+
+
+def _human_created(created: str, run_id: str) -> str:
+    """Compact display timestamp for a run card (formatting only)."""
+
+    raw = created
+    if not raw:
+        # Fall back to the timestamp embedded in the run id by OutputWriter.
+        match = re.search(r"-(\d{8}T\d{6})Z-", run_id)
+        if match:
+            raw = (
+                f"{match.group(1)[:4]}-{match.group(1)[4:6]}-{match.group(1)[6:8]}"
+                f"T{match.group(1)[9:11]}:{match.group(1)[11:13]}"
+            )
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return raw[:16] or "undated"
+    return parsed.strftime("%b %d, %H:%M")
+
+
+# One-line stored findings per analysis kind for cross-linking related runs.
+_RUN_KIND_LABELS: dict[str, str] = {
+    "compare-all-scenarios": "Comparison",
+    "compare-multi-year": "Multi-year comparison",
+    "monte-carlo": "Monte Carlo",
+    "sensitivity-oneway": "One-way sensitivity",
+    "sensitivity-winner-map": "Winner map",
+    "break-even": "Break-even",
+    "fetch-weather": "Weather retrieval",
+    "run-clean": "Clean production run",
+    "run-baseline": "Baseline run",
+}
+
+
+def _comparison_summary_line(entry: artifacts.RunEntry) -> str:
+    if not entry.winner:
+        return "no certified winner"
+    text = f"winner {entry.winner}"
+    if entry.margin_sar is not None and math.isfinite(entry.margin_sar):
+        text += f" +{_format_sar(entry.margin_sar)} SAR"
+    return text
+
+
+def _mc_summary_line(entry: artifacts.RunEntry) -> str:
+    if not entry.winner:
+        return "no majority winner"
+    text = f"majority winner {entry.winner}"
+    if entry.win_probability is not None:
+        text += f", wins {_format_sar(entry.win_probability * 100)}% of trials"
+    return text
+
+
+def _oneway_summary_line(entry: artifacts.RunEntry) -> str:
+    tornado = _oneway_tornado(artifacts.load_json(entry.path / "sensitivity_oneway_summary.json"))
+    entries = tornado.get("entries") if tornado else None
+    if isinstance(entries, list) and entries and isinstance(entries[0], dict):
+        return f"top driver {entries[0].get('parameter', 'unknown parameter')}"
+    return "stored sweep"
+
+
+def _twoway_summary_line(entry: artifacts.RunEntry) -> str:
+    summary = artifacts.load_json(entry.path / "sensitivity_twoway_summary.json") or {}
+    parameter_a, parameter_b = summary.get("parameter_a"), summary.get("parameter_b")
+    if isinstance(parameter_a, str) and isinstance(parameter_b, str):
+        return f"{parameter_a} × {parameter_b}"
+    return "stored grid"
+
+
+def _breakeven_summary_line(entry: artifacts.RunEntry) -> str:
+    report = artifacts.load_json(entry.path / "breakeven_report.json") or {}
+    parameter = report.get("parameter_name")
+    if not isinstance(parameter, str):
+        return "stored search"
+    crossovers = report.get("crossover_values")
+    if isinstance(crossovers, list) and crossovers:
+        values = ", ".join(
+            _display_number(str(value)) for value in crossovers if isinstance(value, int | float)
+        )
+        return f"{parameter} ties at {values}"
+    return f"{parameter}: no crossing found"
+
+
+_RELATED_SUMMARY_BUILDERS: dict[str, Callable[[artifacts.RunEntry], str]] = {
+    "compare-all-scenarios": _comparison_summary_line,
+    "compare-multi-year": _comparison_summary_line,
+    "monte-carlo": _mc_summary_line,
+    "sensitivity-oneway": _oneway_summary_line,
+    "sensitivity-winner-map": _twoway_summary_line,
+    "break-even": _breakeven_summary_line,
+}
+
+
+def _related_run_summary(entry: artifacts.RunEntry) -> str:
+    """One sentence from a sibling run's stored summary artifacts."""
+
+    builder = _RELATED_SUMMARY_BUILDERS.get(entry.kind)
+    return builder(entry) if builder else "stored record"
+
+
+def _related_runs(run_id: str, run_dir: Path) -> dict[str, object]:
+    """Sibling runs of the same study plus compare candidates (stored joins)."""
+
+    study = _run_study(run_dir)
+    siblings: list[dict[str, object]] = []
+    comparables: list[dict[str, object]] = []
+    for entry, entry_study in _grouped_run_entries(artifacts.list_runs(_OUTPUTS_DIR)):
+        if entry.run_id == run_id:
+            continue
+        same_study = study is not None and entry_study["key"] == study["key"]
+        if same_study and len(siblings) < 8:
+            siblings.append(
+                {
+                    "run_id": entry.run_id,
+                    "kind": entry.kind,
+                    "kind_label": _RUN_KIND_LABELS.get(entry.kind, entry.kind),
+                    "summary": _related_run_summary(entry),
+                    "created": _human_created(entry.created, entry.run_id),
+                }
+            )
+        if entry.kind in ("compare-all-scenarios", "compare-multi-year"):
+            comparables.append(
+                {
+                    "run_id": entry.run_id,
+                    "same_study": same_study,
+                    "label": (
+                        f"{entry_study['label']} · {_human_created(entry.created, entry.run_id)}"
+                    ),
+                }
+            )
+    comparables.sort(key=lambda candidate: not candidate["same_study"])
+    return {
+        "study": study,
+        "siblings": siblings,
+        "comparables": comparables[:20],
+    }
+
+
+def _sibling_mc_context(run_id: str, run_dir: Path) -> dict[str, object] | None:
+    """Newest same-study Monte Carlo run's stored certainty figures."""
+
+    study = _run_study(run_dir)
+    if study is None:
+        return None
+    for entry in artifacts.list_runs(_OUTPUTS_DIR):
+        if entry.kind != "monte-carlo" or entry.run_id == run_id:
+            continue
+        entry_study = _run_study(entry.path)
+        if entry_study is None or entry_study["key"] != study["key"]:
+            continue
+        summary = artifacts.load_json(entry.path / "monte_carlo_summary.json")
+        if summary is None:
+            continue
+        scenario_summaries = summary.get("scenario_summaries")
+        if not isinstance(scenario_summaries, dict):
+            continue
+        win_probability = {
+            scenario_id: float(scenario["win_probability"])
+            for scenario_id, scenario in scenario_summaries.items()
+            if isinstance(scenario, dict)
+            and isinstance(scenario.get("win_probability"), int | float)
+        }
+        if not win_probability:
+            continue
+        return {
+            "run_id": entry.run_id,
+            "trial_count": summary.get("trial_count"),
+            "reconciled_trial_count": summary.get("reconciled_trial_count"),
+            "majority_trial_winner": summary.get("majority_trial_winner"),
+            "win_probability": win_probability,
+        }
+    return None
+
+
+def _decision_strip(
+    financial_ranking: dict[str, object] | None,
+    mc_context: dict[str, object] | None,
+) -> dict[str, object] | None:
+    """Diverging-bar view of the stored net change vs baseline per scenario.
+
+    Bar lengths are the same purely visual |value|/max scaling the KPI
+    micro-bars use; every number printed is the stored incremental value.
+    """
+
+    if not financial_ranking or not isinstance(financial_ranking.get("rows"), list):
+        return None
+    raw_rows = cast(list[dict[str, object]], financial_ranking["rows"])
+    parsed: list[tuple[dict[str, object], float | None]] = [
+        (row, _parse_finite(str(row.get("incremental_net_annual_benefit_sar", ""))))
+        for row in raw_rows
+    ]
+    magnitudes = [abs(value) for _, value in parsed if value is not None]
+    if not magnitudes:
+        return None
+    scale = max(magnitudes)
+    mc_wins = cast(dict[str, float], mc_context.get("win_probability", {})) if mc_context else {}
+    rows = []
+    for row, value in parsed:
+        scenario_id = str(row.get("scenario_id", ""))
+        win = mc_wins.get(scenario_id)
+        rows.append(
+            {
+                "scenario_id": scenario_id,
+                "value": value,
+                "display": (
+                    _format_sar(value) if value is not None and scenario_id != "baseline" else "0"
+                ),
+                "is_reference": scenario_id == "baseline",
+                "negative": value is not None and value < 0,
+                "percent": (
+                    round(abs(value) / scale * 100, 1) if value is not None and scale > 0 else 0.0
+                ),
+                "win_percent": (_format_sar(win * 100) if isinstance(win, int | float) else None),
+                "audit_source": str(row.get("annual_audit_source", "")),
+            }
+        )
+    return {"rows": rows, "mc": mc_context}
+
+
+# Parameter-status warnings all share this backend phrasing; the certification
+# panel groups them so eleven near-identical sentences read as one finding.
+_STATUS_WARNING_PATTERN = re.compile(
+    r"^(?P<parameter>\S+) has status (?P<status>blocked|provisional); (?P<rest>.+)$"
+)
+
+
+def _aggregate_warnings(warnings: object) -> dict[str, object]:
+    """Group repeated parameter-status warnings; pass others through verbatim."""
+
+    grouped: dict[str, list[str]] = {}
+    grouped_rest = ""
+    other: list[str] = []
+    if isinstance(warnings, list):
+        for warning in warnings:
+            message = (
+                str(warning.get("message"))
+                if isinstance(warning, dict) and warning.get("message")
+                else str(warning)
+            )
+            match = _STATUS_WARNING_PATTERN.match(message)
+            if match:
+                grouped.setdefault(match.group("status"), []).append(match.group("parameter"))
+                grouped_rest = match.group("rest")
+            else:
+                other.append(message)
+    grouped_total = sum(len(parameters) for parameters in grouped.values())
+    summary = None
+    if grouped_total:
+        counts = " and ".join(
+            f"{len(parameters)} {status}" for status, parameters in sorted(grouped.items())
+        )
+        summary = f"{grouped_total} parameters are {counts} — {grouped_rest}"
+    return {
+        "summary": summary,
+        "groups": [
+            {"status": status, "parameters": parameters}
+            for status, parameters in sorted(grouped.items())
+        ],
+        "other": other,
+        "total": grouped_total + len(other),
+    }
+
+
+def _certification(
+    reconciliation: dict[str, object] | None,
+    recommendation: dict[str, object] | None,
+    validation_status: dict[str, object] | None,
+) -> dict[str, object] | None:
+    """One approval block joining the run's stored trust signals.
+
+    Reads the reconciliation verdict, the recommendation tier, the parameter
+    evidence counts, and the stored warnings. Pure reshaping: every field
+    shown exists verbatim in an artifact.
+    """
+
+    if not reconciliation and not recommendation and not validation_status:
+        return None
+    checks = reconciliation.get("checks") if reconciliation else None
+    checks = checks if isinstance(checks, list) else []
+    recon = None
+    if reconciliation is not None:
+        recon = {
+            "passed": bool(reconciliation.get("passed")),
+            "total": len(checks),
+            "passed_count": sum(
+                1 for check in checks if isinstance(check, dict) and check.get("passed")
+            ),
+            "checks": [
+                {
+                    "name": str(check.get("name", "unnamed")),
+                    "passed": bool(check.get("passed")),
+                    "message": str(check.get("message", "")),
+                }
+                for check in checks
+                if isinstance(check, dict)
+            ],
+        }
+
+    evidence = None
+    if validation_status:
+        status_counts = validation_status.get("parameter_counts_by_status")
+        status_counts = status_counts if isinstance(status_counts, dict) else {}
+        blocked = int(status_counts.get("blocked", 0) or 0)
+        provisional = int(status_counts.get("provisional", 0) or 0)
+        if blocked:
+            # Mirrors the stored warning wording: blocked parameters are
+            # permitted for research/sensitivity use only.
+            grade = "research/sensitivity use only"
+        elif provisional:
+            grade = "provisional evidence"
+        else:
+            grade = "validated evidence"
+        evidence = {
+            "grade": grade,
+            "counts_by_status": status_counts,
+            "counts_by_evidence_type": validation_status.get(
+                "parameter_counts_by_evidence_type", {}
+            ),
+            "disclaimer": validation_status.get("disclaimer"),
+            "key_uncertain_parameters": validation_status.get("key_uncertain_parameters", []),
+        }
+
+    tier = None
+    if recommendation and recommendation.get("recommendation_tier"):
+        tier = str(recommendation["recommendation_tier"]).replace("_", "-")
+
+    warnings = _aggregate_warnings(recommendation.get("warnings") if recommendation else None)
+    return {
+        "reconciliation": recon,
+        "evidence": evidence,
+        "tier": tier,
+        "warnings": warnings,
+    }
+
+
 def _chart_event_markers(run_dir: Path) -> list[dict[str, object]]:
     """Return only the action markers the explorer can usefully display.
 
@@ -1146,23 +1637,47 @@ def _kpi_diff(run_a: Path, run_b: Path) -> dict[str, object]:
 # --------------------------------------------------------------------------
 
 
-def _run_cards(run_entries: list[artifacts.RunEntry]) -> list[dict[str, object]]:
-    """Presentation data for a batch of stored run cards."""
+def _run_cards(
+    grouped: list[tuple[artifacts.RunEntry, dict[str, str]]],
+    previous_study_key: str | None,
+) -> list[dict[str, object]]:
+    """Presentation data for one batch of study-grouped run cards.
+
+    ``previous_study_key`` is the study of the card just before this batch in
+    the full grouped order, so an appended page repeats no study header.
+    """
 
     runs: list[dict[str, object]] = []
-    for run in run_entries:
+    last_key = previous_study_key
+    for run, study in grouped:
         site = _resolved_config_section(run.path, "site").get("name")
         runs.append(
             {
                 "run_id": run.run_id,
                 "created": run.created,
+                "created_display": _human_created(run.created, run.run_id),
                 "kind": run.kind,
+                "kind_label": _RUN_KIND_LABELS.get(run.kind, run.kind.replace("-", " ")),
                 "site": site if isinstance(site, str) else None,
                 "winner": run.winner,
                 "valid": run.valid,
+                "margin_display": (
+                    _format_sar(run.margin_sar)
+                    if run.margin_sar is not None and math.isfinite(run.margin_sar)
+                    else None
+                ),
+                "win_percent": (
+                    _format_sar(run.win_probability * 100)
+                    if run.win_probability is not None
+                    else None
+                ),
+                "study_key": study["key"],
+                "study_label": study["label"],
+                "new_study": study["key"] != last_key,
                 "fingerprint_url": f"/api/runs/{run.run_id}/fingerprint",
             }
         )
+        last_key = study["key"]
     return runs
 
 
@@ -1170,9 +1685,10 @@ def _run_cards(run_entries: list[artifacts.RunEntry]) -> list[dict[str, object]]
 def index(request: Request) -> HTMLResponse:
     config_names = _config_names()
     run_entries = artifacts.list_runs(_OUTPUTS_DIR)
-    total_runs = len(run_entries)
+    grouped = _grouped_run_entries(run_entries)
+    total_runs = len(grouped)
     total_pages = max(1, math.ceil(total_runs / _RUNS_PER_PAGE))
-    runs = _run_cards(run_entries[:_RUNS_PER_PAGE])
+    runs = _run_cards(grouped[:_RUNS_PER_PAGE], previous_study_key=None)
     visible_jobs = [record for record in jobs.records() if record.get("status") != "done"]
     return templates.TemplateResponse(
         request,
@@ -1197,15 +1713,21 @@ def index(request: Request) -> HTMLResponse:
 def run_page_fragment(request: Request, page: int) -> HTMLResponse:
     """Return one lightweight card batch for the scrolling run archive."""
 
-    run_entries = artifacts.list_runs(_OUTPUTS_DIR)
-    total_pages = max(1, math.ceil(len(run_entries) / _RUNS_PER_PAGE))
+    grouped = _grouped_run_entries(artifacts.list_runs(_OUTPUTS_DIR))
+    total_pages = max(1, math.ceil(len(grouped) / _RUNS_PER_PAGE))
     if page < 1 or page > total_pages:
         raise HTTPException(status_code=404, detail="Run archive page not found")
     start = (page - 1) * _RUNS_PER_PAGE
+    previous_study_key = grouped[start - 1][1]["key"] if start > 0 and grouped else None
     return templates.TemplateResponse(
         request,
         "_run_cards.html",
-        {"runs": _run_cards(run_entries[start : start + _RUNS_PER_PAGE])},
+        {
+            "runs": _run_cards(
+                grouped[start : start + _RUNS_PER_PAGE],
+                previous_study_key=previous_study_key,
+            )
+        },
         headers={"X-Run-Total-Pages": str(total_pages)},
     )
 
@@ -1227,6 +1749,7 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
         "fingerprint": artifacts.run_fingerprint(run_dir),
         "rerun_supported": kind in _RERUNNABLE_KINDS,
         "document_status": "ANALYSIS RECORD",
+        "related": _related_runs(run_id, run_dir),
     }
 
     if kind == "compare-all-scenarios":
@@ -1239,14 +1762,16 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
         raw_validation_status = (
             recommendation.get("validation_status") if recommendation is not None else None
         )
+        validation_status = (
+            raw_validation_status if isinstance(raw_validation_status, dict) else None
+        )
         context.update(
             {
                 "ranking": ranking,
                 "recommendation": recommendation,
-                "validation_status": (
-                    raw_validation_status if isinstance(raw_validation_status, dict) else None
-                ),
+                "validation_status": validation_status,
                 "reconciliation": reconciliation,
+                "certification": _certification(reconciliation, recommendation, validation_status),
                 "headline": _headline_cards(recommendation),
                 "finding": _finding_statement(recommendation, reconciliation),
                 "document_status": (
@@ -1271,6 +1796,7 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
             header, rows = artifacts.read_csv_rows(annual_path)
             context["annual_summary"] = {"header": header, "rows": rows}
             context["kpi_table"] = _kpi_table(header, rows)
+            context["water_balance"] = _water_balance_card(header, rows)
             context["annual_cost_bars"] = _annual_cost_bars(header, rows)
             context["financial_ranking"] = _financial_ranking(
                 header,
@@ -1278,15 +1804,34 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
                 ranking,
                 comparison_metadata,
             )
+            context["decision_strip"] = _decision_strip(
+                cast("dict[str, object] | None", context["financial_ranking"]),
+                _sibling_mc_context(run_id, run_dir),
+            )
+        if (run_dir / "config_resolved.yaml").is_file():
+            context["dew_simulator"] = {
+                "endpoint": f"/api/runs/{run_id}/dew-simulator",
+                "relative_humidity_pct": 80,
+                "air_temperature_c": 25,
+                "wind_speed_m_s": 2,
+            }
         cost_path = run_dir / "scenario_cost_summary.csv"
         if cost_path.is_file():
             header, rows = artifacts.read_csv_rows(cost_path, limit=200)
             context["cost_table"] = _cost_table(header, rows, reconciliation)
         return templates.TemplateResponse(request, "run_comparison.html", context)
 
+    context.update(_analysis_page_context(kind, run_dir))
+    return templates.TemplateResponse(request, "run_analysis.html", context)
+
+
+def _analysis_page_context(kind: str, run_dir: Path) -> dict[str, object]:
+    """Extra stored-artifact context for the non-comparison analysis pages."""
+
+    context: dict[str, object] = {}
     if kind == "monte-carlo":
-        context["mc_summary"] = artifacts.load_json(run_dir / "monte_carlo_summary.json")
-        mc_summary = context["mc_summary"]
+        mc_summary = artifacts.load_json(run_dir / "monte_carlo_summary.json")
+        context["mc_summary"] = mc_summary
         if isinstance(mc_summary, dict) and mc_summary.get("majority_trial_winner"):
             winner = str(mc_summary["majority_trial_winner"])
             scenario_summaries = mc_summary.get("scenario_summaries")
@@ -1330,7 +1875,7 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
         context["breakeven_chart"] = _breakeven_chart(breakeven_report)
     else:
         context["generic_summary"] = artifacts.load_json(run_dir / "summary.json")
-    return templates.TemplateResponse(request, "run_analysis.html", context)
+    return context
 
 
 @app.get("/compare-runs", response_class=HTMLResponse)
@@ -1339,9 +1884,11 @@ def compare_runs(request: Request, a: str, b: str) -> HTMLResponse:
         raise HTTPException(status_code=400, detail="Choose two different runs to compare")
     runs = []
     run_dirs: list[Path] = []
+    studies: list[dict[str, str] | None] = []
     for run_id in (a, b):
         run_dir = _run_dir_or_404(run_id)
         run_dirs.append(run_dir)
+        studies.append(_run_study(run_dir))
         runs.append(
             {
                 "run_id": run_id,
@@ -1350,11 +1897,17 @@ def compare_runs(request: Request, a: str, b: str) -> HTMLResponse:
                 "fingerprint": artifacts.run_fingerprint(run_dir),
             }
         )
+    # Before/after framing only makes sense for iterations of one study; two
+    # different sites or assumption sets are neutral A/B alternatives.
+    same_study = (
+        studies[0] is not None and studies[1] is not None and studies[0]["key"] == studies[1]["key"]
+    )
     return templates.TemplateResponse(
         request,
         "compare_runs.html",
         {
             "runs": runs,
+            "diff_mode": "temporal" if same_study else "neutral",
             "config_diff": _config_diff(run_dirs[0], run_dirs[1]),
             "kpi_diff": _kpi_diff(run_dirs[0], run_dirs[1]),
         },
@@ -1396,6 +1949,31 @@ def config_factory_default(name: str) -> JSONResponse:
     return JSONResponse({"content": _RIYADH_DEFAULT_CONFIG_PATH.read_text(encoding="utf-8")})
 
 
+@app.get("/api/command-index")
+def command_index() -> JSONResponse:
+    """Lightweight run/config listing for the keyboard command palette.
+
+    Names and stored identity fields only — the palette is navigation, so this
+    reuses exactly what the run cards already show.
+    """
+
+    runs = [
+        {
+            "run_id": entry.run_id,
+            "kind": entry.kind,
+            "kind_label": _RUN_KIND_LABELS.get(entry.kind, entry.kind.replace("-", " ")),
+            "site": study["label"],
+            "winner": entry.winner,
+            "created": _human_created(entry.created, entry.run_id),
+        }
+        for entry, study in _grouped_run_entries(artifacts.list_runs(_OUTPUTS_DIR))[:200]
+    ]
+    return JSONResponse(
+        {"runs": runs, "configs": _config_names()},
+        headers={"Cache-Control": "private, max-age=30"},
+    )
+
+
 @app.get("/api/runs/{run_id}/fingerprint")
 def run_fingerprint(run_id: str) -> JSONResponse:
     """Load a run-card fingerprint on demand instead of blocking the run list."""
@@ -1404,6 +1982,41 @@ def run_fingerprint(run_id: str) -> JSONResponse:
     return JSONResponse(
         artifacts.run_fingerprint(run_dir) or {},
         headers={"Cache-Control": "private, max-age=300"},
+    )
+
+
+@app.get("/api/runs/{run_id}/dew-simulator")
+def run_dew_simulator(
+    run_id: str,
+    relative_humidity_pct: float = Query(default=80.0, ge=1.0, le=100.0),
+    air_temperature_c: float = Query(default=25.0, ge=-40.0, le=70.0),
+    wind_speed_m_s: float = Query(default=2.0, ge=0.0, le=40.0),
+) -> JSONResponse:
+    """Evaluate one night hour using the run's immutable coating configuration."""
+
+    run_dir = _run_dir_or_404(run_id)
+    config_path = run_dir / "config_resolved.yaml"
+    if not config_path.is_file():
+        raise HTTPException(
+            status_code=409,
+            detail="Run has no config_resolved.yaml for the dew simulator.",
+        )
+    try:
+        config = load_config(config_path)
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Run configuration cannot be loaded: {exc}",
+        ) from exc
+    result = simulate_nighttime_dew(
+        config,
+        air_temperature_c=air_temperature_c,
+        relative_humidity_pct=relative_humidity_pct,
+        wind_speed_m_s=wind_speed_m_s,
+    )
+    return JSONResponse(
+        result.to_record(),
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -1480,11 +2093,16 @@ def _headline_cards(recommendation: dict[str, object] | None) -> list[dict[str, 
             "audit_detail": f"Stored certified winner = {winner}",
         }
     ]
+    baseline_won = winner == "baseline"
     margin = recommendation.get("decisive_margin_sar")
     if isinstance(margin, int | float) and math.isfinite(margin):
         cards.append(
             {
-                "label": "Margin over runner-up",
+                # When doing nothing wins, the stored margin IS the best
+                # mitigation's shortfall — same number, honest label.
+                "label": (
+                    "Best mitigation falls short by" if baseline_won else "Margin over runner-up"
+                ),
                 "value": _format_sar(margin),
                 "unit": "SAR/year",
                 "audit_source": "recommendation.json · decisive_margin_sar",
@@ -1496,6 +2114,8 @@ def _headline_cards(recommendation: dict[str, object] | None) -> list[dict[str, 
         ("Energy gain vs baseline", "energy_gain_vs_baseline_kwh", "kWh/year"),
         ("Incremental payback", "incremental_payback_years_vs_baseline", "years"),
     ):
+        if baseline_won and key == "energy_gain_vs_baseline_kwh":
+            continue  # baseline vs itself is 0 by definition — an empty slot, not a fact
         value = winner_kpis.get(key)
         if isinstance(value, int | float) and math.isfinite(float(value)):
             cards.append(
@@ -1609,6 +2229,11 @@ def _submit_if_idle(kind: str, config_name: str, work: Callable[[Job], Path]) ->
 def launch_run(body: LaunchRequest) -> JSONResponse:
     if body.kind not in JOB_KINDS:
         raise HTTPException(status_code=400, detail=f"kind must be one of {JOB_KINDS}")
+    if body.kind == "sensitivity-oneway" and not body.parameters:
+        raise HTTPException(
+            status_code=400,
+            detail="Choose at least one parameter for one-way sensitivity.",
+        )
     config_path = _config_path(body.config)
     job = _submit_if_idle(body.kind, body.config, _make_work(body, config_path))
     return JSONResponse(job.to_record(), status_code=202)
@@ -1817,6 +2442,22 @@ class LocationConfigBody(BaseModel):
     content: str
     latitude: float = Field(ge=-90, le=90)
     longitude: float = Field(ge=-180, le=180)
+    # Optional whole-day period rewrite applied in the same validated YAML
+    # edit, so the config essentials form needs no YAML hand-editing.
+    start_date: date | None = None
+    end_date: date | None = None
+
+    @model_validator(mode="after")
+    def validate_period(self) -> LocationConfigBody:
+        if (self.start_date is None) != (self.end_date is None):
+            raise ValueError("start_date and end_date must be supplied together")
+        if (
+            self.start_date is not None
+            and self.end_date is not None
+            and self.end_date < self.start_date
+        ):
+            raise ValueError("end_date must be on or after start_date")
+        return self
 
 
 @lru_cache(maxsize=1)
@@ -1894,8 +2535,13 @@ def apply_location(name: str, body: LocationConfigBody) -> JSONResponse:
         raw = yaml.safe_load(body.content)
         start = _simulation_bound_from_yaml(raw, "start")
         end = _simulation_bound_from_yaml(raw, "end")
-        local_start = datetime.combine(start.date(), start.time(), timezone)
-        local_end = datetime.combine(end.date(), end.time(), timezone)
+        if body.start_date is not None and body.end_date is not None:
+            # Whole-day period override, same convention as the launch form.
+            local_start = datetime.combine(body.start_date, datetime_time.min, timezone)
+            local_end = datetime.combine(body.end_date, datetime_time(hour=23), timezone)
+        else:
+            local_start = datetime.combine(start.date(), start.time(), timezone)
+            local_end = datetime.combine(end.date(), end.time(), timezone)
 
         updated = body.content
         replacements = (

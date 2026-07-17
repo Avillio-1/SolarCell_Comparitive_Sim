@@ -13,6 +13,9 @@
   </div>
   {% include "_title_block.html" %}
 </div>
+
+{% include "_certification.html" %}
+
 <div class="run-head run-command-bar">
   <a class="quiet-link run-back-link" href="/">&larr; back to runs</a>
   <span class="run-head-actions">
@@ -25,92 +28,86 @@
   <span id="rerun-status" class="hint" role="status"></span>
 </div>
 
+{% include "_related_runs.html" %}
+
 <nav class="section-nav" aria-label="Sections of this record">
   <span class="section-nav-label">On this record</span>
   {% if recommendation and ranking and ranking.ranking %}<a href="#ranking">Ranking</a>{% endif %}
   {% if kpi_table %}<a href="#annual-kpis">Annual KPIs</a>{% endif %}
+  {% if water_balance %}<a href="#water-balance">Water balance</a>{% endif %}
+  {% if dew_simulator %}<a href="#dew-simulator">Dew simulator</a>{% endif %}
   {% if daily_energy %}<a href="#energy-explorer">Daily explorer</a>{% endif %}
-  {% if daily_loss %}<a href="#daily-charts">Charts</a>{% endif %}
+  {% if annual_cost_bars %}<a href="#annual-chart">Annual money</a>{% endif %}
   {% if cost_table %}<a href="#cost-components">Costs</a>{% endif %}
   <a href="#artifact-files">Artifacts</a>
 </nav>
 
-{% if finding %}
-<p class="finding-statement finding-{{ finding.tone }}" data-audit-source="recommendation.json + reconciliation_report.json"
-   data-audit-detail="Declarative summary composed from the stored winner, KPI snapshot, margin, evidence tier, and reconciliation checks.">{{ finding.text }}</p>
-{% endif %}
-
-{% if validation_status %}
-<details class="warn-note validation-banner">
-  <summary>Parameter evidence quality · {{ validation_status.parameter_counts_by_status.blocked or 0 }} blocked, {{ validation_status.parameter_counts_by_status.provisional or 0 }} provisional</summary>
-  <p>{{ validation_status.disclaimer }}</p>
-  <p class="validation-counts">
-    <span>Status:</span>
-    {% for status, count in validation_status.parameter_counts_by_status.items() %}
-      {{ count }} {{ status }}{% if not loop.last %} /{% endif %}
-    {% endfor %}
-    <span>Evidence:</span>
-    {% for evidence_type, count in validation_status.parameter_counts_by_evidence_type.items() %}
-      {{ count }} {{ evidence_type }}{% if not loop.last %} /{% endif %}
-    {% endfor %}
-  </p>
-  {% if validation_status.key_uncertain_parameters %}
-  <div class="validation-uncertain">
-    <h3>Most uncertain parameters</h3>
-    <ul>
-      {% for parameter in validation_status.key_uncertain_parameters %}
-      <li><span class="mono">{{ parameter.name }}</span>:
-        low {{ parameter.low_value | display_number }},
-        central {{ parameter.central_value | display_number }},
-        high {{ parameter.high_value | display_number }}
-        ({{ parameter.confidence }} confidence, {{ parameter.status }})</li>
-      {% endfor %}
-    </ul>
-  </div>
+{% if finding or headline or decision_strip %}
+<section class="finding-banner" aria-label="Stored finding">
+  {% if finding %}
+  <p class="finding-statement finding-{{ finding.tone }}" data-audit-source="recommendation.json + reconciliation_report.json"
+     data-audit-detail="Declarative summary composed from the stored winner, KPI snapshot, margin, evidence tier, and reconciliation checks.">{{ finding.text }}</p>
   {% endif %}
-</details>
-{% endif %}
 
-{% if headline %}
-<section class="headline-cards">
-  {% for card in headline %}
-  <div class="headline-card" data-audit-source="{{ card.audit_source }}"
-       data-audit-detail="{{ card.audit_detail }}">
-    <span class="headline-label">{{ card.label }}</span>
-    <span class="headline-value">{% if loop.first %}{{ strategy_label(card.value) }}{% else %}{{ card.value }}{% endif %}</span>
-    {% if card.unit %}<span class="headline-unit">{{ card.unit }}</span>{% endif %}
-  </div>
-  {% endfor %}
-</section>
-{% endif %}
-
-{# Reconciliation comes first on purpose: nothing below it means anything if these fail. #}
-{% if reconciliation %}
-<section class="recon-strip {% if not reconciliation.passed %}recon-strip-failed{% endif %}">
-  <span class="recon-title">Reconciliation</span>
-  {% set failed_checks = reconciliation.checks | rejectattr("passed") | list %}
-  {% if reconciliation.passed %}
-  <strong class="recon-verdict recon-verdict-pass">✓ all {{ reconciliation.checks | length }} checks passed</strong>
-  {% else %}
-  <strong class="recon-verdict recon-verdict-fail">✕ {{ failed_checks | length }} of {{ reconciliation.checks | length }} checks failed</strong>
-  {% endif %}
-  <details class="recon-checks">
-    <summary>View {{ reconciliation.checks | length }} checks</summary>
-    <div class="recon-check-list">
-    {% for check in reconciliation.checks %}
-      <span class="chip {{ 'chip-pass' if check.passed else 'chip-fail' }}"
-            title="{{ check.message }}">{{ check.name }}</span>
-    {% endfor %}
+  {% if decision_strip %}
+  <div class="decision-strip" data-audit-source="scenario_annual_summary.csv · incremental_net_annual_benefit_vs_baseline_sar"
+       data-audit-detail="Stored net change vs baseline per scenario; bar length is |value| relative to the largest, a purely visual scale.">
+    <div class="decision-heading">
+      <strong>Net change vs doing nothing</strong>
+      <span class="hint">SAR/year · stored incremental figures — right of the line adds value, left loses it</span>
     </div>
-    <p class="hint">This self-audit verifies shared weather and events, annual-to-daily totals, and cost-to-operation reconciliation.</p>
-  </details>
+    {% for row in decision_strip.rows %}
+    <div class="decision-row{{ ' decision-reference' if row.is_reference }}">
+      <span class="decision-label">{{ strategy_label(row.scenario_id) }}</span>
+      <span class="decision-track" aria-hidden="true">
+        <span class="decision-zero"></span>
+        {% if not row.is_reference and row.value is not none %}
+        <span class="decision-bar {{ 'decision-neg' if row.negative else 'decision-pos' }}"
+              style="--bar: {{ row.percent }}%"></span>
+        {% endif %}
+      </span>
+      <span class="decision-value mono" data-audit-source="{{ row.audit_source }} · incremental_net_annual_benefit_vs_baseline_sar">
+        {% if row.is_reference %}0 · reference{% else %}{{ row.display }}{% endif %}
+      </span>
+      {% if row.win_percent is not none %}
+      <span class="decision-win mono" title="Stored Monte Carlo win probability from the related run">wins {{ row.win_percent }}% of trials</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+    {% if decision_strip.mc %}
+    <p class="hint decision-mc-note" data-audit-source="monte_carlo_summary.json · scenario win_probability"
+       data-audit-detail="Stored win probabilities from the newest same-study Monte Carlo run.">
+      Certainty from Monte Carlo run
+      <a href="/run/{{ decision_strip.mc.run_id }}" class="mono">{{ decision_strip.mc.run_id }}</a>
+      ({{ decision_strip.mc.reconciled_trial_count }} of {{ decision_strip.mc.trial_count }} trials reconciled).
+    </p>
+    {% else %}
+    <p class="hint decision-mc-note">No same-study Monte Carlo run exists yet — launch one to see
+      how seed-sensitive this margin is.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if headline %}
+  <div class="headline-cards">
+    {% for card in headline %}
+    <div class="headline-card" data-audit-source="{{ card.audit_source }}"
+         data-audit-detail="{{ card.audit_detail }}">
+      <span class="headline-label">{{ card.label }}</span>
+      <span class="headline-value">{% if loop.first %}{{ strategy_label(card.value) }}{% else %}{{ card.value }}{% endif %}</span>
+      {% if card.unit %}<span class="headline-unit">{{ card.unit }}</span>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
 </section>
-{% if not reconciliation.passed %}
+{% endif %}
+
+{% if reconciliation and not reconciliation.passed %}
 {% set first_failed = (reconciliation.checks | rejectattr("passed") | list | first) %}
 <p class="warn-note"><strong>{{ first_failed.name }} failed:</strong>
 “{{ first_failed.message }}” Therefore no ranking was accepted. The exact stored failure is in
 <code>reconciliation_report.json</code>.</p>
-{% endif %}
 {% endif %}
 
 {% if recommendation and ranking and ranking.ranking %}
@@ -190,7 +187,7 @@
   </div>
   <p class="hint financial-baseline-note"><strong>Cost boundary:</strong> the comparison includes
     scenario-specific mitigation costs. Costs common to all scenarios are outside this decision,
-    so baseline has no mitigation-programme CAPEX or OPEX.</p>
+    so baseline has no mitigation CAPEX or OPEX.</p>
   {% else %}
   <p class="hint">This legacy run does not contain the stored incremental financial columns needed
     for the explanatory breakdown. Its accepted ranking is shown unchanged.</p>
@@ -209,17 +206,6 @@
       {% endfor %}
     </tbody>
   </table>
-  {% endif %}
-
-  {% if recommendation.warnings %}
-  <div class="assumption-block">
-    <h3>Warnings ({{ recommendation.warnings|length }})</h3>
-    <ul>
-      {% for w in recommendation.warnings %}
-      <li>{% if w.message is defined %}{{ w.message }}{% else %}{{ w }}{% endif %}</li>
-      {% endfor %}
-    </ul>
-  </div>
   {% endif %}
 
   <details class="assumption-block">
@@ -247,11 +233,11 @@
     <thead><tr><th scope="col"><span class="visually-hidden">KPI</span></th>{% for s in kpi_table.scenarios %}<th class="num" scope="col">{{ strategy_label(s) }}</th>{% endfor %}</tr></thead>
     <tbody>
       {% for row in kpi_table.rows %}
-      <tr><th scope="row"{% if row.help %} class="has-help" title="{{ row.help }}"{% endif %}>{{ row.label }}</th>
+      <tr><th scope="row"{% if row.help %} class="has-help" tabindex="0" data-pop="{{ row.help }}"{% endif %}>{{ row.label }}</th>
         {% for v in row["values"] %}<td class="num mono{{ ' best-cell' if row.best[loop.index0] }}"
           data-kpi-value="{{ v }}"
           data-audit-source="{{ row.audit_sources[loop.index0] }}"
-          data-audit-detail="Stored value shown with display rounding; download the CSV for full precision.">{{ v | display_number }}</td>{% endfor %}
+          data-audit-detail="Stored value shown with display rounding; download the CSV for full precision.">{% if row.best[loop.index0] %}<span class="best-mark" aria-hidden="true">▲</span><span class="visually-hidden">best in row: </span>{% endif %}{{ v | display_number }}</td>{% endfor %}
       </tr>
       {% endfor %}
     </tbody>
@@ -264,11 +250,144 @@
       {% endif %}{% endfor %}
     </ul>
   </details>
-  <p class="hint"><span class="best-key"></span> best value in each row (green): higher is better
+  <p class="hint"><span class="best-key"></span> ▲ best value in each row (green): higher is better
     for revenue, energy gain, net benefit, and ROI; lower is better for losses, costs, payback,
     and LCOE. Operational rows (water, crew, drone hours) are not ranked. Rounded for reading —
     full precision is in
     <a href="/api/runs/{{ run_id }}/artifact/scenario_annual_summary.csv">scenario_annual_summary.csv</a>.</p>
+</section>
+{% endif %}
+
+{% if water_balance %}
+<section class="panel water-balance-panel" id="water-balance">
+  <div class="water-section-heading">
+    <div>
+      <span class="eyebrow">Annual resource ledger</span>
+      <h2>Water balance by strategy</h2>
+    </div>
+    <p>Net water position = harvested dew − external cleaning water. Each card is an
+      alternative operating strategy, not a volume that should be added to the others.</p>
+  </div>
+  <div class="water-balance-grid">
+    {% for row in water_balance.rows %}
+    <article class="water-strategy-card water-net-{{ row.net_tone }}"
+             data-audit-source="{{ row.audit_source }}"
+             data-audit-detail="Every displayed volume and conversion is stored in the annual summary.">
+      <h3>{{ strategy_label(row.scenario_id) }}</h3>
+      <div class="water-net">
+        <span>Net water position</span>
+        {% if row.annual_net_water_position_liters is not none %}
+        <strong class="mono">{% if row.net_tone == "positive" %}+{% endif %}{{ row.annual_net_water_position_liters | display_number }} L</strong>
+        <small class="mono">{% if row.net_tone == "positive" %}+{% endif %}{{ row.annual_net_water_position_cubic_meters | display_number }} m³</small>
+        {% else %}
+        <strong>Not stored</strong>
+        <small>Re-run this legacy record to calculate it.</small>
+        {% endif %}
+      </div>
+      <dl class="water-ledger">
+        <div>
+          <dt>Cleaning water consumed</dt>
+          <dd class="mono">{{ row.consumed_liters | display_number }} L</dd>
+          <small class="mono">{% if row.annual_cleaning_water_consumed_cubic_meters is not none %}{{ row.annual_cleaning_water_consumed_cubic_meters | display_number }} m³{% else %}–{% endif %}</small>
+        </div>
+        <div>
+          <dt>Dew harvested</dt>
+          <dd class="mono">{{ row.harvested_liters | display_number }} L</dd>
+          <small class="mono">{% if row.annual_collected_water_cubic_meters is not none %}{{ row.annual_collected_water_cubic_meters | display_number }} m³{% else %}–{% endif %}</small>
+        </div>
+        <div>
+          <dt>Tank equivalents</dt>
+          <dd class="mono">{% if row.annual_collected_water_tank_equivalents is not none %}{{ row.annual_collected_water_tank_equivalents | display_number }}{% else %}–{% endif %}</dd>
+          <small>{% if water_balance.tank_basis_liters %}at {{ water_balance.tank_basis_liters | display_number }} L each{% else %}basis unavailable{% endif %}</small>
+        </div>
+        <div>
+          <dt>Dew-eligible nights</dt>
+          <dd class="mono">{% if row.annual_dew_eligible_nights is not none %}{{ row.annual_dew_eligible_nights | int }}{% else %}–{% endif %}</dd>
+          <small>weather-gated daily windows</small>
+        </div>
+      </dl>
+    </article>
+    {% endfor %}
+  </div>
+  {% if not water_balance.complete %}
+  <p class="hint legacy-water-note">This older record predates the stored net, m³, tank, and
+    eligible-night columns. Its original consumed and harvested litres remain visible; re-run it
+    from the command bar to produce the complete ledger.</p>
+  {% endif %}
+  <p class="hint">Source:
+    <a href="/api/runs/{{ run_id }}/artifact/scenario_annual_summary.csv">scenario_annual_summary.csv</a>.
+    The 1,000 L tank is a display basis, not a specified site tank or an economic assumption.</p>
+</section>
+{% endif %}
+
+{% if dew_simulator %}
+<section class="panel dew-simulator-panel" id="dew-simulator"
+         data-endpoint="{{ dew_simulator.endpoint }}"
+         data-audit-source="config_resolved.yaml · coating domain physics preview"
+         data-audit-detail="Interactive one-hour nighttime scenario; it does not modify the stored annual run.">
+  <div class="dew-simulator-heading">
+    <div>
+      <span class="eyebrow">Interactive nighttime test</span>
+      <h2>Humidity &amp; dew-point simulator</h2>
+    </div>
+    <p>Move the weather controls to see whether the run’s configured coating cools below the dew
+      point and starts collecting water.</p>
+  </div>
+
+  <div class="dew-simulator-layout">
+    <form class="dew-controls" id="dew-simulator-controls">
+      <div class="dew-control dew-control-humidity">
+        <label for="dew-relative-humidity">Relative humidity
+          <output id="dew-relative-humidity-value" for="dew-relative-humidity">{{ dew_simulator.relative_humidity_pct }}%</output>
+        </label>
+        <input id="dew-relative-humidity" name="relative_humidity_pct" type="range"
+               min="20" max="100" step="1" value="{{ dew_simulator.relative_humidity_pct }}">
+        <div class="humidity-indicator" id="humidity-indicator" aria-hidden="true">
+          <span class="humidity-fill"></span>
+          <span class="humidity-gate"></span>
+        </div>
+        <div class="humidity-indicator-labels">
+          <span id="humidity-current-label">Current RH {{ dew_simulator.relative_humidity_pct }}%</span>
+          <span id="humidity-gate-label">Collection gate –</span>
+        </div>
+      </div>
+
+      <div class="dew-control">
+        <label for="dew-air-temperature">Air temperature
+          <output id="dew-air-temperature-value" for="dew-air-temperature">{{ dew_simulator.air_temperature_c }} °C</output>
+        </label>
+        <input id="dew-air-temperature" name="air_temperature_c" type="range"
+               min="0" max="50" step="1" value="{{ dew_simulator.air_temperature_c }}">
+      </div>
+
+      <div class="dew-control">
+        <label for="dew-wind-speed">Wind speed
+          <output id="dew-wind-speed-value" for="dew-wind-speed">{{ dew_simulator.wind_speed_m_s }} m/s</output>
+        </label>
+        <input id="dew-wind-speed" name="wind_speed_m_s" type="range"
+               min="0" max="15" step="0.5" value="{{ dew_simulator.wind_speed_m_s }}">
+      </div>
+    </form>
+
+    <div class="dew-output" id="dew-simulator-output" aria-live="polite" aria-busy="true">
+      <div class="dew-status-row">
+        <span class="dew-status dew-status-loading" id="dew-status">Calculating…</span>
+        <span class="mono dew-input-summary" id="dew-input-summary">Night · 1 hour</span>
+      </div>
+      <p id="dew-status-message">Evaluating this run’s stored coating configuration.</p>
+      <dl class="dew-readouts">
+        <div><dt>Dew point</dt><dd id="dew-point-value">–</dd></div>
+        <div><dt>Coated surface</dt><dd id="dew-surface-value">–</dd></div>
+        <div><dt>Dew margin</dt><dd id="dew-margin-value">–</dd></div>
+        <div><dt>Radiative cooling</dt><dd id="dew-cooling-value">–</dd></div>
+        <div class="dew-yield-readout"><dt>Harvest intensity</dt><dd id="dew-yield-value">–</dd></div>
+        <div class="dew-yield-readout"><dt>Whole-farm rate</dt><dd id="dew-farm-yield-value">–</dd></div>
+      </dl>
+      <p class="dew-model-basis" id="dew-model-basis">Nighttime (0 W/m²), one-hour exposure;
+        whole-farm rate scales the run’s coated area. This is a sensitivity preview, not a
+        forecast or a change to the stored run.</p>
+    </div>
+  </div>
 </section>
 {% endif %}
 
@@ -294,32 +413,52 @@
 <section class="panel energy-explorer" id="energy-explorer">
   <div class="energy-explorer-heading">
     <div>
-      <h2>Daily energy explorer</h2>
-      <p>Focus on one strategy or deliberately compare all three. Hover to explore; click a date
-        to keep its explanation open.</p>
+      <h2>Daily explorer</h2>
+      <p>One instrument for the year: pick a metric, focus one strategy or compare all three.
+        Hover to explore; click a date to keep its explanation open.</p>
     </div>
-    <div class="scenario-picker" role="group" aria-label="Energy scenario">
-      <button type="button" class="scenario-choice active" data-energy-scenario="baseline"
-        aria-pressed="true">{{ strategy_label("baseline") }}</button>
-      <button type="button" class="scenario-choice" data-energy-scenario="reactive"
-        aria-pressed="false">{{ strategy_label("reactive") }}</button>
-      <button type="button" class="scenario-choice" data-energy-scenario="coating"
-        aria-pressed="false">{{ strategy_label("coating") }}</button>
-      <button type="button" class="scenario-choice" data-energy-scenario="compare"
-        aria-pressed="false">Compare</button>
+    <div class="explorer-pickers">
+      <div class="metric-picker" role="group" aria-label="Explorer metric">
+        <button type="button" class="metric-choice active" data-energy-metric="energy"
+          aria-pressed="true">Energy</button>
+        {% if daily_loss %}
+        <button type="button" class="metric-choice" data-energy-metric="loss"
+          aria-pressed="false">Loss</button>
+        {% endif %}
+        {% if daily_soiling %}
+        <button type="button" class="metric-choice" data-energy-metric="cleanliness"
+          aria-pressed="false">Cleanliness</button>
+        {% endif %}
+        {% if daily_cumgain %}
+        <button type="button" class="metric-choice" data-energy-metric="cumgain"
+          aria-pressed="false">Cumulative gain</button>
+        {% endif %}
+      </div>
+      <div class="scenario-picker" role="group" aria-label="Energy scenario">
+        <button type="button" class="scenario-choice active" data-energy-scenario="baseline"
+          aria-pressed="true">{{ strategy_label("baseline") }}</button>
+        <button type="button" class="scenario-choice" data-energy-scenario="reactive"
+          aria-pressed="false">{{ strategy_label("reactive") }}</button>
+        <button type="button" class="scenario-choice" data-energy-scenario="coating"
+          aria-pressed="false">{{ strategy_label("coating") }}</button>
+        <button type="button" class="scenario-choice" data-energy-scenario="compare"
+          aria-pressed="false">Compare</button>
+      </div>
     </div>
   </div>
 
-  <div class="explorer-fingerprint">
-    <span class="instrument-label">Shared-year fingerprint · GHI / dust / cleaning events</span>
+  <div class="explorer-fingerprint" id="explorer-scrubber">
+    <span class="instrument-label">Shared-year fingerprint · GHI / dust / cleaning events —
+      drag across it to zoom the explorer, click to select a day</span>
     {{ run_fingerprint(none, "full", run_id ~ " full-width fingerprint", source="run-fingerprint-source") }}
+    <button type="button" id="scrubber-reset" class="scrubber-reset" hidden>Reset range</button>
   </div>
 
   <div class="energy-explorer-layout">
     <div class="energy-explorer-charts">
       <div class="energy-main-chart">
         <canvas id="daily-energy-chart" height="115" tabindex="0" role="img"
-                aria-label="Daily energy chart. Hover or focus and use the left and right arrow keys to step through days; Home and End jump to the first and last day. The selected day panel beside the chart reads out the values."
+                aria-label="Daily explorer chart. Hover or focus and use the left and right arrow keys to step through days; Home and End jump to the first and last day. The selected day panel beside the chart reads out the values."
                 data-audit-source="scenario_daily_summary.csv · actual_energy_kwh + daily_clean_energy.csv"></canvas>
       </div>
       <p class="hint chart-key-hint">Keyboard: focus the chart, then ←/→ steps one day (Shift ←/→ steps a week), Home/End jumps to the period's ends.</p>
@@ -339,6 +478,12 @@
         <div class="context-track">
           <div class="context-track-label"><strong>Rainfall</strong><span>mm/day</span></div>
           <div class="context-track-chart"><canvas id="daily-rainfall-chart" height="38" data-audit-source="scenario_daily_summary.csv · extension_precipitation_mm"></canvas></div>
+        </div>
+        {% endif %}
+        {% if daily_dew or daily_cementation %}
+        <div class="context-track">
+          <div class="context-track-label"><strong>Dew / cementation</strong><span>risk / index 0–1</span></div>
+          <div class="context-track-chart"><canvas id="daily-dew-chart" height="42" data-audit-source="scenario_daily_summary.csv · extension_dew_risk + extension_cementation_index"></canvas></div>
         </div>
         {% endif %}
         <div class="context-track context-track-events">
@@ -396,55 +541,16 @@
         environmental values are context, not independent causal attribution.</p>
     </aside>
   </div>
-  <p class="hint">All values come from stored comparison artifacts. The aligned cursor connects
-    energy with GHI, daylight temperature, rainfall, and scenario events for the same date.</p>
-</section>
-{% endif %}
-
-{% if daily_loss %}
-<section class="panel" id="daily-charts">
-  <h2>Daily energy loss by scenario</h2>
-  <canvas id="daily-loss-chart" height="110" role="img" aria-label="Line chart of stored daily energy loss per scenario"
-          data-audit-source="scenario_daily_summary.csv · energy_loss_kwh"></canvas>
-  <p class="hint">Values are the stored <code>energy_loss_kwh</code> column of
-    <a href="/api/runs/{{ run_id }}/artifact/scenario_daily_summary.csv">scenario_daily_summary.csv</a>.</p>
-</section>
-{% endif %}
-
-{% if daily_soiling %}
-<section class="panel">
-  <h2>Daily contamination cleanliness by scenario</h2>
-  <canvas id="daily-soiling-chart" height="110" role="img" aria-label="Line chart of stored daily cleanliness per scenario, 1.0 meaning perfectly clean"
-          data-audit-source="scenario_daily_summary.csv · stored scenario cleanliness fields"></canvas>
-  <p class="hint">1.0 = perfectly clean panels. Each scenario uses its stored dust or
-    contamination-cleanliness field from the state that produced that day's energy.</p>
-</section>
-{% endif %}
-
-{% if daily_dew or daily_cementation %}
-<section class="panel">
-  <h2>Daily dew risk and dust cementation</h2>
-  <canvas id="daily-dew-chart" height="110" role="img" aria-label="Line chart of stored daily dew risk and cementation index"
-          data-audit-source="scenario_daily_summary.csv · extension_dew_risk + extension_cementation_index"></canvas>
-  <p class="hint">Values come from the stored
-    <a href="/api/runs/{{ run_id }}/artifact/scenario_daily_summary.csv">scenario_daily_summary.csv</a>.</p>
-</section>
-{% endif %}
-
-{% if daily_cumgain %}
-<section class="panel">
-  <h2>Cumulative energy gain vs baseline</h2>
-  <canvas id="daily-cumgain-chart" height="110" role="img" aria-label="Line chart of stored cumulative energy gain versus baseline per scenario"
-          data-audit-source="scenario_daily_summary.csv · cumulative_energy_gain_vs_baseline_kwh"></canvas>
-  <p class="hint">Running total of each scenario's daily AC energy minus the baseline's — where a
-    curve climbs, the strategy is pulling ahead. Values are the stored
-    <code>cumulative_energy_gain_vs_baseline_kwh</code> column of the daily summary; the final
-    value equals the annual energy gain in the KPI table.</p>
+  <p class="hint">All values come from stored comparison artifacts — the metric switcher redraws
+    the same stored daily columns (<code>actual_energy_kwh</code>, <code>energy_loss_kwh</code>,
+    the scenario cleanliness fields, <code>cumulative_energy_gain_vs_baseline_kwh</code>). The
+    aligned cursor connects the chart with GHI, daylight temperature, rainfall, dew, and scenario
+    events for the same date.</p>
 </section>
 {% endif %}
 
 {% if annual_cost_bars %}
-<section class="panel">
+<section class="panel" id="annual-chart">
   <h2>Annual revenue, cost, and benefit</h2>
   <canvas id="annual-cost-chart" height="110" role="img" aria-label="Bar chart of stored annual revenue, annualized CAPEX, annual OPEX, and net benefit per scenario"
           data-audit-source="scenario_annual_summary.csv · revenue, CAPEX, OPEX, and net benefit columns"></canvas>
@@ -460,7 +566,7 @@
     <summary>How to read this table (cost reconciliation)</summary>
     <p>Each operating cost is a quantity the simulation recorded multiplied by a unit rate from
     the calibration registry — crew hours &times; labour rate, water used &times; water price,
-    flight hours &times; drone operating rate. The reconciliation strip at the top of this page
+    flight hours &times; drone operating rate. The certification block at the top of this page
     verifies those multiplications; this table only displays the stored results. Subtotals and
     totals are the backend's own figures from
     <a href="/api/runs/{{ run_id }}/artifact/scenario_cost_summary.csv">scenario_cost_summary.csv</a>.</p>

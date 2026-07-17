@@ -8,7 +8,7 @@ import pytest
 from tests.config_factory import fixture_config
 
 import solarclean.application.sensitivity as sensitivity_module
-from solarclean.application.comparison import CANONICAL_SCENARIO_IDS
+from solarclean.application.comparison import CANONICAL_SCENARIO_IDS, CompareAllScenarios
 from solarclean.application.sensitivity import (
     BreakEvenEvaluation,
     BreakEvenExperiment,
@@ -43,6 +43,119 @@ def test_oneway_prepares_weather_and_pv_profile_once(
     ).run()
 
     assert calls == 1
+
+
+def test_lightweight_variant_keeps_core_outcome_and_skips_report_frames(tmp_path: Path) -> None:
+    config = _fixture_config(tmp_path)
+    weather, clean_energy = sensitivity_module._prepare_shared_inputs(config)
+    detailed = (
+        CompareAllScenarios(
+            config,
+            weather=weather,
+            clean_energy=clean_energy,
+            write_artifacts=False,
+        )
+        .run()
+        .comparison
+    )
+    lightweight = (
+        CompareAllScenarios(
+            config,
+            weather=weather,
+            clean_energy=clean_energy,
+            write_artifacts=False,
+            include_reporting_summaries=False,
+        )
+        .run()
+        .comparison
+    )
+
+    assert lightweight.scenario_results == detailed.scenario_results
+    assert lightweight.economic_results == detailed.economic_results
+    assert lightweight.energy_gain_vs_baseline == detailed.energy_gain_vs_baseline
+    assert lightweight.reconciliation_report == detailed.reconciliation_report
+    assert lightweight.recommendation.winner == detailed.recommendation.winner
+    assert lightweight.recommendation.calculation_valid == (
+        detailed.recommendation.calculation_valid
+    )
+    assert lightweight.daily_summaries == {}
+    assert lightweight.annual_summaries == {}
+    assert lightweight.event_summaries == {}
+    assert lightweight.economic_summaries == {}
+
+
+def test_economics_only_variant_reuses_physics_without_changing_outcome(tmp_path: Path) -> None:
+    config = _fixture_config(tmp_path)
+    weather, clean_energy = sensitivity_module._prepare_shared_inputs(config)
+    registry = sensitivity_module.ParameterRegistry.from_yaml(
+        config.calibration.parameter_registry_path
+    )
+    base = sensitivity_module._run_variant(
+        config=config,
+        registry=registry,
+        scenario_order=None,
+        weather=weather,
+        clean_energy=clean_energy,
+    )
+    spec = next(
+        item
+        for item in sensitivity_module.build_parameter_catalog(registry)[0]
+        if item.name == "economics.electricity_tariff_sar_per_kwh"
+    )
+    variant_config, variant_registry = sensitivity_module._apply_override(
+        base_config=config,
+        base_registry=registry,
+        spec=spec,
+        value=spec.high_value,
+    )
+    full = sensitivity_module._run_variant(
+        config=variant_config,
+        registry=variant_registry,
+        scenario_order=None,
+        weather=weather,
+        clean_energy=clean_energy,
+    )
+    reused = sensitivity_module._run_variant(
+        config=variant_config,
+        registry=variant_registry,
+        scenario_order=None,
+        weather=weather,
+        clean_energy=clean_energy,
+        event_tape=base.event_tape,
+        precomputed_scenario_results=base.scenario_results,
+        precomputed_scenario_config_checksum=base.config_checksum,
+    )
+
+    assert reused == full
+
+
+def test_oneway_reuses_reference_result_for_an_identical_central_point(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _fixture_config(tmp_path)
+    original = sensitivity_module._run_variant
+    calls = 0
+
+    def counted_run_variant(**kwargs):
+        nonlocal calls
+        calls += 1
+        return original(**kwargs)
+
+    monkeypatch.setattr(sensitivity_module, "_run_variant", counted_run_variant)
+    result = (
+        OneWaySensitivityExperiment(
+            config,
+            parameter_names=("economics.electricity_tariff_sar_per_kwh",),
+            steps=3,
+            write_artifacts=False,
+        )
+        .run()
+        .result
+    )
+
+    assert len(result.parameter_results[0].points) == 3
+    assert calls == 3  # one base plus low/high; central reuses the exact base
 
 
 # --- One-way ----------------------------------------------------------------

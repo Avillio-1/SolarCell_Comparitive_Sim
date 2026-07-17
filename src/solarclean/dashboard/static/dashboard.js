@@ -28,6 +28,34 @@
     updateThemeLabel();
   }
 
+  // --- anchored popovers ------------------------------------------------
+  // One positioning helper serves the audit source trace and the info
+  // popovers that replaced title-attribute tooltips (titles are invisible to
+  // keyboard and touch). Popovers show text already rendered into data
+  // attributes; nothing is fetched or derived.
+
+  function anchorPopover(popover, target) {
+    popover.hidden = false;
+    popover.style.visibility = "hidden";
+    popover.style.left = "0px";
+    popover.style.top = "0px";
+    var rect = target.getBoundingClientRect();
+    var width = popover.offsetWidth;
+    var height = popover.offsetHeight;
+    var margin = 8;
+    var left = Math.min(
+      Math.max(margin, rect.left),
+      window.innerWidth - width - margin
+    );
+    var top = rect.bottom + 6;
+    if (top + height > window.innerHeight - margin) {
+      top = Math.max(margin, rect.top - height - 6);
+    }
+    popover.style.left = left + "px";
+    popover.style.top = top + "px";
+    popover.style.visibility = "";
+  }
+
   // --- audit mode -----------------------------------------------------
   // The source trace is an interaction layer over stored figures. It never
   // fetches or derives another value; it reveals the artifact annotations
@@ -35,9 +63,11 @@
 
   var auditToggle = document.getElementById("audit-toggle");
   var auditPopover = document.getElementById("audit-popover");
+  var auditBanner = document.getElementById("audit-banner");
   function setAuditMode(enabled) {
     document.body.classList.toggle("audit-mode", enabled);
     if (auditToggle) auditToggle.setAttribute("aria-pressed", enabled ? "true" : "false");
+    if (auditBanner) auditBanner.hidden = !enabled;
     if (!enabled && auditPopover) auditPopover.hidden = true;
   }
   if (auditToggle) {
@@ -48,6 +78,10 @@
   document.querySelectorAll(".footer-audit-toggle").forEach(function (button) {
     button.addEventListener("click", function () { setAuditMode(true); });
   });
+  var auditBannerExit = document.getElementById("audit-banner-exit");
+  if (auditBannerExit) {
+    auditBannerExit.addEventListener("click", function () { setAuditMode(false); });
+  }
   document.addEventListener("click", function (event) {
     if (!document.body.classList.contains("audit-mode") || !auditPopover) return;
     var target = event.target.closest("[data-audit-source]");
@@ -60,13 +94,56 @@
     var check = document.getElementById("audit-popover-check");
     check.textContent = target.dataset.auditCheck || "";
     check.hidden = !target.dataset.auditCheck;
-    auditPopover.hidden = false;
+    anchorPopover(auditPopover, target);
   });
   var auditClose = document.querySelector(".audit-close");
   if (auditClose) auditClose.addEventListener("click", function () { auditPopover.hidden = true; });
   document.addEventListener("keydown", function (event) {
-    if (event.key === "Escape" && auditPopover) auditPopover.hidden = true;
+    if (event.key !== "Escape") return;
+    if (auditPopover && !auditPopover.hidden) {
+      auditPopover.hidden = true;
+      return;
+    }
+    if (document.body.classList.contains("audit-mode")) setAuditMode(false);
   });
+
+  // --- info popovers (accessible replacement for title tooltips) --------
+
+  var infoPopover = document.getElementById("info-popover");
+  function hideInfoPopover() {
+    if (infoPopover) infoPopover.hidden = true;
+  }
+  if (infoPopover) {
+    document.addEventListener("click", function (event) {
+      var target = event.target.closest("[data-pop]");
+      if (!target) {
+        hideInfoPopover();
+        return;
+      }
+      if (document.body.classList.contains("audit-mode") &&
+          target.closest("[data-audit-source]")) {
+        return; // audit trace wins while audit mode is armed
+      }
+      var text = target.dataset.pop;
+      if (!text) return;
+      if (!infoPopover.hidden && infoPopover.$popTarget === target) {
+        hideInfoPopover();
+        return;
+      }
+      infoPopover.textContent = text;
+      infoPopover.$popTarget = target;
+      anchorPopover(infoPopover, target);
+    });
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape") hideInfoPopover();
+      if ((event.key === "Enter" || event.key === " ") &&
+          event.target instanceof Element && event.target.matches("[data-pop]")) {
+        event.preventDefault();
+        event.target.click();
+      }
+    });
+    window.addEventListener("scroll", hideInfoPopover, { passive: true });
+  }
 
   // --- run fingerprints -----------------------------------------------
 
@@ -162,23 +239,49 @@
   window.initRunFingerprints = initRunFingerprints;
   initRunFingerprints(document);
 
-  var kindSelect = document.getElementById("kind");
-  if (kindSelect) {
-    var analysisDescriptions = {
-      "compare": "Compare baseline, reactive cleaning, and coating under identical weather and events.",
-      "monte-carlo": "Repeat the comparison across controlled random seeds to measure uncertainty and winner probability.",
-      "sensitivity-oneway": "Change one assumption at a time to see which inputs influence the result most.",
-      "winner-map": "Vary two assumptions together and map which strategy wins across the grid.",
-      "break-even": "Find the parameter value where two selected strategies have equal net benefit."
-    };
+  // The launcher asks the question first: analysis kinds are radio cards
+  // ("Which strategy wins?"), and the method-specific fields follow.
+  var kindCards = document.getElementById("kind-cards");
+  function selectedKind() {
+    var checked = kindCards && kindCards.querySelector('input[name="kind"]:checked');
+    return checked ? checked.value : "compare";
+  }
+  function updateOneWayWorkload() {
+    var select = document.getElementById("parameters");
+    var stepsInput = document.getElementById("steps");
+    var output = document.getElementById("oneway-workload");
+    if (!select || !stepsInput || !output) return;
+    var selected = Array.from(select.selectedOptions);
+    output.classList.remove("sensitivity-workload-heavy");
+    if (!selected.length) {
+      output.textContent = "Choose at least one parameter to calculate the workload.";
+      return;
+    }
+    var steps = Math.max(3, parseInt(stepsInput.value, 10) || 5);
+    var evaluations = 1;
+    selected.forEach(function (option) {
+      evaluations += Number(option.dataset.low) === Number(option.dataset.high) ? 1 : steps;
+    });
+    var exhaustive = selected.length === select.options.length;
+    output.textContent = selected.length + (selected.length === 1 ? " parameter" : " parameters") +
+      " · " + evaluations + " comparison evaluations. Each evaluation compares Baseline, " +
+      "Reactive, and Coating." + (exhaustive ? " Exhaustive sweep — expect a long run." : "");
+    output.classList.toggle("sensitivity-workload-heavy", exhaustive || evaluations > 50);
+  }
+  window.updateOneWayWorkload = updateOneWayWorkload;
+  var stepsInput = document.getElementById("steps");
+  var oneWayParameters = document.getElementById("parameters");
+  if (stepsInput) stepsInput.addEventListener("input", updateOneWayWorkload);
+  if (oneWayParameters) oneWayParameters.addEventListener("change", updateOneWayWorkload);
+  updateOneWayWorkload();
+  if (kindCards) {
     var showOptionsForKind = function () {
       document.querySelectorAll(".kind-opts").forEach(function (row) {
-        row.hidden = row.dataset.kind !== kindSelect.value;
+        row.hidden = row.dataset.kind !== selectedKind();
       });
-      var summary = document.getElementById("analysis-summary");
-      if (summary) summary.textContent = analysisDescriptions[kindSelect.value] || "";
+      if (selectedKind() === "sensitivity-oneway") updateOneWayWorkload();
     };
-    kindSelect.addEventListener("change", showOptionsForKind);
+    kindCards.addEventListener("change", showOptionsForKind);
     showOptionsForKind();
   }
 
@@ -212,14 +315,23 @@
           option.textContent = parameter.name + " (" + parameter.unit + ")";
           option.title = "registry range " + parameter.low + " – " + parameter.central +
             " – " + parameter.high + " " + parameter.unit;
+          option.dataset.low = parameter.low;
+          option.dataset.high = parameter.high;
           option.selected = chosen.has(parameter.name) ||
             (id === "parameter-b" && chosen.size === 0 && index === 1);
           select.appendChild(option);
         });
       });
+      if (window.initParameterPickers) window.initParameterPickers(parameters);
+      updateOneWayWorkload();
     };
     var updateConfigLink = function () {
       configLink.href = "/config/" + encodeURIComponent(configSelect.value);
+      var cockpitMapLink = document.getElementById("cockpit-map-link");
+      if (cockpitMapLink) {
+        cockpitMapLink.href =
+          "/config/" + encodeURIComponent(configSelect.value) + "#site-location";
+      }
     };
     configSelect.addEventListener("change", function () {
       updateConfigLink();
@@ -243,8 +355,13 @@
     launchButton.addEventListener("click", function () {
       var errorEl = document.getElementById("launch-error");
       errorEl.textContent = "";
+      // Ask once, on a user gesture, so a finished run can notify a
+      // backgrounded tab. Declining is respected and never re-prompted here.
+      if (typeof Notification !== "undefined" && Notification.permission === "default") {
+        try { Notification.requestPermission(); } catch (e) { /* unsupported */ }
+      }
 
-      var body = { kind: kindSelect.value, config: configSelect.value };
+      var body = { kind: selectedKind(), config: configSelect.value };
       var startDate = document.getElementById("start-date").value;
       var endDate = document.getElementById("end-date").value;
       if (!startDate || !endDate) {
@@ -265,7 +382,11 @@
         body.steps = parseInt(document.getElementById("steps").value, 10) || 5;
         var chosen = Array.from(document.getElementById("parameters").selectedOptions)
           .map(function (option) { return option.value; });
-        if (chosen.length) body.parameters = chosen;
+        if (!chosen.length) {
+          errorEl.textContent = "Choose at least one parameter for one-way sensitivity.";
+          return;
+        }
+        body.parameters = chosen;
       } else if (body.kind === "winner-map") {
         body.parameter_a = document.getElementById("parameter-a").value.trim();
         body.parameter_b = document.getElementById("parameter-b").value.trim();
@@ -303,7 +424,7 @@
           return response.json();
         })
         .then(function (job) {
-          addJobRow(job);
+          addJobCard(job);
           pollJob(job.job_id);
         })
         .catch(function (error) {
@@ -324,66 +445,98 @@
     return minutes + "m " + seconds + "s";
   }
 
-  function addJobRow(job) {
-    var panel = document.getElementById("jobs-panel");
-    panel.hidden = false;
-    var tbody = document.querySelector("#jobs-table tbody");
-    var row = document.createElement("tr");
-    row.dataset.job = job.job_id;
-    row.innerHTML =
-      '<td class="mono">' + job.created_at.slice(0, 19) + "</td>" +
-      "<td>" + job.kind + "</td>" +
-      '<td class="job-config mono"></td>' +
-      '<td class="job-status"><span class="status status-queued">queued</span></td>' +
-      '<td class="job-progress"><span class="progress-label mono">–</span></td>' +
-      '<td class="job-elapsed mono">–</td>' +
-      '<td class="job-eta mono">–</td>' +
-      '<td class="job-result"></td>' +
-      '<td class="job-actions"><button type="button" class="danger-quiet job-delete" data-job-id="' +
-      job.job_id + '">Cancel &amp; remove</button></td>';
-    row.querySelector(".job-config").textContent = job.config_name || "–";
-    tbody.insertBefore(row, tbody.firstChild);
+  // A launched analysis is one object with one home: a live card in the runs
+  // panel that resolves in place into the finished run's card.
+
+  var baseDocumentTitle = document.title;
+
+  function setTitleProgress(job) {
+    if (!job || job.status === "done" || job.status === "failed" ||
+        job.status === "cancelled") {
+      document.title = baseDocumentTitle;
+      return;
+    }
+    var pct = job.progress_percent !== null && job.progress_percent !== undefined
+      ? Math.round(job.progress_percent) + "%" : "…";
+    document.title = "⏳ " + pct + " " + job.kind + " · SolarClean-DT";
   }
 
-  function updateJobRow(row, job) {
-    var statusEl = row.querySelector(".job-status .status");
-    statusEl.className = "status status-" + job.status;
-    statusEl.textContent = job.status;
-    statusEl.title = job.detail || "";
+  function maybeNotify(title, body) {
+    if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+    if (!document.hidden) return; // the page itself already shows the state
+    try { new Notification(title, { body: body }); } catch (e) { /* ignore */ }
+  }
 
-    var progressCell = row.querySelector(".job-progress");
-    if (progressCell) {
+  function jobCardsContainer() {
+    return document.getElementById("job-cards");
+  }
+
+  function addJobCard(job) {
+    var container = jobCardsContainer();
+    if (!container) return;
+    container.hidden = false;
+    var card = document.createElement("article");
+    card.className = "job-card job-card-" + job.status;
+    card.dataset.job = job.job_id;
+    card.innerHTML =
+      '<header class="job-card-head"><span class="run-kind"></span>' +
+      '<span class="job-status"><span class="status status-queued">queued</span></span>' +
+      '<span class="mono job-card-created"></span></header>' +
+      '<strong class="job-card-config mono"></strong>' +
+      '<div class="job-card-progress" role="progressbar" aria-label="Run progress" ' +
+      'aria-valuemin="0" aria-valuemax="100">' +
+      '<div class="progress-track"><div class="progress-fill" style="width: 0%"></div></div>' +
+      '<span class="progress-label mono">–</span></div>' +
+      '<div class="job-card-meta mono"><span class="job-elapsed">–</span>' +
+      '<span class="job-eta">–</span></div>' +
+      '<p class="job-card-result"></p>' +
+      '<div class="run-actions"><button type="button" class="danger-quiet job-delete" ' +
+      'data-job-id="' + job.job_id + '">Cancel &amp; remove</button></div>';
+    card.querySelector(".run-kind").textContent = job.kind;
+    card.querySelector(".job-card-created").textContent = job.created_at.slice(0, 19);
+    card.querySelector(".job-card-config").textContent = job.config_name || "–";
+    container.insertBefore(card, container.firstChild);
+  }
+
+  function updateJobCard(card, job) {
+    card.className = "job-card job-card-" + job.status;
+    var statusEl = card.querySelector(".job-status .status");
+    if (statusEl) {
+      statusEl.className = "status status-" + job.status;
+      statusEl.textContent = job.status;
+      if (job.detail) statusEl.dataset.pop = job.detail;
+    }
+    var progress = card.querySelector(".job-card-progress");
+    if (progress) {
+      var fill = progress.querySelector(".progress-fill");
+      var label = progress.querySelector(".progress-label");
       if (job.progress_percent !== null && job.progress_percent !== undefined) {
         var pct = Math.round(job.progress_percent);
-        var fill = progressCell.querySelector(".progress-fill");
-        var label = progressCell.querySelector(".progress-label");
-        if (fill && label) {
-          // Update in place so the CSS width transition can animate the fill.
-          fill.style.width = pct + "%";
-          label.textContent = pct + "%";
-        } else {
-          progressCell.innerHTML =
-            '<div class="progress-track"><div class="progress-fill" style="width: ' + pct +
-            '%"></div></div><span class="progress-label mono">' + pct + "%</span>";
-        }
+        progress.setAttribute("aria-valuenow", String(pct));
+        // Update in place so the CSS width transition can animate the fill.
+        if (fill) fill.style.width = pct + "%";
+        if (label) label.textContent = pct + "%";
       } else {
         // No honest unit counts for this analysis kind: show no percentage.
-        progressCell.innerHTML = '<span class="progress-label mono">–</span>';
+        progress.removeAttribute("aria-valuenow");
+        if (fill) fill.style.width = "0%";
+        if (label) label.textContent = "–";
       }
     }
-    var elapsedCell = row.querySelector(".job-elapsed");
-    if (elapsedCell) elapsedCell.textContent = formatSeconds(job.elapsed_seconds);
-    var etaCell = row.querySelector(".job-eta");
-    if (etaCell) {
-      etaCell.textContent =
+    var elapsed = card.querySelector(".job-elapsed");
+    if (elapsed) elapsed.textContent = formatSeconds(job.elapsed_seconds);
+    var eta = card.querySelector(".job-eta");
+    if (eta) {
+      eta.textContent =
         job.eta_seconds !== null && job.eta_seconds !== undefined
-          ? "~" + formatSeconds(job.eta_seconds)
+          ? "~" + formatSeconds(job.eta_seconds) + " left"
           : "–";
     }
-    var deleteBtn = row.querySelector(".job-delete");
+    var deleteBtn = card.querySelector(".job-delete");
     if (deleteBtn && job.status !== "queued" && job.status !== "running") {
-      deleteBtn.textContent = "Delete";
+      deleteBtn.textContent = "Dismiss";
     }
+    setTitleProgress(job);
   }
 
   // The completed-runs gallery is server-rendered. When a job finishes, fetch
@@ -430,21 +583,20 @@
       .catch(function () { return false; });
   }
 
-  function removeJobRow(row) {
-    row.remove();
-    var tbody = document.querySelector("#jobs-table tbody");
-    if (tbody && tbody.children.length === 0) {
-      document.getElementById("jobs-panel").hidden = true;
-    }
+  function removeJobCard(card) {
+    card.remove();
+    var container = jobCardsContainer();
+    if (container && !container.querySelector(".job-card")) container.hidden = true;
+    document.title = baseDocumentTitle;
   }
 
-  function promoteCompletedJob(row, attemptsRemaining) {
+  function promoteCompletedJob(card, attemptsRemaining) {
     refreshCompletedRuns().then(function (refreshed) {
       if (refreshed) {
-        removeJobRow(row);
+        removeJobCard(card);
       } else if (attemptsRemaining > 1) {
         setTimeout(function () {
-          promoteCompletedJob(row, attemptsRemaining - 1);
+          promoteCompletedJob(card, attemptsRemaining - 1);
         }, 1000);
       }
     });
@@ -462,21 +614,30 @@
         .then(function (job) {
           if (!job) return;
           consecutiveFailures = 0;
-          var row = document.querySelector('tr[data-job="' + jobId + '"]');
-          if (!row) { clearInterval(timer); return; }
-          updateJobRow(row, job);
+          var card = document.querySelector('[data-job="' + jobId + '"]');
+          if (!card) { clearInterval(timer); return; }
+          updateJobCard(card, job);
           if (job.status === "done" && job.run_id) {
-            row.querySelector(".job-result").innerHTML =
-              '<a href="/run/' + job.run_id + '">' + job.run_id + "</a>";
+            var result = card.querySelector(".job-card-result");
+            if (result) {
+              result.innerHTML = '<a href="/run/' + job.run_id + '">' + job.run_id + "</a>";
+            }
             clearInterval(timer);
-            promoteCompletedJob(row, 3);
+            maybeNotify("SolarClean-DT: " + job.kind + " finished",
+              "Run " + job.run_id + " is ready to read.");
+            promoteCompletedJob(card, 3);
           } else if (job.status === "failed") {
-            var resultCell = row.querySelector(".job-result");
-            resultCell.textContent = job.error || "failed";
-            resultCell.className = "job-result error-text";
+            var failure = card.querySelector(".job-card-result");
+            if (failure) {
+              failure.textContent = job.error || "failed";
+              failure.className = "job-card-result error-text";
+            }
             clearInterval(timer);
+            maybeNotify("SolarClean-DT: " + job.kind + " failed",
+              job.error || "The session failed — details on the runs page.");
           } else if (job.status === "cancelled") {
             clearInterval(timer);
+            document.title = baseDocumentTitle;
           }
         })
         .catch(function () {
@@ -487,15 +648,15 @@
   }
 
   // Resume polling for jobs that were still running when the page loaded.
-  document.querySelectorAll("#jobs-table tr[data-job]").forEach(function (row) {
-    var status = row.querySelector(".job-status").textContent.trim();
-    if (status === "queued" || status === "running") pollJob(row.dataset.job);
+  document.querySelectorAll(".job-card[data-job]").forEach(function (card) {
+    var status = card.querySelector(".job-status").textContent.trim();
+    if (status === "queued" || status === "running") pollJob(card.dataset.job);
   });
 
-  // Delete / cancel a run session (event delegation so new rows work too).
-  var jobsTable = document.getElementById("jobs-table");
-  if (jobsTable) {
-    jobsTable.addEventListener("click", function (event) {
+  // Dismiss / cancel a session card (event delegation so new cards work too).
+  var jobCardsHost = jobCardsContainer();
+  if (jobCardsHost) {
+    jobCardsHost.addEventListener("click", function (event) {
       var button = event.target.closest(".job-delete");
       if (!button) return;
       var jobId = button.dataset.jobId;
@@ -503,25 +664,31 @@
       fetch("/api/jobs/" + jobId, { method: "DELETE" })
         .then(function (r) {
           if (!r.ok) throw new Error("HTTP " + r.status);
-          var row = document.querySelector('tr[data-job="' + jobId + '"]');
-          if (row) removeJobRow(row);
+          var card = document.querySelector('[data-job="' + jobId + '"]');
+          if (card) removeJobCard(card);
         })
         .catch(function () { button.disabled = false; });
     });
   }
 
   // --- deleting completed runs ---------------------------------------
-  // Destructive: removes the run directory (exports included), so every path
-  // goes through a confirm dialog first.
+  // Destructive: removes the run directory (exports included). Single deletes
+  // arm in place ("Really delete?") instead of a blocking native confirm;
+  // bulk deletes go through an explicit dialog stating the count.
+
+  function pruneStudyHeaders() {
+    document.querySelectorAll("#runs-table .study-header").forEach(function (header) {
+      var key = header.dataset.study || "";
+      var survivor = Array.prototype.some.call(
+        document.querySelectorAll("#runs-table .run-card"),
+        function (card) { return card.dataset.study === key; }
+      );
+      if (!survivor) header.remove();
+    });
+  }
 
   function deleteRuns(runIds, errorEl) {
-    var label = runIds.length === 1 ? "run " + runIds[0] : runIds.length + " runs";
-    var ok = window.confirm(
-      "Permanently delete " + label + "?\n\nThis removes the run directory under outputs/ " +
-      "including all exports. Download the .zip first if you need the files."
-    );
-    if (!ok) return;
-    errorEl.textContent = "";
+    if (errorEl) errorEl.textContent = "";
     runIds.forEach(function (runId) {
       fetch("/api/runs/" + encodeURIComponent(runId), { method: "DELETE" })
         .then(function (r) {
@@ -532,10 +699,34 @@
           }
           var row = document.querySelector('[data-run="' + runId + '"]');
           if (row) row.remove();
+          pruneStudyHeaders();
           updateBulkDeleteState();
         })
-        .catch(function (error) { errorEl.textContent = error.message; });
+        .catch(function (error) { if (errorEl) errorEl.textContent = error.message; });
     });
+  }
+
+  // Two-step in-place confirmation: first click arms the button, second click
+  // (within a few seconds) executes. Anywhere-else clicks or the timeout
+  // disarm it.
+  function armDangerButton(button, label, onConfirm) {
+    if (button.dataset.armed === "true") {
+      clearTimeout(button.$armTimer);
+      button.dataset.armed = "";
+      button.classList.remove("armed");
+      button.textContent = button.dataset.armLabel || label;
+      onConfirm();
+      return;
+    }
+    button.dataset.armed = "true";
+    button.dataset.armLabel = label;
+    button.classList.add("armed");
+    button.textContent = "Really delete?";
+    button.$armTimer = setTimeout(function () {
+      button.dataset.armed = "";
+      button.classList.remove("armed");
+      button.textContent = label;
+    }, 4000);
   }
 
   var runsTable = document.getElementById("runs-table");
@@ -617,6 +808,14 @@
     if (bulkButton) bulkButton.disabled = selectedCount === 0;
     var compareButton = document.getElementById("compare-selected-runs");
     if (compareButton) compareButton.disabled = selectedCount !== 2;
+    // The contextual action bar follows the selection: it appears near where
+    // the user is clicking instead of asking them to travel back to a toolbar.
+    var selectionBar = document.getElementById("selection-bar");
+    if (selectionBar) selectionBar.hidden = selectedCount === 0;
+    var selectionCount = document.getElementById("selection-count");
+    if (selectionCount) {
+      selectionCount.textContent = selectedCount + " selected";
+    }
     var selectAllButton = document.getElementById("select-all-runs");
     if (selectAllButton) {
       var allSelected = !archiveHasMore() && checkboxes.length > 0 &&
@@ -657,6 +856,14 @@
         if (checkbox) checkbox.checked = false;
       }
     });
+    // Study headers follow their cards: a header with nothing visible under
+    // it is noise while filtering.
+    runsTable.querySelectorAll(".study-header").forEach(function (header) {
+      var key = header.dataset.study || "";
+      header.hidden = !cards.some(function (card) {
+        return !card.hidden && card.dataset.study === key;
+      });
+    });
     var status = document.getElementById("run-filter-status");
     if (status) {
       status.textContent = filterActive
@@ -673,7 +880,11 @@
     var runsError = document.getElementById("runs-delete-error");
     runsTable.addEventListener("click", function (event) {
       var button = event.target.closest(".run-delete");
-      if (button) deleteRuns([button.dataset.runId], runsError);
+      if (button) {
+        armDangerButton(button, "Delete", function () {
+          deleteRuns([button.dataset.runId], runsError);
+        });
+      }
     });
     runsTable.addEventListener("change", function (event) {
       if (event.target.classList.contains("run-select")) {
@@ -708,20 +919,55 @@
     if (runFilterText) runFilterText.addEventListener("input", applyRunFilter);
     if (runFilterKind) runFilterKind.addEventListener("change", applyRunFilter);
     var bulkButton = document.getElementById("delete-selected-runs");
-    bulkButton.addEventListener("click", function () {
-      var selected = Array.from(document.querySelectorAll(".run-select:checked"))
-        .map(function (box) { return box.value; });
-      if (selected.length) deleteRuns(selected, runsError);
-    });
-    var compareButton = document.getElementById("compare-selected-runs");
-    compareButton.addEventListener("click", function () {
-      var selected = Array.from(document.querySelectorAll(".run-select:checked"))
-        .map(function (box) { return box.value; });
-      if (selected.length === 2) {
-        window.location.href = "/compare-runs?a=" + encodeURIComponent(selected[0]) +
-          "&b=" + encodeURIComponent(selected[1]);
+    var bulkDialog = document.getElementById("bulk-delete-dialog");
+    if (bulkButton && bulkDialog) {
+      bulkButton.addEventListener("click", function () {
+        var selected = Array.from(document.querySelectorAll(".run-select:checked"))
+          .map(function (box) { return box.value; });
+        if (!selected.length) return;
+        var text = document.getElementById("bulk-delete-text");
+        if (text) {
+          text.textContent = selected.length === 1
+            ? "Permanently delete run " + selected[0] + "?"
+            : "Permanently delete " + selected.length + " selected runs?";
+        }
+        bulkDialog.showModal();
+      });
+      var bulkConfirm = document.getElementById("bulk-delete-confirm");
+      if (bulkConfirm) {
+        bulkConfirm.addEventListener("click", function () {
+          var selected = Array.from(document.querySelectorAll(".run-select:checked"))
+            .map(function (box) { return box.value; });
+          bulkDialog.close();
+          if (selected.length) deleteRuns(selected, runsError);
+        });
       }
-    });
+      var bulkCancel = document.getElementById("bulk-delete-cancel");
+      if (bulkCancel) {
+        bulkCancel.addEventListener("click", function () { bulkDialog.close(); });
+      }
+    }
+    var clearSelectionButton = document.getElementById("clear-selection");
+    if (clearSelectionButton) {
+      clearSelectionButton.addEventListener("click", function () {
+        document.querySelectorAll(".run-select:checked").forEach(function (box) {
+          box.checked = false;
+        });
+        selectEverything = false;
+        updateBulkDeleteState();
+      });
+    }
+    var compareButton = document.getElementById("compare-selected-runs");
+    if (compareButton) {
+      compareButton.addEventListener("click", function () {
+        var selected = Array.from(document.querySelectorAll(".run-select:checked"))
+          .map(function (box) { return box.value; });
+        if (selected.length === 2) {
+          window.location.href = "/compare-runs?a=" + encodeURIComponent(selected[0]) +
+            "&b=" + encodeURIComponent(selected[1]);
+        }
+      });
+    }
 
     var loadMoreButton = document.getElementById("load-more-runs");
     if (loadMoreButton) loadMoreButton.addEventListener("click", loadNextRunPage);
@@ -793,6 +1039,12 @@
     if (latInput) latInput.value = isNaN(lat) ? "" : lat;
     if (lonInput) lonInput.value = isNaN(lon) ? "" : lon;
     if (timezoneInput) timezoneInput.value = parseYamlScalar(editor.value, "timezone") || "";
+    var startInput = document.getElementById("site-start-date");
+    var endInput = document.getElementById("site-end-date");
+    var start = parseYamlScalar(editor.value, "start");
+    var end = parseYamlScalar(editor.value, "end");
+    if (startInput && start) startInput.value = start.slice(0, 10);
+    if (endInput && end) endInput.value = end.slice(0, 10);
     if (marker) {
       marker.hidden = isNaN(lat) || isNaN(lon);
       if (!marker.hidden) {
@@ -948,13 +1200,7 @@
     }
 
     // Seed inputs and marker from the YAML currently in the editor.
-    var initialLat = parseFloat(parseYamlScalar(editor.value, "latitude"));
-    var initialLon = parseFloat(parseYamlScalar(editor.value, "longitude"));
-    var initialTimezone = parseYamlScalar(editor.value, "timezone");
-    if (!isNaN(initialLat)) latInput.value = initialLat;
-    if (!isNaN(initialLon)) lonInput.value = initialLon;
-    if (initialTimezone) timezoneInput.value = initialTimezone;
-    placeMarker(initialLat, initialLon);
+    syncSiteLocationFromEditor(editor);
     updateProviderNote(editor.value);
     editor.addEventListener("input", function () { updateProviderNote(editor.value); });
 
@@ -984,16 +1230,29 @@
         statusEl.textContent = "Latitude must be -90..90 and longitude -180..180.";
         return;
       }
+      var payload = { content: editor.value, latitude: lat, longitude: lon };
+      var startInput = document.getElementById("site-start-date");
+      var endInput = document.getElementById("site-end-date");
+      var startDate = startInput ? startInput.value : "";
+      var endDate = endInput ? endInput.value : "";
+      if ((startDate === "") !== (endDate === "")) {
+        statusEl.textContent = "Set both period dates (or neither to keep the stored period).";
+        return;
+      }
+      if (startDate && endDate) {
+        if (endDate < startDate) {
+          statusEl.textContent = "Period end must be on or after period start.";
+          return;
+        }
+        payload.start_date = startDate;
+        payload.end_date = endDate;
+      }
       applyButton.disabled = true;
       statusEl.textContent = "Detecting the timezone and calculating local UTC offsets…";
       fetch("/api/configs/" + encodeURIComponent(editor.dataset.name) + "/apply-location", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          content: editor.value,
-          latitude: lat,
-          longitude: lon,
-        }),
+        body: JSON.stringify(payload),
       })
         .then(function (response) {
           return response.json().then(function (result) {
@@ -1009,6 +1268,8 @@
           statusEl.textContent = "Updated coordinates and timezone " + result.timezone +
             "; local period offsets are " + result.start.slice(-6) + " / " +
             result.end.slice(-6) + ". Validate and save to keep it.";
+          var editorDetails = document.getElementById("config-editor-details");
+          if (editorDetails) editorDetails.open = true;
           var configStatus = document.getElementById("config-status");
           configStatus.className = "ok";
           configStatus.textContent = "The location/timezone update is valid but not saved yet.";
@@ -1099,6 +1360,493 @@
     renderCockpit();
   };
 
+  // --- parameter pickers ------------------------------------------------
+  // Searchable grouped checklists over the registry catalog. The native
+  // selects stay in the DOM as the state store (and no-JS fallback): every
+  // picker interaction just toggles option.selected, so the launch code and
+  // server contract are unchanged. Ranges come from the catalog the server
+  // rendered — nothing is computed beyond drawing a tick at the central value.
+
+  var _parameterGroupLabels = {
+    soiling: "Soiling",
+    seasonality: "Seasonality",
+    dust_events: "Dust events",
+    rainfall: "Rainfall",
+    bird: "Bird activity",
+    cv: "Computer vision",
+    inspection: "Inspection",
+    cleaning: "Cleaning",
+    coating: "Coating",
+    economics: "Economics",
+  };
+
+  function parameterHumanLabel(name) {
+    var leaf = name.indexOf(".") >= 0 ? name.slice(name.indexOf(".") + 1) : name;
+    return leaf.replace(/_/g, " ");
+  }
+
+  function parameterRangeBar(parameter) {
+    var bar = document.createElement("span");
+    bar.className = "param-range-bar";
+    var low = Number(parameter.low);
+    var high = Number(parameter.high);
+    var central = Number(parameter.central);
+    if (isFinite(low) && isFinite(high) && isFinite(central) && high > low) {
+      var tick = document.createElement("span");
+      tick.className = "param-range-tick";
+      tick.style.left = Math.max(0, Math.min(100, (central - low) / (high - low) * 100)) + "%";
+      bar.appendChild(tick);
+    }
+    return bar;
+  }
+
+  window.initParameterPickers = function (parameters) {
+    if (!Array.isArray(parameters) || !parameters.length) return;
+    document.querySelectorAll(".param-picker[data-picker-for]").forEach(function (picker) {
+      var select = document.getElementById(picker.dataset.pickerFor);
+      if (!select) return;
+      var multi = picker.dataset.pickerMode !== "single";
+      select.classList.add("param-native-hidden");
+      picker.hidden = false;
+      picker.replaceChildren();
+
+      var head = document.createElement("div");
+      head.className = "param-picker-head";
+      var search = document.createElement("input");
+      search.type = "search";
+      search.placeholder = "Filter parameters…";
+      search.setAttribute("aria-label", "Filter parameters");
+      head.appendChild(search);
+      var count = document.createElement("span");
+      count.className = "param-picker-count mono";
+      head.appendChild(count);
+      var clear = null;
+      var selectAll = null;
+      if (multi) {
+        selectAll = document.createElement("button");
+        selectAll.type = "button";
+        selectAll.className = "param-picker-action";
+        selectAll.textContent = "Select all";
+        selectAll.title = "Select the complete catalog for an exhaustive sweep";
+        head.appendChild(selectAll);
+        clear = document.createElement("button");
+        clear.type = "button";
+        clear.className = "param-picker-action param-picker-clear";
+        clear.textContent = "Clear";
+        head.appendChild(clear);
+      }
+      picker.appendChild(head);
+
+      var list = document.createElement("div");
+      list.className = "param-picker-list";
+      picker.appendChild(list);
+
+      function selectedValues() {
+        return new Set(Array.from(select.selectedOptions).map(function (option) {
+          return option.value;
+        }));
+      }
+
+      function updateCount() {
+        if (multi) {
+          var selected = selectedValues().size;
+          count.textContent = selected ? selected + " selected" : "none selected";
+          if (clear) clear.hidden = !selected;
+          if (selectAll) selectAll.hidden = selected === select.options.length;
+        } else {
+          count.textContent = "";
+        }
+      }
+
+      var chosen = selectedValues();
+      var groups = {};
+      parameters.forEach(function (parameter) {
+        var groupKey = parameter.name.indexOf(".") >= 0
+          ? parameter.name.slice(0, parameter.name.indexOf("."))
+          : "other";
+        (groups[groupKey] = groups[groupKey] || []).push(parameter);
+      });
+
+      Object.keys(groups).forEach(function (groupKey) {
+        var heading = document.createElement("span");
+        heading.className = "param-group-label";
+        heading.textContent = _parameterGroupLabels[groupKey] || groupKey;
+        list.appendChild(heading);
+        groups[groupKey].forEach(function (parameter) {
+          var row = document.createElement("label");
+          row.className = "param-row";
+          row.dataset.search = (parameter.name + " " + parameterHumanLabel(parameter.name) +
+            " " + parameter.unit).toLowerCase();
+          var input = document.createElement("input");
+          input.type = multi ? "checkbox" : "radio";
+          if (!multi) input.name = "picker-" + select.id;
+          input.value = parameter.name;
+          input.checked = chosen.has(parameter.name);
+          input.addEventListener("change", function () {
+            Array.from(select.options).forEach(function (option) {
+              if (multi) {
+                if (option.value === parameter.name) option.selected = input.checked;
+              } else {
+                option.selected = option.value === input.value;
+              }
+            });
+            updateCount();
+            select.dispatchEvent(new Event("change", { bubbles: true }));
+          });
+          var body = document.createElement("span");
+          body.className = "param-row-body";
+          var title = document.createElement("span");
+          title.className = "param-row-title";
+          title.textContent = parameterHumanLabel(parameter.name);
+          var key = document.createElement("span");
+          key.className = "param-row-key mono";
+          key.textContent = parameter.name;
+          var range = document.createElement("span");
+          range.className = "param-row-range";
+          range.appendChild(parameterRangeBar(parameter));
+          var rangeText = document.createElement("span");
+          rangeText.className = "param-row-range-text mono";
+          rangeText.textContent = parameter.low + " – " + parameter.central + " – " +
+            parameter.high + " " + parameter.unit;
+          range.appendChild(rangeText);
+          body.append(title, key, range);
+          row.append(input, body);
+          list.appendChild(row);
+        });
+      });
+
+      search.addEventListener("input", function () {
+        var query = search.value.trim().toLowerCase();
+        list.querySelectorAll(".param-row").forEach(function (row) {
+          row.hidden = Boolean(query) && row.dataset.search.indexOf(query) === -1;
+        });
+        list.querySelectorAll(".param-group-label").forEach(function (heading) {
+          var sibling = heading.nextElementSibling;
+          var visible = false;
+          while (sibling && !sibling.classList.contains("param-group-label")) {
+            if (sibling.classList.contains("param-row") && !sibling.hidden) visible = true;
+            sibling = sibling.nextElementSibling;
+          }
+          heading.hidden = !visible;
+        });
+      });
+
+      if (clear) {
+        clear.addEventListener("click", function () {
+          Array.from(select.options).forEach(function (option) { option.selected = false; });
+          list.querySelectorAll("input").forEach(function (input) { input.checked = false; });
+          updateCount();
+          select.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+      }
+      if (selectAll) {
+        selectAll.addEventListener("click", function () {
+          Array.from(select.options).forEach(function (option) { option.selected = true; });
+          list.querySelectorAll("input").forEach(function (input) { input.checked = true; });
+          updateCount();
+          select.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+      }
+      updateCount();
+    });
+  };
+
+  // --- section-nav scroll spy -------------------------------------------
+  // "You are here" for long record pages: the sticky jump nav highlights the
+  // section currently under the reading line.
+
+  var sectionNav = document.querySelector(".section-nav");
+  if (sectionNav) {
+    var navLinks = Array.from(sectionNav.querySelectorAll('a[href^="#"]'));
+    var navSections = navLinks
+      .map(function (link) { return document.getElementById(link.getAttribute("href").slice(1)); })
+      .filter(Boolean);
+    var spyScheduled = false;
+    var updateSpy = function () {
+      spyScheduled = false;
+      var current = null;
+      navSections.forEach(function (section) {
+        if (section.getBoundingClientRect().top <= 96) current = section;
+      });
+      navLinks.forEach(function (link) {
+        var active = current && link.getAttribute("href") === "#" + current.id;
+        link.classList.toggle("nav-current", Boolean(active));
+        if (active) link.setAttribute("aria-current", "location");
+        else link.removeAttribute("aria-current");
+      });
+    };
+    window.addEventListener("scroll", function () {
+      if (spyScheduled) return;
+      spyScheduled = true;
+      requestAnimationFrame(updateSpy);
+    }, { passive: true });
+    updateSpy();
+  }
+
+  // --- humidity / dew-point simulator ----------------------------------
+  // Inputs go to a small application endpoint backed by the same coating
+  // domain functions as annual runs. JavaScript only renders that response.
+
+  var dewSimulator = document.getElementById("dew-simulator");
+  if (dewSimulator) {
+    var dewControls = document.getElementById("dew-simulator-controls");
+    var humidityInput = document.getElementById("dew-relative-humidity");
+    var temperatureInput = document.getElementById("dew-air-temperature");
+    var windInput = document.getElementById("dew-wind-speed");
+    var humidityIndicator = document.getElementById("humidity-indicator");
+    var dewOutput = document.getElementById("dew-simulator-output");
+    var dewTimer = null;
+    var dewRequest = null;
+
+    function setDewText(id, value) {
+      var element = document.getElementById(id);
+      if (element) element.textContent = value;
+    }
+
+    function dewNumber(value, digits, suffix, signed) {
+      if (typeof value !== "number" || !isFinite(value)) return "–";
+      var prefix = signed && value > 0 ? "+" : "";
+      return prefix + value.toFixed(digits) + suffix;
+    }
+
+    function updateDewInputLabels() {
+      setDewText("dew-relative-humidity-value", Number(humidityInput.value).toFixed(0) + "%");
+      setDewText("dew-air-temperature-value", Number(temperatureInput.value).toFixed(0) + " °C");
+      setDewText("dew-wind-speed-value", Number(windInput.value).toFixed(1) + " m/s");
+      setDewText("humidity-current-label", "Current RH " + Number(humidityInput.value).toFixed(0) + "%");
+      if (humidityIndicator) {
+        var span = Number(humidityInput.max) - Number(humidityInput.min);
+        var level = span > 0 ?
+          (Number(humidityInput.value) - Number(humidityInput.min)) / span * 100 : 0;
+        humidityIndicator.style.setProperty("--humidity-level", level.toFixed(2) + "%");
+      }
+    }
+
+    function renderDewResult(payload) {
+      dewOutput.setAttribute("aria-busy", "false");
+      var status = document.getElementById("dew-status");
+      status.className = "dew-status " + (
+        payload.harvest_active ? "dew-status-active" :
+          payload.dew_eligible ? "dew-status-forming" : "dew-status-dry"
+      );
+      status.textContent = payload.harvest_active ? "HARVESTING DEW" :
+        payload.dew_eligible ? "DEW FORMING · NOT COLLECTED" : "DRY";
+      setDewText("dew-status-message", payload.status_message);
+      setDewText(
+        "dew-input-summary",
+        Number(payload.relative_humidity_pct).toFixed(0) + "% RH · " +
+        Number(payload.air_temperature_c).toFixed(0) + " °C · " +
+        Number(payload.wind_speed_m_s).toFixed(1) + " m/s"
+      );
+      setDewText("dew-point-value", dewNumber(payload.dew_point_c, 1, " °C", false));
+      setDewText(
+        "dew-surface-value",
+        dewNumber(payload.coated_surface_temperature_c, 1, " °C", false)
+      );
+      setDewText("dew-margin-value", dewNumber(payload.dew_margin_c, 1, " °C", true));
+      setDewText("dew-cooling-value", dewNumber(payload.cooling_delta_c, 1, " °C", false));
+      setDewText(
+        "dew-yield-value",
+        dewNumber(payload.harvested_liters_per_m2_hour, 4, " L/m²/h", false)
+      );
+      setDewText(
+        "dew-farm-yield-value",
+        dewNumber(payload.whole_farm_harvested_liters_per_hour, 1, " L/h", false)
+      );
+      setDewText(
+        "humidity-gate-label",
+        "Collection gate " + Number(payload.minimum_relative_humidity_pct).toFixed(0) + "%"
+      );
+      if (humidityIndicator) {
+        var humiditySpan = Number(humidityInput.max) - Number(humidityInput.min);
+        var gate = humiditySpan > 0 ?
+          (Number(payload.minimum_relative_humidity_pct) - Number(humidityInput.min)) /
+          humiditySpan * 100 : 0;
+        humidityIndicator.style.setProperty(
+          "--humidity-threshold",
+          Math.max(0, Math.min(100, gate)).toFixed(2) + "%"
+        );
+      }
+    }
+
+    function showDewError(message) {
+      dewOutput.setAttribute("aria-busy", "false");
+      var status = document.getElementById("dew-status");
+      status.className = "dew-status dew-status-error";
+      status.textContent = "UNAVAILABLE";
+      setDewText("dew-status-message", message);
+    }
+
+    function requestDewSimulation() {
+      if (dewRequest) dewRequest.abort();
+      dewRequest = new AbortController();
+      dewOutput.setAttribute("aria-busy", "true");
+      var query = new URLSearchParams({
+        relative_humidity_pct: humidityInput.value,
+        air_temperature_c: temperatureInput.value,
+        wind_speed_m_s: windInput.value,
+      });
+      fetch(dewSimulator.dataset.endpoint + "?" + query.toString(), {
+        signal: dewRequest.signal,
+        headers: { "Accept": "application/json" },
+      })
+        .then(function (response) {
+          if (!response.ok) throw new Error("The coating model could not evaluate these inputs.");
+          return response.json();
+        })
+        .then(renderDewResult)
+        .catch(function (error) {
+          if (error.name !== "AbortError") showDewError(error.message);
+        });
+    }
+
+    function scheduleDewSimulation() {
+      updateDewInputLabels();
+      window.clearTimeout(dewTimer);
+      dewTimer = window.setTimeout(requestDewSimulation, 120);
+    }
+
+    [humidityInput, temperatureInput, windInput].forEach(function (input) {
+      input.addEventListener("input", scheduleDewSimulation);
+    });
+    dewControls.addEventListener("submit", function (event) { event.preventDefault(); });
+    updateDewInputLabels();
+    requestDewSimulation();
+  }
+
+  // --- command palette ----------------------------------------------------
+  // Ctrl+K navigation for people who think in run ids and sites. The index is
+  // the same stored listing the run cards use; actions are plain client-side
+  // toggles and links.
+
+  var palette = document.getElementById("command-palette");
+  if (palette && typeof palette.showModal === "function") {
+    var paletteInput = document.getElementById("palette-input");
+    var paletteResults = document.getElementById("palette-results");
+    var paletteIndex = null;
+    var paletteActive = 0;
+
+    var paletteActions = [
+      { label: "File a new analysis", hint: "home · launch form", href: "/#launch-form" },
+      { label: "Open Default configuration", hint: "/config", href: "/config/default.yaml" },
+      { label: "Toggle audit mode", hint: "source traces", run: function () {
+        setAuditMode(!document.body.classList.contains("audit-mode"));
+      } },
+      { label: "Switch Daylight / Night shift", hint: "theme", run: function () {
+        if (themeToggle) themeToggle.click();
+      } },
+    ];
+
+    function paletteEntries() {
+      var entries = paletteActions.map(function (action) {
+        return {
+          label: action.label,
+          hint: action.hint,
+          search: (action.label + " " + action.hint).toLowerCase(),
+          href: action.href,
+          run: action.run,
+        };
+      });
+      ((paletteIndex && paletteIndex.runs) || []).forEach(function (run) {
+        entries.push({
+          label: (run.site || run.kind_label) + " — " + run.kind_label +
+            (run.winner ? " · " + run.winner : ""),
+          hint: run.created + " · " + run.run_id,
+          search: (run.run_id + " " + run.kind_label + " " + (run.site || "") + " " +
+            (run.winner || "")).toLowerCase(),
+          href: "/run/" + run.run_id,
+        });
+      });
+      return entries;
+    }
+
+    function renderPalette() {
+      var query = paletteInput.value.trim().toLowerCase();
+      var terms = query ? query.split(/\s+/) : [];
+      var matches = paletteEntries().filter(function (entry) {
+        return terms.every(function (term) { return entry.search.indexOf(term) !== -1; });
+      }).slice(0, 12);
+      paletteResults.replaceChildren();
+      paletteActive = Math.min(paletteActive, Math.max(0, matches.length - 1));
+      matches.forEach(function (entry, index) {
+        var item = document.createElement("li");
+        item.setAttribute("role", "option");
+        item.className = index === paletteActive ? "palette-active" : "";
+        var label = document.createElement("span");
+        label.className = "palette-label";
+        label.textContent = entry.label;
+        var hint = document.createElement("span");
+        hint.className = "palette-item-hint mono";
+        hint.textContent = entry.hint || "";
+        item.append(label, hint);
+        item.addEventListener("click", function () { activatePaletteEntry(entry); });
+        paletteResults.appendChild(item);
+      });
+      if (!matches.length) {
+        var empty = document.createElement("li");
+        empty.className = "palette-empty";
+        empty.textContent = "No matching run or action.";
+        paletteResults.appendChild(empty);
+      }
+      paletteResults.$matches = matches;
+    }
+
+    function activatePaletteEntry(entry) {
+      palette.close();
+      if (entry.run) entry.run();
+      else if (entry.href) window.location.href = entry.href;
+    }
+
+    function openPalette() {
+      paletteActive = 0;
+      paletteInput.value = "";
+      if (paletteIndex === null) {
+        fetch("/api/command-index")
+          .then(function (response) { return response.ok ? response.json() : null; })
+          .then(function (payload) {
+            paletteIndex = payload || { runs: [] };
+            renderPalette();
+          })
+          .catch(function () { paletteIndex = { runs: [] }; renderPalette(); });
+      }
+      renderPalette();
+      palette.showModal();
+      paletteInput.focus();
+    }
+
+    paletteInput.addEventListener("input", function () {
+      paletteActive = 0;
+      renderPalette();
+    });
+    paletteInput.addEventListener("keydown", function (event) {
+      var matches = paletteResults.$matches || [];
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        paletteActive = Math.min(paletteActive + 1, matches.length - 1);
+        renderPalette();
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        paletteActive = Math.max(paletteActive - 1, 0);
+        renderPalette();
+      } else if (event.key === "Enter") {
+        event.preventDefault();
+        if (matches[paletteActive]) activatePaletteEntry(matches[paletteActive]);
+      }
+    });
+    document.addEventListener("keydown", function (event) {
+      if ((event.ctrlKey || event.metaKey) && (event.key === "k" || event.key === "K")) {
+        event.preventDefault();
+        if (palette.open) palette.close();
+        else openPalette();
+      }
+    });
+    var paletteOpenButton = document.getElementById("palette-open");
+    if (paletteOpenButton) paletteOpenButton.addEventListener("click", openPalette);
+    palette.addEventListener("click", function (event) {
+      if (event.target === palette) palette.close(); // backdrop click
+    });
+  }
+
   // --- KPI table micro-bars --------------------------------------------
   // Purely visual scaling of the stored values already printed in each row
   // (like a chart axis): bar length = |value| / row max. Nothing is derived
@@ -1129,6 +1877,8 @@
   var explorerIndex = -1;
   var explorerLocked = false;
   var explorerScenario = "baseline";
+  var explorerMetric = "energy";
+  var explorerRange = null; // [firstIndex, lastIndex] when the scrubber zooms
 
   function cssVar(name, fallback) {
     var value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -1252,57 +2002,9 @@
     });
   }
 
-  function drawScenarioLines(canvasId, data, yLabel, seriesStyles) {
-    var canvas = document.getElementById(canvasId);
-    if (!data || !data.series || !canvas || typeof Chart === "undefined") return;
-    var datasets = Object.keys(data.series).map(function (scenario) {
-      var style = seriesStyles && seriesStyles[scenario];
-      var colorScenario = style && style.colorScenario ? style.colorScenario : scenario;
-      return {
-        label: style && style.label ? style.label : scenario.charAt(0).toUpperCase() + scenario.slice(1),
-        _scenario: colorScenario,
-        data: data.series[scenario],
-        borderColor: scenarioColor(colorScenario),
-        pointStyle: strategyPointStyle(colorScenario),
-        backgroundColor: "transparent",
-        borderWidth: 1.5,
-        pointRadius: 0,
-        tension: 0,
-      };
-    });
-    registerChart(new Chart(canvas, {
-      type: "line",
-      data: { labels: data.dates, datasets: datasets },
-      options: baseOptions(yLabel),
-    }));
-  }
-
   function baselineSeries(data) {
     if (!data || !data.series || !Array.isArray(data.series.baseline)) return null;
     return data.series.baseline;
-  }
-
-  function drawDewCementationLines(dew, cementation) {
-    var source = dew || cementation;
-    if (!source || !source.dates) return;
-
-    var series = {};
-    var styles = {};
-    var dewSeries = baselineSeries(dew);
-    var cementationSeries = baselineSeries(cementation);
-    if (dewSeries) {
-      series.dew = dewSeries;
-      styles.dew = { label: "Dew risk", colorScenario: "baseline" };
-    }
-    if (cementationSeries) {
-      series.cementation = cementationSeries;
-      styles.cementation = { label: "Cementation index", colorScenario: "reactive" };
-    }
-    if (!Object.keys(series).length) return;
-
-    drawScenarioLines(
-      "daily-dew-chart", { dates: source.dates, series: series }, "Risk / index (0–1)", styles
-    );
   }
 
   function finiteDisplay(value, digits) {
@@ -1631,6 +2333,41 @@
       }));
     }
 
+    var dewCanvas = document.getElementById("daily-dew-chart");
+    if (dewCanvas && (payload.dailyDew || payload.dailyCementation)) {
+      var dewDatasets = [];
+      var dewSeries = baselineSeries(payload.dailyDew);
+      var cementationSeries = baselineSeries(payload.dailyCementation);
+      if (dewSeries) {
+        dewDatasets.push({
+          label: "Dew risk",
+          data: dewSeries,
+          borderColor: "#2f7fa3",
+          backgroundColor: "transparent",
+          pointRadius: 0,
+          borderWidth: 1.25,
+        });
+      }
+      if (cementationSeries) {
+        dewDatasets.push({
+          label: "Cementation index",
+          data: cementationSeries,
+          borderColor: "#a3453c",
+          backgroundColor: "transparent",
+          pointRadius: 0,
+          borderWidth: 1.25,
+        });
+      }
+      if (dewDatasets.length) {
+        registerExplorerChart(new Chart(dewCanvas, {
+          type: "line",
+          data: { labels: dates, datasets: dewDatasets },
+          options: trackOptions(false),
+          plugins: [explorerCursorPlugin],
+        }));
+      }
+    }
+
     var eventCanvas = document.getElementById("daily-events-chart");
     if (eventCanvas) {
       var eventOptions = trackOptions(true);
@@ -1654,9 +2391,14 @@
       button.setAttribute("aria-pressed", selected ? "true" : "false");
     });
     if (energyExplorerChart) {
-      energyExplorerChart.data.datasets.forEach(function (dataset) {
+      energyExplorerChart.data.datasets.forEach(function (dataset, index) {
         if (dataset._kind === "actual") {
-          dataset.hidden = scenario !== "compare" && dataset._scenario !== scenario;
+          setExplorerDatasetVisible(
+            index,
+            scenario === "compare" || dataset._scenario === scenario
+          );
+        } else if (dataset._kind === "reference") {
+          setExplorerDatasetVisible(index, explorerMetric === "energy");
         }
       });
       energyExplorerChart.update();
@@ -1671,6 +2413,154 @@
     renderSelectedDay();
   }
 
+  // One instrument, four stored metrics: the switcher redraws the same chart
+  // from a different stored daily column. Column selection only.
+  function explorerMetricSpec(metric) {
+    if (!explorerPayload) return null;
+    var specs = {
+      energy: {
+        data: explorerPayload.dailyEnergy,
+        yLabel: "AC energy (kWh/day)",
+        format: energyDisplay,
+        showReference: true,
+      },
+      loss: {
+        data: explorerPayload.dailyLoss,
+        yLabel: "Energy loss (kWh/day)",
+        format: energyDisplay,
+        showReference: false,
+      },
+      cleanliness: {
+        data: explorerPayload.dailySoiling,
+        yLabel: "Cleanliness (1 = clean)",
+        format: function (value) { return finiteDisplay(value, 4); },
+        showReference: false,
+      },
+      cumgain: {
+        data: explorerPayload.dailyCumGain,
+        yLabel: "Cumulative gain vs baseline (kWh)",
+        format: energyDisplay,
+        showReference: false,
+      },
+    };
+    var spec = specs[metric];
+    return spec && spec.data && spec.data.series ? spec : null;
+  }
+
+  function setExplorerDatasetVisible(index, visible) {
+    if (!energyExplorerChart || !energyExplorerChart.data.datasets[index]) return;
+    // Keep both Chart.js visibility layers synchronized. Dataset.hidden alone
+    // can be overridden by the controller's per-dataset metadata after another
+    // filter or legend update, which let the clean reference leak into the
+    // loss, cleanliness, and cumulative views.
+    energyExplorerChart.data.datasets[index].hidden = !visible;
+    if (typeof energyExplorerChart.setDatasetVisibility === "function") {
+      energyExplorerChart.setDatasetVisibility(index, visible);
+    } else if (typeof energyExplorerChart.getDatasetMeta === "function") {
+      energyExplorerChart.getDatasetMeta(index).hidden = !visible;
+    }
+  }
+
+  function applyExplorerMetric(metric) {
+    var spec = explorerMetricSpec(metric);
+    if (!spec || !energyExplorerChart) return;
+    explorerMetric = metric;
+    document.querySelectorAll("[data-energy-metric]").forEach(function (button) {
+      var selected = button.getAttribute("data-energy-metric") === metric;
+      button.classList.toggle("active", selected);
+      button.setAttribute("aria-pressed", selected ? "true" : "false");
+    });
+    energyExplorerChart.data.datasets.forEach(function (dataset, index) {
+      if (dataset._kind === "actual") {
+        dataset.data = spec.data.series[dataset._scenario] || [];
+        setExplorerDatasetVisible(
+          index,
+          explorerScenario === "compare" || dataset._scenario === explorerScenario
+        );
+      } else if (dataset._kind === "reference") {
+        setExplorerDatasetVisible(index, spec.showReference);
+      }
+    });
+    if (energyExplorerChart.options.scales.y.title) {
+      energyExplorerChart.options.scales.y.title.text = spec.yLabel;
+    }
+    energyExplorerChart.$metricFormat = spec.format;
+    energyExplorerChart.update();
+  }
+
+  // The full-width fingerprint doubles as the explorer's scrubber: drag a
+  // window to zoom every explorer chart to that date range, click to select a
+  // day. Zooming only changes the visible axis range of already-drawn stored
+  // values.
+  function setExplorerRange(first, last) {
+    explorerRange = first === null ? null : [first, last];
+    explorerCharts.forEach(function (chart) {
+      chart.options.scales.x.min = first === null ? undefined : first;
+      chart.options.scales.x.max = first === null ? undefined : last;
+      chart.update();
+    });
+    var reset = document.getElementById("scrubber-reset");
+    if (reset) reset.hidden = explorerRange === null;
+  }
+
+  function initExplorerScrubber(dates) {
+    var wrap = document.getElementById("explorer-scrubber");
+    var canvas = wrap && wrap.querySelector("canvas.run-fingerprint");
+    if (!wrap || !canvas) return;
+    var windowEl = document.createElement("span");
+    windowEl.className = "scrubber-window";
+    windowEl.hidden = true;
+    canvas.parentElement.appendChild(windowEl);
+
+    function indexAt(clientX) {
+      var rect = canvas.getBoundingClientRect();
+      var ratio = (clientX - rect.left) / rect.width;
+      return clamp(Math.round(ratio * (dates.length - 1)), 0, dates.length - 1);
+    }
+    function paintWindow(startIndex, endIndex) {
+      var first = Math.min(startIndex, endIndex);
+      var last = Math.max(startIndex, endIndex);
+      windowEl.hidden = false;
+      windowEl.style.left = (first / (dates.length - 1) * 100) + "%";
+      windowEl.style.width = Math.max(0.5, (last - first) / (dates.length - 1) * 100) + "%";
+    }
+
+    var dragStart = null;
+    canvas.style.touchAction = "none";
+    canvas.addEventListener("pointerdown", function (event) {
+      dragStart = indexAt(event.clientX);
+      canvas.setPointerCapture(event.pointerId);
+    });
+    canvas.addEventListener("pointermove", function (event) {
+      if (dragStart === null) return;
+      paintWindow(dragStart, indexAt(event.clientX));
+    });
+    canvas.addEventListener("pointerup", function (event) {
+      if (dragStart === null) return;
+      var end = indexAt(event.clientX);
+      var first = Math.min(dragStart, end);
+      var last = Math.max(dragStart, end);
+      dragStart = null;
+      if (last - first < 3) {
+        // A click (or tiny drag) selects the day instead of zooming.
+        windowEl.hidden = explorerRange === null;
+        setExplorerIndex(end, true);
+        return;
+      }
+      paintWindow(first, last);
+      setExplorerRange(first, last);
+    });
+    canvas.addEventListener("pointercancel", function () { dragStart = null; });
+
+    var reset = document.getElementById("scrubber-reset");
+    if (reset) {
+      reset.addEventListener("click", function () {
+        windowEl.hidden = true;
+        setExplorerRange(null, null);
+      });
+    }
+  }
+
   function drawEnergyExplorer(payload) {
     var data = payload.dailyEnergy;
     var canvas = document.getElementById("daily-energy-chart");
@@ -1678,7 +2568,7 @@
     explorerPayload = payload;
     var datasets = Object.keys(data.series).map(function (scenario) {
       return {
-        label: scenario.charAt(0).toUpperCase() + scenario.slice(1) + " actual",
+        label: scenario.charAt(0).toUpperCase() + scenario.slice(1),
         _kind: "actual",
         _scenario: scenario,
         hidden: scenario !== "baseline",
@@ -1707,7 +2597,9 @@
     var options = wireExplorerInteraction(baseOptions("AC energy (kWh/day)"), true);
     options.plugins.tooltip.callbacks = {
       label: function (context) {
-        return context.dataset.label + ": " + energyDisplay(context.parsed.y);
+        var format = energyExplorerChart && energyExplorerChart.$metricFormat
+          ? energyExplorerChart.$metricFormat : energyDisplay;
+        return context.dataset.label + ": " + format(context.parsed.y);
       },
     };
     energyExplorerChart = registerExplorerChart(new Chart(canvas, {
@@ -1716,6 +2608,7 @@
       options: options,
       plugins: [explorerCursorPlugin],
     }));
+    energyExplorerChart.$metricFormat = energyDisplay;
     // Keyboard day-stepping: arrows move the locked selection so the
     // selected-day panel is usable without a mouse.
     canvas.addEventListener("keydown", function (event) {
@@ -1736,6 +2629,11 @@
         applyExplorerScenario(button.getAttribute("data-energy-scenario"));
       });
     });
+    document.querySelectorAll("[data-energy-metric]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        applyExplorerMetric(button.getAttribute("data-energy-metric"));
+      });
+    });
     var followButton = document.getElementById("follow-hover-button");
     if (followButton) {
       followButton.addEventListener("click", function () {
@@ -1743,6 +2641,7 @@
         updateFollowHoverButton();
       });
     }
+    initExplorerScrubber(data.dates);
     applyExplorerScenario("baseline");
     setExplorerIndex(0, false);
   }
@@ -1805,8 +2704,7 @@
   // Offer a PNG export next to each standalone chart. The image is exactly
   // the rendered canvas on the theme's surface colour — no data is re-read.
   var _downloadableCharts = [
-    "daily-energy-chart", "daily-loss-chart", "daily-soiling-chart", "daily-dew-chart",
-    "daily-cumgain-chart", "annual-cost-chart", "mc-trials-chart", "mc-win-chart",
+    "daily-energy-chart", "annual-cost-chart", "mc-trials-chart", "mc-win-chart",
     "mc-benefit-chart", "tornado-chart", "breakeven-chart",
   ];
   function addChartDownloads() {
@@ -1843,15 +2741,6 @@
     var payload = window.solarcleanCharts || {};
     initDustCalendars(payload);
     drawEnergyExplorer(payload);
-    drawScenarioLines("daily-loss-chart", payload.dailyLoss, "Energy loss (kWh/day)");
-    drawScenarioLines(
-      "daily-soiling-chart", payload.dailySoiling, "Dust / contamination cleanliness (1 = clean)"
-    );
-    drawDewCementationLines(payload.dailyDew, payload.dailyCementation);
-    drawScenarioLines(
-      "daily-cumgain-chart", payload.dailyCumGain, "Cumulative gain vs baseline (kWh)"
-    );
-
     addChartDownloads();
     var bars = payload.annualCostBars;
     var canvas = document.getElementById("annual-cost-chart");

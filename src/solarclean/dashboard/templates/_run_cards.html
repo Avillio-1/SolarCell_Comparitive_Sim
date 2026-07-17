@@ -1,25 +1,32 @@
 {% from "_fingerprint.html" import run_fingerprint %}
 {% from "_strategy.html" import strategy_label %}
 {% for r in runs %}
-<article class="run-card" data-run="{{ r.run_id }}" data-kind="{{ r.kind }}">
+{% if r.new_study %}
+<h3 class="study-header" data-study="{{ r.study_key }}">
+  <span class="study-header-label">{{ r.study_label }}</span>
+</h3>
+{% endif %}
+<article class="run-card" data-run="{{ r.run_id }}" data-kind="{{ r.kind }}" data-study="{{ r.study_key }}">
   <header class="run-card-head">
     <label class="run-card-select"><input type="checkbox" class="run-select" value="{{ r.run_id }}" aria-label="select {{ r.run_id }}"><span>select</span></label>
-    <span class="run-kind">{{ r.kind|replace('-', ' ') }}</span>
-    <span class="mono run-created">{{ r.created[:10] or "undated" }}</span>
+    <span class="run-kind">{{ r.kind_label }}</span>
+    <span class="mono run-created" title="{{ r.created or 'no stored timestamp' }}">{{ r.created_display or "undated" }}</span>
   </header>
   <a class="run-card-link" href="/run/{{ r.run_id }}">
     {{ run_fingerprint(none, "tiny", r.run_id ~ " fingerprint", url=r.fingerprint_url) }}
     <strong class="run-card-site">{{ r.site or "Unspecified site" }}</strong>
-    <span class="mono run-card-id">{{ r.run_id }}</span>
-  </a>
-  <div class="run-card-result">
-    <span>{% if r.winner %}{{ strategy_label(r.winner) }}{% else %}<span class="muted">No winner</span>{% endif %}</span>
-    <span>
-    {% if r.valid is none %}–
-    {% elif r.valid %}<span class="chip chip-pass">valid</span>
-    {% else %}<span class="chip chip-fail">failed</span>{% endif %}
+    <span class="run-card-finding">
+      {% if r.winner %}
+        {{ strategy_label(r.winner) }}
+        {% if r.margin_display %}<span class="mono run-card-margin">+{{ r.margin_display }} SAR</span>
+        {% elif r.win_percent %}<span class="mono run-card-margin">{{ r.win_percent }}% of trials</span>{% endif %}
+      {% else %}<span class="muted">No certified result</span>{% endif %}
+      {% if r.valid is none %}
+      {% elif r.valid %}<span class="chip chip-pass">valid</span>
+      {% else %}<span class="chip chip-fail">failed</span>{% endif %}
     </span>
-  </div>
+    <span class="mono run-card-id" title="{{ r.run_id }}">{{ r.run_id }}</span>
+  </a>
   <div class="run-actions">
     <a class="quiet-link" href="/api/runs/{{ r.run_id }}/download">download .zip</a>
     <button type="button" class="danger-quiet run-delete" data-run-id="{{ r.run_id }}">Delete</button>
