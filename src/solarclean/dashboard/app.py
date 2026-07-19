@@ -2138,6 +2138,7 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
                 "daily_energy": artifacts.daily_energy_series(run_dir),
                 "daily_clean_reference": artifacts.daily_clean_reference_series(run_dir),
                 "daily_rainfall": artifacts.daily_rainfall_series(run_dir),
+                "daily_humidity": artifacts.daily_relative_humidity_series(run_dir),
                 "daily_weather": artifacts.daily_weather_diagnostics(run_dir),
                 "daily_event_markers": _chart_event_markers(run_dir),
                 "daily_loss": artifacts.daily_series(run_dir, "energy_loss_kwh"),
@@ -2145,8 +2146,6 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
                 "daily_cumgain": artifacts.daily_series(
                     run_dir, "cumulative_energy_gain_vs_baseline_kwh"
                 ),
-                "daily_dew": artifacts.daily_series(run_dir, "extension_dew_risk"),
-                "daily_cementation": artifacts.daily_series(run_dir, "extension_cementation_index"),
                 "daily_bird_loss": artifacts.daily_series(run_dir, "extension_bird_loss_fraction"),
                 "daily_water_collected": artifacts.daily_series(
                     run_dir, "extension_actually_collected_water_liters"

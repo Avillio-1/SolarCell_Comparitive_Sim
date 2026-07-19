@@ -583,6 +583,12 @@ def test_explorer_payload_matches_stored_series(client: TestClient, comparison_r
     assert rainfall["dates"] == cleanliness["dates"]
     assert len(rainfall["values"]) == len(rainfall["dates"])
     assert "dailyRainfall:" in page
+    humidity = artifacts_module.daily_relative_humidity_series(comparison_run)
+    assert humidity is not None
+    assert humidity["dates"] == rainfall["dates"]
+    assert len(humidity["values"]) == len(humidity["dates"])
+    assert all(value is None or 0 <= value <= 100 for value in humidity["values"])
+    assert "dailyHumidity:" in page
     clean_reference = artifacts_module.daily_clean_reference_series(comparison_run)
     assert clean_reference is not None
     assert clean_reference["dates"] == rainfall["dates"]
@@ -1651,30 +1657,31 @@ def test_cumulative_gain_column_reconciles_and_charts(
     assert "dailyCumGain:" in page
 
 
-def test_dew_chart_is_optional_for_old_and_new_comparison_runs(client: TestClient) -> None:
-    fresh = Path("outputs") / "test-dashboard-dew-compare-all-scenarios-new"
-    old = Path("outputs") / "test-dashboard-dew-compare-all-scenarios-old"
+def test_humidity_chart_is_optional_for_old_and_new_comparison_runs(client: TestClient) -> None:
+    fresh = Path("outputs") / "test-dashboard-humidity-compare-all-scenarios-new"
+    old = Path("outputs") / "test-dashboard-humidity-compare-all-scenarios-old"
     for run_dir, header in (
         (
             fresh,
-            "date,scenario_name,actual_energy_kwh,extension_dew_risk,extension_cementation_index\n",
+            "date,scenario_name,actual_energy_kwh,extension_mean_relative_humidity_pct\n",
         ),
         (old, "date,scenario_name,actual_energy_kwh\n"),
     ):
         run_dir.mkdir(parents=True, exist_ok=True)
         (run_dir / "scenario_daily_summary.csv").write_text(
-            header + "2025-01-01,baseline,100,0.75,0.20\n",
+            header + "2025-01-01,baseline,100,42.5\n",
             encoding="utf-8",
         )
     try:
         new_page = client.get(f"/run/{fresh.name}")
         assert new_page.status_code == 200
-        assert 'id="daily-dew-chart"' in new_page.text
-        assert "dailyDew:" in new_page.text
-        assert "dailyCementation:" in new_page.text
+        assert 'id="daily-humidity-chart"' in new_page.text
+        assert "dailyHumidity:" in new_page.text
+        assert "daily mean %" in new_page.text
+        assert 'id="daily-dew-chart"' not in new_page.text
         old_page = client.get(f"/run/{old.name}")
         assert old_page.status_code == 200
-        assert 'id="daily-dew-chart"' not in old_page.text
+        assert 'id="daily-humidity-chart"' not in old_page.text
     finally:
         for run_dir in (fresh, old):
             client.delete(f"/api/runs/{run_dir.name}")

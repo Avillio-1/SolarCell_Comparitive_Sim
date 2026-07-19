@@ -640,10 +640,10 @@
           <div class="context-track-chart"><canvas id="daily-rainfall-chart" height="38" data-audit-source="scenario_daily_summary.csv · extension_precipitation_mm"></canvas></div>
         </div>
         {% endif %}
-        {% if daily_dew or daily_cementation %}
+        {% if daily_humidity %}
         <div class="context-track">
-          <div class="context-track-label"><strong>Dew / cementation</strong><span>risk / index 0–1</span></div>
-          <div class="context-track-chart"><canvas id="daily-dew-chart" height="42" data-audit-source="scenario_daily_summary.csv · extension_dew_risk + extension_cementation_index"></canvas></div>
+          <div class="context-track-label"><strong>Relative humidity</strong><span>daily mean %</span></div>
+          <div class="context-track-chart"><canvas id="daily-humidity-chart" height="42" data-audit-source="scenario_daily_summary.csv · extension_mean_relative_humidity_pct"></canvas></div>
         </div>
         {% endif %}
         <div class="context-track context-track-events">
@@ -731,8 +731,8 @@
     <code>extension_bird_loss_fraction</code>,
     <code>extension_actually_collected_water_liters</code>, and
     <code>extension_queue_length</code>). The
-    aligned cursor connects the chart with GHI, daylight temperature, rainfall, dew, and scenario
-    events for the same date.</p>
+    aligned cursor connects the chart with GHI, daylight temperature, rainfall, daily mean
+    relative humidity, and scenario events for the same date.</p>
 </section>
 {% endif %}
 
@@ -827,7 +827,7 @@
 
 {% endblock %}
 {% block scripts %}
-{% if daily_energy or daily_rainfall or daily_weather or daily_loss or daily_soiling or daily_dew or daily_cementation or daily_cumgain or daily_bird_loss or daily_water_collected or daily_queue or detection_performance or coating_service_life %}
+{% if daily_energy or daily_rainfall or daily_humidity or daily_weather or daily_loss or daily_soiling or daily_cumgain or daily_bird_loss or daily_water_collected or daily_queue or detection_performance or coating_service_life %}
 <script src="/static/chart.umd.js?v=20260714b"></script>
 <script>
   window.solarcleanRunId = {{ run_id | tojson }};
@@ -835,12 +835,11 @@
     dailyEnergy: {{ daily_energy | tojson if daily_energy else 'null' }},
     dailyCleanReference: {{ daily_clean_reference | tojson if daily_clean_reference else 'null' }},
     dailyRainfall: {{ daily_rainfall | tojson if daily_rainfall else 'null' }},
+    dailyHumidity: {{ daily_humidity | tojson if daily_humidity else 'null' }},
     dailyWeather: {{ daily_weather | tojson if daily_weather else 'null' }},
     dailyEventMarkers: {{ daily_event_markers | tojson }},
     dailyLoss: {{ daily_loss | tojson if daily_loss else 'null' }},
     dailySoiling: {{ daily_soiling | tojson if daily_soiling else 'null' }},
-    dailyDew: {{ daily_dew | tojson if daily_dew else 'null' }},
-    dailyCementation: {{ daily_cementation | tojson if daily_cementation else 'null' }},
     dailyCumGain: {{ daily_cumgain | tojson if daily_cumgain else 'null' }},
     dailyBirdLoss: {{ daily_bird_loss | tojson if daily_bird_loss else 'null' }},
     dailyCollectedWater: {{ daily_water_collected | tojson if daily_water_collected else 'null' }},

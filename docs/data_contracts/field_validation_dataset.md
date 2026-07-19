@@ -40,3 +40,21 @@ solarclean validate-field `
 ```
 
 The generated `field_validation_report.json` and `field_validation_report.md` separate holdout results from tuning-period diagnostics. Metrics from a period used to tune assumptions are not evidence of predictive accuracy; only untouched holdout results assess predictive performance.
+
+## Data quality: outage days are missing, not zero
+
+Days on which the plant irradiance sensor saw real sun but the meter recorded no positive
+AC energy are instrument or inverter outages. They are availability losses, which the
+soiling model deliberately does not simulate, and they must be **omitted from the
+measured-production CSV** (the harness treats absent days as missing). Leaving them in as
+zeros corrupts every metric stage — this exact mistake produced the failed 2026-07-13
+PVDAQ-34 demo run. `scripts/convert_field_dataset.py --irradiance-column <poa_column>`
+applies this exclusion mechanically and prints the excluded dates. Days whose logger
+recorded no electrical channels at all are likewise treated as missing.
+
+## Reference example
+
+A complete worked example against a real site — public-metadata site model, mechanical
+outage QC, leakage-safe tuning split, and a passing holdout — is documented in
+`docs/audits/pvdaq34_field_validation_2026-07-18.md` with config
+`configs/pvdaq34_field_validation.yaml` and datasets under `data/external/`.

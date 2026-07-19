@@ -17,7 +17,9 @@ The current implementation is limited to:
 - T7: Monte Carlo, one-way/two-way sensitivity, and break-even analysis.
 - T8/T9: web dashboard over the T6/T7 use cases (run/deploy instructions in `docs/dashboard_user_guide.md`).
 
-Not implemented yet: optimization, databases, authentication, Docker, and managed cloud deployment. Reactive CV, coating, economics, and ranking assumptions remain provisional until field calibration and validated cost inputs are available.
+Not implemented yet: optimization, databases, authentication, Docker, and managed cloud deployment.
+
+Calibration status: soiling, dust, rainfall, coating, CV, and economics parameters are anchored to named published sources in `data/calibration/parameter_registry.yaml` (see `docs/calibration/source_bibliography.md`), and the simulation framework has passed real-data holdout validation at three NREL PVDAQ sites spanning three climates — system 34 (Las Vegas, hot desert: MAE 8.4%, MBE −5.4%), system 1429 (Albuquerque, semi-arid: MAE 9.0%, MBE −6.6%, zero fitted parameters), and system 1403 (Cocoa FL, humid subtropical: MAE 9.4%, MBE +2.8%) — all against pre-registered acceptance gates (see `docs/audits/pvdaq34_field_validation_2026-07-18.md` and `docs/audits/rtc_multi_site_field_validation.md`). Riyadh-specific values remain provisional until the target farm's own measurements exist, so rankings should be read together with the sensitivity and evidence-quality outputs.
 
 ## Architecture Summary
 
@@ -192,6 +194,14 @@ Live NASA POWER tests are skipped by default. Enable them explicitly:
 $env:SOLARCLEAN_RUN_NETWORK_TESTS = "1"
 python -m pytest tests/integration/test_nasa_power_live.py -q
 ```
+
+### Continuous Integration
+
+Every push to `main` and every pull request runs the same quality gate in GitHub Actions
+(`.github/workflows/ci.yml`): `ruff format --check`, `ruff check`, `mypy src`, and the
+offline pytest suite, on Ubuntu (Python 3.11 and 3.12) and Windows (Python 3.12).
+A pull request should not be merged with a red check; run the commands above locally to
+reproduce any CI failure.
 
 ## Limitations And Provisional Assumptions
 

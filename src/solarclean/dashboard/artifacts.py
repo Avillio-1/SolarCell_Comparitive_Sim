@@ -273,6 +273,21 @@ def daily_rainfall_series(run_dir: Path) -> dict[str, object] | None:
     return {"dates": reshaped["dates"], "values": values}
 
 
+def daily_relative_humidity_series(run_dir: Path) -> dict[str, object] | None:
+    """Read the persisted daily-mean RH shared by every scenario."""
+
+    reshaped = daily_series(run_dir, "extension_mean_relative_humidity_pct")
+    if reshaped is None:
+        return None
+    series = reshaped.get("series")
+    if not isinstance(series, dict):
+        return None
+    values = series.get("baseline")
+    if not isinstance(values, list):
+        return None
+    return {"dates": reshaped["dates"], "values": values}
+
+
 def daily_weather_diagnostics(run_dir: Path) -> dict[str, object] | None:
     """Select persisted daily irradiance and temperature diagnostics."""
 

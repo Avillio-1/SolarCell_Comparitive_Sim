@@ -2377,11 +2377,6 @@
     });
   }
 
-  function baselineSeries(data) {
-    if (!data || !data.series || !Array.isArray(data.series.baseline)) return null;
-    return data.series.baseline;
-  }
-
   function finiteDisplay(value, digits) {
     return typeof value === "number" && isFinite(value) ? value.toFixed(digits) : "–";
   }
@@ -2910,39 +2905,25 @@
       }));
     }
 
-    var dewCanvas = document.getElementById("daily-dew-chart");
-    if (dewCanvas && (payload.dailyDew || payload.dailyCementation)) {
-      var dewDatasets = [];
-      var dewSeries = baselineSeries(payload.dailyDew);
-      var cementationSeries = baselineSeries(payload.dailyCementation);
-      if (dewSeries) {
-        dewDatasets.push({
-          label: "Dew risk",
-          data: dewSeries,
+    var humidityCanvas = document.getElementById("daily-humidity-chart");
+    if (humidityCanvas && payload.dailyHumidity) {
+      var humidityOptions = trackOptions(false);
+      humidityOptions.scales.y.min = 0;
+      humidityOptions.scales.y.max = 100;
+      registerExplorerChart(new Chart(humidityCanvas, {
+        type: "line",
+        data: { labels: dates, datasets: [{
+          label: "Daily mean relative humidity",
+          data: payload.dailyHumidity.values,
           borderColor: "#2f7fa3",
-          backgroundColor: "transparent",
+          backgroundColor: "rgba(47, 127, 163, 0.12)",
+          fill: true,
           pointRadius: 0,
           borderWidth: 1.25,
-        });
-      }
-      if (cementationSeries) {
-        dewDatasets.push({
-          label: "Cementation index",
-          data: cementationSeries,
-          borderColor: "#a3453c",
-          backgroundColor: "transparent",
-          pointRadius: 0,
-          borderWidth: 1.25,
-        });
-      }
-      if (dewDatasets.length) {
-        registerExplorerChart(new Chart(dewCanvas, {
-          type: "line",
-          data: { labels: dates, datasets: dewDatasets },
-          options: trackOptions(false),
-          plugins: [explorerCursorPlugin],
-        }));
-      }
+        }] },
+        options: humidityOptions,
+        plugins: [explorerCursorPlugin],
+      }));
     }
 
     var eventCanvas = document.getElementById("daily-events-chart");

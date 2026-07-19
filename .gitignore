@@ -44,6 +44,13 @@ Thumbs.db
 *secret*
 id_rsa*
 
+# Reproducible external-data downloads and generated validation artifacts.
+# Keep compact processed measured/tuning CSVs plus data/external/README.md;
+# regenerate everything below from the documented public sources and scripts.
+data/external/*_nasa_cache/
+data/external/*_validation_outputs/
+data/external/*_raw/
+
 # Pytest temporary output directories
 ptmp/
 ptf/

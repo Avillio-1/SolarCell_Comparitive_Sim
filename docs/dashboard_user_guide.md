@@ -285,8 +285,10 @@ Reading order is intentional:
    equals the annual gain). The standalone daily chart panels are gone; every
    view shares the explorer's aligned cursor, keyboard day-stepping, scenario
    focus, and selected-day panel. Context tracks beneath show GHI,
-   temperature, rainfall, **dew risk / cementation**, and stored events for
-   the same dates. The full-width fingerprint above the charts is the
+   temperature, rainfall, **daily mean relative humidity**, and stored events
+   for the same dates. Selecting a day opens the stored hourly humidity series,
+   so intraday variation remains available without making the year overview
+   unreadably dense. The full-width fingerprint above the charts is the
    **scrubber**: drag a window across it to zoom every explorer chart to that
    date range (a "Reset range" button restores the year), click to select a
    day. An annual revenue/cost/benefit bar chart keeps its own panel.

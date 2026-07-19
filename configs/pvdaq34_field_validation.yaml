@@ -1,0 +1,75 @@
+# Field-validation site model: NREL PVDAQ system 34,
+# "[34] Andre Agassi Preparatory Academy - Building A", Las Vegas, NV (climate BWh, hot desert).
+#
+# System parameters come from the public PVDAQ system metadata
+# (https://oedi-data-lake.s3.amazonaws.com/pvdaq/csv/system_metadata/34_system_metadata.json):
+#   - 611 x Sharp NU-U240F1 mono-Si modules = 146.64 kW DC
+#   - Satcon 135 kW central inverter -> dc_ac_ratio 146.64/135 = 1.0862
+#   - fixed mount, tilt 11.2 deg, azimuth 180 deg
+#   - commissioned 2010-08; ~8.6 years old during the 2019 validation window
+#
+# Documented assumptions (not in the PVDAQ metadata):
+#   - inverter_efficiency 0.955: Satcon-class central inverter CEC-weighted efficiency.
+#   - gamma_pdc_per_c -0.0045: typical mono-Si power temperature coefficient
+#     (module datasheet value unconfirmed).
+#   - loss_nameplate_fraction 0.05 = PVWatts nameplate 0.01 + ~4% module aging at
+#     ~0.5%/year over 8.6 years (Jordan & Kurtz degradation-review median rate).
+#   - Soiling parameters start at arid-southwest literature values (Mejia & Kleissl 2013
+#     dry-period soiling ~0.05%/day; Kimber rain thresholds) and are calibrated ONLY on
+#     the tuning window (before the holdout date passed to validate-field).
+#   - Dust-storm events, stochastic daily noise, and bird-dropping events are disabled:
+#     the validation compares the deterministic soiling/rain physics against measured
+#     production; unobservable stochastic shocks would only add unfittable noise for a
+#     single-site comparison.
+simulation:
+  start: 2019-01-01T00:00:00-08:00
+  end: 2019-06-30T23:00:00-07:00
+  target_timezone: America/Los_Angeles
+  run_id_prefix: pvdaq-34
+site:
+  name: PVDAQ 34 - Andre Agassi Preparatory Academy Building A
+  latitude: 36.1952
+  longitude: -115.1582
+  timezone: America/Los_Angeles
+  elevation_m: 620.0
+weather:
+  provider: nasa_power
+  cache_enabled: true
+  cache_directory: data/external/pvdaq_34_nasa_cache
+pv_system:
+  panel_count: 611
+  panel_capacity_w: 240.0
+  tilt_degrees: 11.2
+  azimuth_degrees: 180.0
+  inverter_efficiency: 0.955
+  dc_ac_ratio: 1.0862
+  gamma_pdc_per_c: -0.0045
+  loss_wiring_fraction: 0.02
+  loss_mismatch_fraction: 0.02
+  loss_connections_fraction: 0.005
+  loss_nameplate_fraction: 0.05
+  loss_lid_fraction: 0.015
+  loss_availability_fraction: 0.03
+farm:
+  representation: representative
+  total_panels: 611
+  panel_capacity_w: 240.0
+  cohort_count: 1
+  panels_per_cohort: 611
+  store_cohort_daily_details: false
+soiling:
+  base_daily_soiling_loss_fraction: 0.0033
+  seasonal_multipliers: {}
+  dust_event_probability: 0.0
+  dust_event_loss_min_fraction: 0.005
+  dust_event_loss_max_fraction: 0.03
+  minimum_soiling_ratio: 0.55
+  stochastic_std_fraction: 0.0
+  random_seed: 42
+rainfall_cleaning:
+  partial_rain_threshold_mm: 1.0
+  full_rain_cleaning_threshold_mm: 5.0
+  partial_rain_cleaning_efficiency: 0.45
+  full_rain_cleaning_efficiency: 0.95
+bird_droppings:
+  event_probability_per_cohort_day: 0.0

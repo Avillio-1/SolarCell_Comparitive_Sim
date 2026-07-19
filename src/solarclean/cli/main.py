@@ -215,9 +215,21 @@ def validate_phase_3_5(config: ConfigPath) -> None:
 def validate_field(
     config: ConfigPath,
     measured_csv: MeasuredCsvPath,
-    holdout_start: Annotated[date, typer.Option("--holdout-start")],
+    holdout_start: Annotated[
+        str,
+        typer.Option(
+            "--holdout-start",
+            help="ISO date (YYYY-MM-DD); metrics from this day onward form the untouched holdout.",
+        ),
+    ],
 ) -> None:
-    result = FieldValidationHarness(load_config(config), measured_csv, holdout_start).run()
+    try:
+        holdout_date = date.fromisoformat(holdout_start)
+    except ValueError as exc:
+        raise typer.BadParameter(
+            f"--holdout-start must be an ISO date (YYYY-MM-DD): {holdout_start}"
+        ) from exc
+    result = FieldValidationHarness(load_config(config), measured_csv, holdout_date).run()
     typer.echo(f"Field validation written to {result.output_directory}")
 
 

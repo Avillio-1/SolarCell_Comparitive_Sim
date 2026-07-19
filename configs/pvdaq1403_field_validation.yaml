@@ -1,0 +1,82 @@
+# Field-validation site model: NREL PVDAQ system 1403,
+# "[1403] RTC-FSEC-Baseline", Cocoa, FL (climate Cfa, humid subtropical).
+#
+# System parameters come from the public PVDAQ relational metadata
+# (s3://oedi-data-lake/pvdaq/parquet/{system,site,mount,modules}/):
+#   - 22 x Suniva OPT270-60 mono-Si modules (270 W) = 5.94 kW DC
+#   - nominal 6 kW AC (site table "Baseline 6kW system") -> dc_ac_ratio 5.94/6.0 = 0.99
+#   - two string inverters (day files expose inv1/inv2 AC power; model not recorded)
+#   - fixed mount, tilt 35.0 deg, azimuth 180 deg
+#   - site 28.405, -80.7709, elevation 12 m; PVDAQ day files begin 2014-12
+#
+# Documented assumptions (not in the PVDAQ metadata):
+#   - inverter_efficiency 0.96: PVWatts default for string inverters; the RTC baseline
+#     inverter model is not recorded in the public metadata.
+#   - gamma_pdc_per_c -0.0045: typical mono-Si power temperature coefficient
+#     (module datasheet value unconfirmed).
+#   - loss_nameplate_fraction 0.015 = PVWatts nameplate 0.01 + ~0.5%/yr aging
+#     (Jordan & Kurtz median) for a system ~1.3 years old at the 2016 H1 window.
+#   - Soiling parameters started at literature values and were calibrated ONLY on the
+#     tuning window (pvdaq_system_1403_2016_tuning_janapr.csv, before the holdout date
+#     passed to validate-field). The dry soiling rate 0.0015/day was fitted to the one
+#     soiling-interpretable tuning dry spell (2016-02-25..2016-03-23, measured PI slope
+#     -0.00050/day; fitted simulated/measured slope ratio 0.964). The April 2016
+#     crash/recovery transient (-2.9%/day then +1.2%/day, ~30x any credible Florida
+#     soiling rate) was excluded from fitting as a non-soiling transient under the
+#     pre-registered spell rule; see docs/audits/rtc_multi_site_field_validation.md.
+#   - Dust-storm events, stochastic daily noise, and bird-dropping events are disabled:
+#     the validation compares the deterministic soiling/rain physics against measured
+#     production; unobservable stochastic shocks would only add unfittable noise for a
+#     single-site comparison.
+simulation:
+  start: 2016-01-01T00:00:00-05:00
+  end: 2016-06-30T23:00:00-04:00
+  target_timezone: America/New_York
+  run_id_prefix: pvdaq-1403
+site:
+  name: PVDAQ 1403 - NREL RTC Baseline - FSEC Cocoa FL
+  latitude: 28.405
+  longitude: -80.7709
+  timezone: America/New_York
+  elevation_m: 12.0
+weather:
+  provider: nasa_power
+  cache_enabled: true
+  cache_directory: data/external/pvdaq_1403_nasa_cache
+pv_system:
+  panel_count: 22
+  panel_capacity_w: 270.0
+  tilt_degrees: 35.0
+  azimuth_degrees: 180.0
+  inverter_efficiency: 0.96
+  dc_ac_ratio: 0.99
+  gamma_pdc_per_c: -0.0045
+  loss_wiring_fraction: 0.02
+  loss_mismatch_fraction: 0.02
+  loss_connections_fraction: 0.005
+  loss_nameplate_fraction: 0.015
+  loss_lid_fraction: 0.015
+  loss_availability_fraction: 0.03
+farm:
+  representation: representative
+  total_panels: 22
+  panel_capacity_w: 270.0
+  cohort_count: 1
+  panels_per_cohort: 22
+  store_cohort_daily_details: false
+soiling:
+  base_daily_soiling_loss_fraction: 0.0015
+  seasonal_multipliers: {}
+  dust_event_probability: 0.0
+  dust_event_loss_min_fraction: 0.005
+  dust_event_loss_max_fraction: 0.03
+  minimum_soiling_ratio: 0.55
+  stochastic_std_fraction: 0.0
+  random_seed: 42
+rainfall_cleaning:
+  partial_rain_threshold_mm: 1.0
+  full_rain_cleaning_threshold_mm: 5.0
+  partial_rain_cleaning_efficiency: 0.45
+  full_rain_cleaning_efficiency: 0.95
+bird_droppings:
+  event_probability_per_cohort_day: 0.0
