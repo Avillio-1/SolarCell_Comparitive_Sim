@@ -169,12 +169,12 @@ def test_economics_registry_bridge_preserves_metadata_and_status() -> None:
     assert crew_rate.source == labour_metadata.source
     assert crew_rate.source_status == "blocked"
     assert labour_metadata.status == "blocked"
-    assert labour_metadata.confidence == "low"
+    assert labour_metadata.confidence == "medium"
     assert labour_metadata.evidence_type == "inferred"
     assert labour_metadata.unit == "SAR/worker_hour"
     assert "registry_key=economics.labour_cost_sar_per_hour" in str(crew_rate.notes)
     assert "evidence_type=inferred" in str(crew_rate.notes)
-    assert "confidence=low" in str(crew_rate.notes)
+    assert "confidence=medium" in str(crew_rate.notes)
 
     drone_capex = calibration.equipment_cost_components[0]
     assert drone_capex.source_status == "blocked"

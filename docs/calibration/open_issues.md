@@ -1,15 +1,35 @@
 # Calibration Open Issues
 
-## High Priority
+## Field Validation Status (2026-07-18)
 
-- Obtain measured Riyadh or Saudi arid-site soiling-ratio data for dry accumulation, seasonal
-  multipliers, rainfall recovery, and dust-event severity.
+The simulation framework passed its first real-data holdout at an arid reference site
+(NREL PVDAQ 34, Las Vegas: holdout MAE 8.4%, |MBE| 5.4%, dry-spell decline slope ratio
+1.0002; see `docs/audits/pvdaq34_field_validation_2026-07-18.md`). This validates the
+model framework at a documented comparable site — it does not measure Riyadh's soiling
+rate, so the Riyadh runtime values below remain provisional.
+
+## Partially Resolved By The 2026-07-18 Literature Pass
+
+- Dry accumulation, seasonal multipliers, rainfall thresholds, dust-event frequency, and the
+  soiling floor are now anchored to published measured campaigns near Riyadh (Rumah/K.A.CARE),
+  Dhahran long-exposure data, and Saudi dust climatology (see `source_bibliography.md`). They
+  remain `provisional` because published campaigns at analogous sites are not this farm's own
+  soiling station.
+- The electricity tariff envelope now includes quoted Saudi PPA benchmarks (0.039-0.070 SAR/kWh)
+  alongside the retail tariff; sensitivity sweeps span both offtake worlds.
+- Water cost is now anchored to the quoted commercial/industrial tariff structure (6-9 SAR/m3
+  plus delivery overhead).
+
+## High Priority (Still Open)
+
+- Obtain this site's own measured soiling-ratio data (reference cell, soiling station, or
+  production regression) to move soiling parameters from `provisional` to `validated`.
+- Decide the actual offtake structure (PPA vs. netting vs. industrial tariff). Under PPA pricing
+  the central 0.18 SAR/kWh retail valuation overstates avoided-soiling value by roughly 3-4x,
+  which can change the mitigation ranking.
 - Replace bird-dropping frequency, coverage, persistence, and loss mapping with site observations,
-  imagery labels, or maintenance records.
-- Confirm the electricity tariff class for the simulated farm. The registry uses a provisional Saudi
-  tariff envelope, but real project economics may use a PPA, netting rule, or industrial tariff.
-- Confirm delivered water cost and cleaning method. NWC tariff pages may not represent water
-  delivered to a utility PV farm.
+  imagery labels, or maintenance records (no reliable published source exists).
+- Confirm delivered water cost and cleaning method for the actual site logistics.
 
 ## T2 Reactive CV
 

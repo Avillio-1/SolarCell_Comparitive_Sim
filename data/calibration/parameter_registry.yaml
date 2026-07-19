@@ -1,8 +1,8 @@
 metadata:
   registry_name: solarclean_dt_t5_parameter_registry
-  version: "2026-07-06-central-v2"
+  version: "2026-07-18-literature-v3"
   target_site: Riyadh, Saudi Arabia
-  retrieval_date: "2026-06-30"
+  retrieval_date: "2026-07-18"
   climate_context: Hot arid Gulf interior site using Asia/Riyadh daily aggregation.
   current_config_presets:
     default: configs/default.yaml
@@ -17,16 +17,16 @@ parameters:
     category: soiling
     central_value: 0.001
     low_value: 0.0005
-    high_value: 0.0022
+    high_value: 0.006
     unit: fraction/day
-    source: "SolarClean Phase 3.5 provisional presets; Kimber et al. 2006 PV soiling model; Ilse et al. 2019 Joule soiling-economics review, https://doi.org/10.1016/j.joule.2019.08.019"
+    source: "Jones et al. 2016, 'Optimized Cleaning Cost and Schedule Based on Observed Soiling Conditions for Photovoltaic Plants in Central Saudi Arabia', IEEE J. Photovoltaics 6(3):730-738, https://doi.org/10.1109/JPHOTOV.2016.2535308 (K.A.CARE 3-year Rumah campaign near Riyadh); 'The Impact of Soiling on PV Module Performance in Saudi Arabia', Energies 2022 15(21):8033, https://doi.org/10.3390/en15218033 (Rumah 30-day soiling losses 2-18% across technologies, i.e. ~0.0007-0.006/day); Kimber et al. 2006 IEEE WCPEC (pvlib.soiling.kimber default soiling_loss_rate 0.0015/day); Ilse et al. 2019 Joule, https://doi.org/10.1016/j.joule.2019.08.019"
     evidence_type: inferred
-    source_geography_and_climate: "Southwestern United States and global arid PV evidence; Riyadh 2025 weather context."
-    applicability_to_saudi_conditions: "Comparable dry, dusty operating context but not a measured Riyadh site soiling station."
+    source_geography_and_climate: "Rumah, central Saudi Arabia (~100 km from Riyadh) measured campaigns; southwestern-US and global arid PV evidence."
+    applicability_to_saudi_conditions: "Directly relevant: measured near-Riyadh 30-day losses of 2-18% bracket the central 0.1%/day value; the high bound now covers the worst measured technology at Rumah."
     confidence: medium
     status: provisional
-    rationale: "Central-v2 tuning keeps sparse-rain event physics while targeting about 25% annual no-clean loss for the 2025 full-year fixture."
-    limitations: "Needs measured clean/reference cell or measured production calibration at the target farm."
+    rationale: "Central 0.1%/day sits inside the measured Rumah envelope and below the pvlib Kimber default 0.15%/day; central-v2 tuning targets about 25% annual no-clean loss for the 2025 full-year fixture."
+    limitations: "Published Rumah campaign data are not this farm's own soiling station; needs measured clean/reference cell or production calibration at the target site for validated status. Cross-check 2026-07-18: fitting the same model to measured PVDAQ-34 production (arid Las Vegas) gave 0.0033/day with a passing untouched holdout (docs/audits/pvdaq34_field_validation_2026-07-18.md), inside this low-high band."
     responsible_module_or_owner: T1/core baseline
   - name: soiling.no_clean_annual_loss_target_fraction
     configuration_path: calibration.central_v2_targets.baseline_no_clean_annual_loss_fraction
@@ -35,7 +35,7 @@ parameters:
     low_value: 0.12
     high_value: 0.4
     unit: fraction/year
-    source: "T6 parameter audit correction, 2026-07-06; target range selected for Riyadh central mitigation comparison."
+    source: "T6 parameter audit correction, 2026-07-06; range is consistent with annualizing the measured Rumah 30-day loss envelope of 2-18% (Energies 2022 15(21):8033, https://doi.org/10.3390/en15218033) under sparse-rain conditions and with Adinoyi & Said 2013 long-exposure Dhahran decline (Renewable Energy 60:633-636, https://www.sciencedirect.com/science/article/abs/pii/S0960148113003078)."
     evidence_type: assumed
     source_geography_and_climate: "Riyadh hot-arid central planning target, not a measured soiling-station result."
     applicability_to_saudi_conditions: "Used to prevent the central case from becoming a severe no-clean stress test."
@@ -51,11 +51,11 @@ parameters:
     low_value: 0.45
     high_value: 0.7
     unit: fraction
-    source: "SolarClean Phase 3.5 stress-test bounds derived from baseline model sensitivity needs."
-    evidence_type: assumed
-    source_geography_and_climate: "Model guardrail rather than a directly measured climate result."
-    applicability_to_saudi_conditions: "Useful for preventing physically impossible accumulation while stress-testing Saudi dry seasons."
-    confidence: low
+    source: "Adinoyi & Said 2013, 'Effect of dust accumulation on the power outputs of solar photovoltaic modules', Renewable Energy 60:633-636, https://www.sciencedirect.com/science/article/abs/pii/S0960148113003078 (Dhahran, Saudi Arabia: >50% power reduction after 6+ months without cleaning, supporting a saturation floor near 0.5); pvlib.soiling.kimber default max_soiling 0.3 (floor 0.7) as the milder-climate anchor."
+    evidence_type: inferred
+    source_geography_and_climate: "Measured long-exposure module data from Dhahran, Saudi Arabia (hot arid Gulf coast), plus the Kimber-model default from the southwestern US."
+    applicability_to_saudi_conditions: "The central 0.55 floor lies between the measured Saudi long-exposure endpoint (~0.5) and the Kimber default (0.7); Riyadh inland dust load plausibly sits toward the Saudi endpoint."
+    confidence: medium
     status: provisional
     rationale: "Bounds the floor of the empirical soiling ratio under prolonged dry contamination."
     limitations: "Should be replaced by measured saturation behavior for local dust mineralogy and cleaning cadence."
@@ -83,7 +83,7 @@ parameters:
     low_value: 1.0
     high_value: 1.2
     unit: multiplier
-    source: "Saudi and Gulf dust climatology evidence summarized in source bibliography; SolarClean Phase 3.5 preset."
+    source: "'Spatial and Temporal Variations in the Incidence of Dust Storms in Saudi Arabia Revealed from In Situ Observations', Geosciences 2019 9(4):162, https://doi.org/10.3390/geosciences9040162 (dust-storm frequency peaks in April; season spans February-June; central region ~7.6 dust storms/year); 'Synoptic characteristics of the spatial variability of spring dust storms over Saudi Arabia', Atmosfera 36(3), 2023, https://www.scielo.org.mx/scielo.php?script=sci_arttext&pid=S0187-62362023000300124; SolarClean Phase 3.5 preset."
     evidence_type: inferred
     source_geography_and_climate: "Saudi/Gulf spring dust season, hot arid climate."
     applicability_to_saudi_conditions: "Spring dust enhancement is plausible for Riyadh but site-year variability is high."
@@ -99,7 +99,7 @@ parameters:
     low_value: 1.05
     high_value: 1.25
     unit: multiplier
-    source: "Saudi and Gulf dust climatology evidence summarized in source bibliography; SolarClean Phase 3.5 preset."
+    source: "'Spatial and Temporal Variations in the Incidence of Dust Storms in Saudi Arabia Revealed from In Situ Observations', Geosciences 2019 9(4):162, https://doi.org/10.3390/geosciences9040162 (dust-storm frequency peaks in April; season spans February-June; central region ~7.6 dust storms/year); 'Synoptic characteristics of the spatial variability of spring dust storms over Saudi Arabia', Atmosfera 36(3), 2023, https://www.scielo.org.mx/scielo.php?script=sci_arttext&pid=S0187-62362023000300124; SolarClean Phase 3.5 preset."
     evidence_type: inferred
     source_geography_and_climate: "Saudi/Gulf spring dust season, hot arid climate."
     applicability_to_saudi_conditions: "April often falls within regional dust-season conditions relevant to Riyadh."
@@ -115,7 +115,7 @@ parameters:
     low_value: 1.0
     high_value: 1.2
     unit: multiplier
-    source: "Saudi and Gulf dust climatology evidence summarized in source bibliography; SolarClean Phase 3.5 preset."
+    source: "'Spatial and Temporal Variations in the Incidence of Dust Storms in Saudi Arabia Revealed from In Situ Observations', Geosciences 2019 9(4):162, https://doi.org/10.3390/geosciences9040162 (dust-storm frequency peaks in April; season spans February-June; central region ~7.6 dust storms/year); 'Synoptic characteristics of the spatial variability of spring dust storms over Saudi Arabia', Atmosfera 36(3), 2023, https://www.scielo.org.mx/scielo.php?script=sci_arttext&pid=S0187-62362023000300124; SolarClean Phase 3.5 preset."
     evidence_type: inferred
     source_geography_and_climate: "Saudi/Gulf spring to early-summer dust season, hot arid climate."
     applicability_to_saudi_conditions: "Reasonable provisional uplift for Riyadh pending measured deposition."
@@ -131,11 +131,11 @@ parameters:
     low_value: 0.015
     high_value: 0.06
     unit: probability/day
-    source: "SolarClean Phase 3.5 provisional event-tape presets; Saudi/Gulf dust-storm climatology evidence."
+    source: "Geosciences 2019 9(4):162, https://doi.org/10.3390/geosciences9040162: central Saudi Arabia averages ~7.6 severe dust storms/year (~0.021/day) and ~76 blowing-dust days/year (~0.21/day). The central 0.03/day 'heavy soiling day' probability sits between the severe-storm and blowing-dust frequencies."
     evidence_type: inferred
-    source_geography_and_climate: "Saudi and Gulf arid dust-event context."
-    applicability_to_saudi_conditions: "Represents localized heavy soiling days, not official dust-storm warning frequency."
-    confidence: low
+    source_geography_and_climate: "In situ meteorological observations across Saudi Arabia including the central (Riyadh) region."
+    applicability_to_saudi_conditions: "Represents localized heavy soiling days; bracketed by measured severe-storm (lower) and blowing-dust (upper) day frequencies for the region."
+    confidence: medium
     status: provisional
     rationale: "Generates a plausible stress-test range for event-tape comparability."
     limitations: "Must be calibrated against measured dust events or quality-controlled visibility/PM observations."
@@ -179,11 +179,11 @@ parameters:
     low_value: 0.8
     high_value: 1.5
     unit: mm/day
-    source: "SolarClean Phase 3.5 provisional rainfall presets; Kimber-style rainfall reset concept."
+    source: "Bessa et al. 2021 soiling-monitoring review, iScience 24(3):102165, https://doi.org/10.1016/j.isci.2021.102165 (open access: https://pmc.ncbi.nlm.nih.gov/articles/PMC7960939/): reported rain cleaning thresholds span ~1-5 mm/day across Mediterranean/desert sites; 1 mm/day is the low edge of that envelope."
     evidence_type: inferred
-    source_geography_and_climate: "PV soiling models from arid and semi-arid climates."
-    applicability_to_saudi_conditions: "Riyadh rain is infrequent; partial cleaning threshold remains a sensitivity parameter."
-    confidence: low
+    source_geography_and_climate: "Multi-site PV soiling threshold survey across arid and semi-arid climates."
+    applicability_to_saudi_conditions: "Riyadh rain is infrequent; the partial threshold sits at the published low edge so light rain gives only partial recovery."
+    confidence: medium
     status: provisional
     rationale: "Triggers partial natural cleaning from light rainfall."
     limitations: "Rain intensity, mud formation, and dust mineralogy may reverse or weaken cleaning."
@@ -195,11 +195,11 @@ parameters:
     low_value: 4.0
     high_value: 6.0
     unit: mm/day
-    source: "SolarClean Phase 3.5 provisional rainfall presets; Kimber-style rainfall reset concept."
+    source: "Kimber et al. 2006 IEEE WCPEC via the pvlib implementation: pvlib.soiling.kimber default cleaning_threshold is 6 mm; Bessa et al. 2021 iScience review, https://doi.org/10.1016/j.isci.2021.102165, reports full-cleaning thresholds of ~1-5 mm/day across arid/semi-arid sites."
     evidence_type: inferred
-    source_geography_and_climate: "PV soiling models from arid and semi-arid climates."
-    applicability_to_saudi_conditions: "Useful first-order threshold for rare stronger Riyadh rainfall events."
-    confidence: low
+    source_geography_and_climate: "Kimber model calibration (California/southwest US) plus multi-site threshold survey in arid/semi-arid climates."
+    applicability_to_saudi_conditions: "Central 5 mm/day sits at the top of the published multi-site envelope and just below the pvlib Kimber default 6 mm, appropriate for rare stronger Riyadh rain."
+    confidence: medium
     status: provisional
     rationale: "Triggers strong natural cleaning in the empirical model."
     limitations: "Must be checked against measured soiling recovery after Riyadh rain events."
@@ -339,14 +339,14 @@ parameters:
     low_value: 0.6
     high_value: 0.9
     unit: fraction
-    source: "DeepSolarEye and PV image-inspection literature; exact production CV model not yet selected."
+    source: "Published dusty/clean panel classifiers report recall 95-100% on curated benchmark datasets: SolPowNet CNN (Electronics 14(21):4230, https://doi.org/10.3390/electronics14214230: 100% recall, 97.1% precision on 842 images); 'Deep Learning-Based Dust Detection on Solar Panels', Sustainability 2024 16(19):8664, https://doi.org/10.3390/su16198664 (compact CNN 99.9% accuracy). Central 0.8 deliberately derates curated-benchmark recall for field conditions (drone altitude, glare, motion blur, partial soiling)."
     evidence_type: inferred
-    source_geography_and_climate: "Mostly lab, rooftop, or public-image PV datasets outside Saudi Arabia."
-    applicability_to_saudi_conditions: "Saudi dust color, glare, and drone altitude may change detector recall."
-    confidence: low
+    source_geography_and_climate: "Curated public PV-image benchmarks, mostly rooftop/ground imagery outside Saudi Arabia."
+    applicability_to_saudi_conditions: "Saudi dust color, glare, and drone altitude may reduce recall below curated-benchmark values; the 0.6-0.9 band covers that derating."
+    confidence: medium
     status: blocked
-    rationale: "Provides the central-v2 provisional recall input for T2 reactive CV sensitivity."
-    limitations: "Needs T2 model evaluation on Saudi or Saudi-like imagery."
+    rationale: "Central-v2 recall is a field-derated value below the 95%+ curated-benchmark ceiling documented in the sources."
+    limitations: "Needs T2 model evaluation on Saudi or Saudi-like drone imagery; curated benchmarks overstate field performance."
     responsible_module_or_owner: T2 reactive CV
   - name: cv.false_positive_rate
     configuration_path: reactive_cv.observer.false_positive_rate
@@ -355,7 +355,7 @@ parameters:
     low_value: 0.02
     high_value: 0.2
     unit: fraction
-    source: "DeepSolarEye and PV image-inspection literature; exact production CV model not yet selected."
+    source: "Published dusty/clean classifiers report false-positive rates of ~0-5% on curated benchmarks (SolPowNet, Electronics 14(21):4230, https://doi.org/10.3390/electronics14214230, precision 97.1%; Sustainability 2024 16(19):8664, https://doi.org/10.3390/su16198664, precision 99.95%); central 0.08 derates for field imagery, haze, and specular reflection."
     evidence_type: inferred
     source_geography_and_climate: "Mostly non-Saudi PV image datasets."
     applicability_to_saudi_conditions: "Dust haze, specular reflection, and sand color can increase false alarms."
@@ -481,9 +481,9 @@ parameters:
     category: drone_inspection_cleaning
     central_value: 1.5
     low_value: 0.5
-    high_value: 3.0
+    high_value: 5.0
     unit: liters/panel
-    source: "PV cleaning literature and arid-site water-use envelopes; water-free cleaning alternatives noted separately."
+    source: "CEEW estimate for Indian utility PV O&M: 3-5 liters/panel/wash, in some cases 7-8 (via Polywater water-use summary, https://www.polywater.com/wp-content/uploads/2021/08/SPW-Intl-blog-Water-Use-IndiaCA.pdf); central 1.5 L/panel assumes water-efficient brush cleaning appropriate to Saudi water scarcity; water-free cleaning alternatives noted separately."
     evidence_type: inferred
     source_geography_and_climate: "Dry-climate PV cleaning evidence outside the exact Riyadh site."
     applicability_to_saudi_conditions: "Water scarcity makes this a high-priority Saudi sensitivity input."
@@ -579,11 +579,11 @@ parameters:
     low_value: 0.15
     high_value: 0.5
     unit: fraction
-    source: "Hydrophobic/nanotextured self-cleaning coating studies and arid PV coating reviews; not the paper endpoint ratio by itself."
+    source: "'Anti-Soiling Coatings for Enhancement of PV Panel Performance in Desert Environment: A Critical Review and Market Overview', Materials 2022 15(20):7139, https://doi.org/10.3390/ma15207139 (open access: https://pmc.ncbi.nlm.nih.gov/articles/PMC9609821/): long-term field soiling reduction of 20-50% for anti-soiling coatings (short-term up to 80%); the 0.15-0.5 registry band matches the long-term published envelope."
     evidence_type: inferred
-    source_geography_and_climate: "Lab and outdoor tests, not a Riyadh utility farm."
-    applicability_to_saudi_conditions: "Relevant to Saudi dust adhesion but needs local dust chemistry validation."
-    confidence: low
+    source_geography_and_climate: "Desert-environment coating field and lab studies surveyed in the review; not a Riyadh utility farm."
+    applicability_to_saudi_conditions: "The central 30% reduction sits mid-band in the published long-term desert evidence; local dust chemistry and abrasion validation still required."
+    confidence: medium
     status: blocked
     rationale: "Represents a mechanistic 30% reduction in new dust accumulation; runtime multiplier is 1 - this value."
     limitations: "Performance depends on abrasion, UV exposure, cleaning method, and dust particle properties. Endpoint-derived coated/uncoated power-loss ratios must not be combined with passive cleaning as if they were independent adhesion measurements."
@@ -643,7 +643,7 @@ parameters:
     low_value: 0.01
     high_value: 0.15
     unit: fraction/year
-    source: "Coating durability literature and warranty-risk sensitivity placeholder."
+    source: "Coating durability literature and warranty-risk sensitivity placeholder. Materials 2022 15(20):7139 review, https://doi.org/10.3390/ma15207139, notes 3.5-year silica aging without solid degradation but explicitly flags that 'very few experimental works' report longer test periods, so annual effectiveness decay remains a sensitivity assumption."
     evidence_type: assumed
     source_geography_and_climate: "Global outdoor coating durability context."
     applicability_to_saudi_conditions: "Saudi UV, abrasion, and sand exposure may accelerate degradation."
@@ -659,7 +659,7 @@ parameters:
     low_value: 0.0
     high_value: 0.02
     unit: fraction
-    source: "Transparent coating literature and low-side sensitivity assumption; optical losses vary by material and application thickness. Absolute glass transmittance must not be used directly as a relative PV multiplier."
+    source: "Materials 2022 15(20):7139 review, https://doi.org/10.3390/ma15207139: nanostructured silica coatings showed 'minimal reflection loss', and optimized silica coatings improved CIGS module output by 3.9% over 3.5 years outdoors (net optical gain, not penalty), supporting a near-zero central optical penalty. Optical losses vary by material and application thickness; absolute glass transmittance must not be used directly as a relative PV multiplier."
     evidence_type: inferred
     source_geography_and_climate: "Global coating optical tests."
     applicability_to_saudi_conditions: "Optical penalty applies regardless of climate; dust abrasion may increase it."
@@ -723,7 +723,7 @@ parameters:
     low_value: 1.0
     high_value: 7.0
     unit: years
-    source: "T6 parameter audit correction, 2026-07-06; front-surface anti-soiling coating replacement interval."
+    source: "T6 parameter audit correction, 2026-07-06. Materials 2022 15(20):7139 review, https://doi.org/10.3390/ma15207139: silica-coated modules aged 3.5 years outdoors 'without any solid degradation' (with a 3.9% output improvement for optimized silica on CIGS), but 'very few experimental works' cover longer periods — supporting a 3-year central replacement interval with wide bounds."
     evidence_type: assumed
     source_geography_and_climate: "Outdoor coating durability context, not a selected Saudi product warranty."
     applicability_to_saudi_conditions: "Saudi UV, sand abrasion, and cleaning cycles can shorten coating life."
@@ -736,17 +736,17 @@ parameters:
     configuration_path: economics.tariff.sar_per_kwh
     category: economics
     central_value: 0.18
-    low_value: 0.18
+    low_value: 0.04
     high_value: 0.3
     unit: SAR/kWh
-    source: "Saudi electricity tariff references from SEC/WERA public tariff material; current tariff must be refreshed before decision use."
+    source: "Saudi electricity tariff references from SEC/WERA public tariff material (retail 0.18-0.30 SAR/kWh envelope). Utility-scale PPA benchmarks are far lower: Sakaka 300 MW at 7 halalas/kWh (~1.87 USc, ~0.070 SAR/kWh), Sudair 1.5 GW at ~1.239 USc (~0.046 SAR/kWh), Shuaibah 600 MW at ~1.04 USc (~0.039 SAR/kWh); see https://www.vision2030.gov.sa/en/explore/projects/sakaka-solar-power-plant and https://reneweconomy.com.au/saudi-solar-plant-locks-in-new-record-low-price-for-power-1-04c-kwh/."
     evidence_type: quoted
-    source_geography_and_climate: "Saudi Arabia national tariff context."
-    applicability_to_saudi_conditions: "Directly relevant to Saudi economic valuation but customer category may differ."
+    source_geography_and_climate: "Saudi Arabia national tariff and auction-PPA context."
+    applicability_to_saudi_conditions: "Valuation depends on offtake: a BOO/PPA utility farm values lost energy at the PPA price (~0.04-0.07 SAR/kWh), while behind-the-meter offset uses the retail tariff (0.18-0.30). The low bound now covers the PPA world."
     confidence: medium
     status: blocked
-    rationale: "Central-v2 uses 0.18 SAR/kWh with sensitivity up to 0.30 SAR/kWh."
-    limitations: "Tariffs can change and may depend on customer class, contract, and netting rules."
+    rationale: "Central-v2 uses 0.18 SAR/kWh (retail-offset framing) with sensitivity now spanning PPA-priced energy (0.04) up to 0.30 SAR/kWh."
+    limitations: "Under PPA offtake the central 0.18 SAR/kWh overstates the value of avoided soiling loss by roughly 3-4x; the winner ranking should be checked at the PPA-valued low bound before decision use."
     responsible_module_or_owner: T3 coating/economics
   - name: economics.labour_cost_sar_per_hour
     configuration_path: economics.costs.labour_sar_per_hour
@@ -755,11 +755,11 @@ parameters:
     low_value: 20.0
     high_value: 80.0
     unit: SAR/worker_hour
-    source: "Saudi labor-market wage references and cleaning-contractor uncertainty envelope."
+    source: "GASTAT labor-market statistics (https://www.stats.gov.sa/en): average non-Saudi worker wage ~4,376 SAR/month (2024), ~21 SAR/hour at 48 h/week; laborer-class salaries ~3,300 SAR/month (~16 SAR/hour). Central 35 SAR/hour represents a loaded contractor rate (wages plus supervision, transport, housing, and margin) of roughly 1.7x the base wage."
     evidence_type: inferred
-    source_geography_and_climate: "Saudi labor market, not a quoted solar-O&M contract."
-    applicability_to_saudi_conditions: "Relevant but highly dependent on contractor, Saudization, and safety requirements."
-    confidence: low
+    source_geography_and_climate: "Saudi labor market statistics; not a quoted solar-O&M contract."
+    applicability_to_saudi_conditions: "Anchored to published Saudi wage statistics; loading factor and Saudization requirements remain contractor-specific."
+    confidence: medium
     status: blocked
     rationale: "Supports O&M labor sensitivity until a contractor quote is available."
     limitations: "Should be replaced by project-specific labor and supervision rates."
@@ -771,11 +771,11 @@ parameters:
     low_value: 2.0
     high_value: 20.0
     unit: SAR/m3
-    source: "Delivered-water central estimate for a remote utility farm (tanker delivery), bracketed by recycled/TSE water (low) and long-haul tanker rates (high); NWC piped tariff (~4.5-9 SAR/m3 by tier) applies only if the site is utility-connected."
+    source: "Delivered-water central estimate for a remote utility farm (tanker delivery), bracketed by recycled/TSE water (low) and long-haul tanker rates (high). Published Saudi tariff anchors: commercial piped water 9 SAR/m3 flat; industrial 6 SAR/m3 above 50 m3/month (plus sewerage and VAT) — see NWC/SWA tariff material, e.g. https://www.swa.gov.sa/en/services/service-calculator/water-bill-calculator; piped tariffs apply only if the site is utility-connected."
     evidence_type: inferred
-    source_geography_and_climate: "Saudi water tariff context plus site delivery uncertainty."
-    applicability_to_saudi_conditions: "Water scarcity and delivery distance are directly relevant to Saudi cleaning decisions."
-    confidence: low
+    source_geography_and_climate: "Published Saudi water tariff structure plus site delivery uncertainty."
+    applicability_to_saudi_conditions: "Central 10 SAR/m3 sits just above the quoted commercial piped tariff (9 SAR/m3), representing modest delivery overhead; water scarcity and delivery distance remain directly relevant."
+    confidence: medium
     status: blocked
     rationale: "Prices wet-cleaning water at delivered-to-site cost rather than the piped utility tariff, since a 10,000-panel farm outside Riyadh is unlikely to sit on an NWC connection."
     limitations: "Requires a site-specific water supply plan (piped, tanker, or recycled) before decision use."
@@ -851,11 +851,11 @@ parameters:
     low_value: 0.04
     high_value: 0.14
     unit: fraction/year
-    source: "Saudi Central Bank rate context and project-finance sensitivity practice."
+    source: "IRENA 'The cost of financing for renewable power' (2023), https://www.irena.org/-/media/Files/IRENA/Agency/Publication/2023/May/IRENA_The_cost_of_financing_renewable_power_2023.pdf: utility renewable WACC ranged ~3.8% (Europe) to ~12% (highest-risk markets) with mature Middle East auctions toward the low end; Saudi Central Bank rate context."
     evidence_type: inferred
-    source_geography_and_climate: "Saudi macro-finance context, not a project WACC quote."
-    applicability_to_saudi_conditions: "Relevant to Saudi project economics but must be replaced by sponsor WACC."
-    confidence: low
+    source_geography_and_climate: "Global renewable project-finance WACC survey including Middle East auction markets."
+    applicability_to_saudi_conditions: "The 0.04-0.14 band spans the published WACC survey; low-cost Saudi auction financing suggests the true project WACC likely sits below the 0.08 central."
+    confidence: medium
     status: blocked
     rationale: "Supports NPV sensitivity without overclaiming a financing model."
     limitations: "Does not include capital structure, inflation, tax, or policy incentives."
