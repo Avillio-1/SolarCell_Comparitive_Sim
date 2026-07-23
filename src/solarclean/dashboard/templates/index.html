@@ -41,7 +41,7 @@
           data-audit-detail="Read-only check for the resolved site, period, provider, and normalized weather cache files.">
         {{ cockpit.weather_status.label if cockpit.weather_status else "unavailable" }}
       </dd>
-      <small id="cockpit-weather-detail">{{ cockpit.weather_status.detail if cockpit.weather_status else "" }}</small>
+      <small id="cockpit-weather-detail">{% if cockpit.weather_status %}{{ cockpit.weather_status.detail }}{% if cockpit.weather_status.state == "fetch" %} · It will be fetched automatically when you run the study.{% endif %}{% endif %}</small>
     </div>
     <div>
       <dt>Last recorded finding</dt>
@@ -58,25 +58,25 @@
 
 <section class="panel launch-panel">
   <div class="panel-heading">
-    <div><span class="step-label">Simulation plan · Form SC-01</span><h2>File a new analysis</h2>
-      <p>Declare the question, configuration, and operating period. The resulting package is immutable.</p></div>
+    <div><span class="step-label">Simulation plan · Form SC-01</span><h2>Run a study</h2>
+      <p>Compare solar-panel soiling strategies under the same weather and assumptions. Choose
+        the question, configuration, and operating period; each run saves a reproducible result
+        package.</p></div>
     <a id="config-link" class="config-action" href="/config/{{ default_config_name }}">Review configuration &rarr;</a>
   </div>
   {% if not configs %}
   <p class="warn-note">No configurations were found under <code>configs/</code>, so runs cannot start.</p>
   {% endif %}
-  <form id="launch-form" onsubmit="return false;">
+  <form id="launch-form">
     <fieldset class="question-cards" id="kind-cards">
-      <legend><strong>What question should the model answer?</strong>
-        <small>Each question maps onto one stored analysis method.</small></legend>
+      <legend><strong>Choose the question</strong>
+        <small>What question should the model answer? Each question maps onto one stored analysis method.</small></legend>
       <label class="question-card">
         <input type="radio" name="kind" value="compare" checked>
         <span class="question-card-body">
           <strong>Which strategy wins?</strong>
           <span>Compare baseline, reactive cleaning, and coating under identical weather and events.</span>
           <small class="mono">compare all scenarios</small>
-          <span class="question-card-history" data-launch-history data-launch-history-kind="compare"
-                data-kind="compare" data-audit-source="outputs/.dashboard_jobs.json · finished sessions">No prior session for this configuration.</span>
         </span>
       </label>
       <label class="question-card">
@@ -85,8 +85,6 @@
           <strong>How sure are we of the winner?</strong>
           <span>Repeat the comparison across controlled random seeds to measure uncertainty and winner probability.</span>
           <small class="mono">Monte Carlo</small>
-          <span class="question-card-history" data-launch-history data-launch-history-kind="monte-carlo"
-                data-kind="monte-carlo" data-audit-source="outputs/.dashboard_jobs.json · finished sessions">No prior session for this configuration.</span>
         </span>
       </label>
       <label class="question-card">
@@ -95,8 +93,6 @@
           <strong>Which assumption moves the result most?</strong>
           <span>Change one assumption at a time to see which inputs influence the result most.</span>
           <small class="mono">one-way sensitivity</small>
-          <span class="question-card-history" data-launch-history data-launch-history-kind="sensitivity-oneway"
-                data-kind="sensitivity-oneway" data-audit-source="outputs/.dashboard_jobs.json · finished sessions">No prior session for this configuration.</span>
         </span>
       </label>
       <label class="question-card">
@@ -105,8 +101,6 @@
           <strong>Where does the winner flip?</strong>
           <span>Vary two assumptions together and map which strategy wins across the grid.</span>
           <small class="mono">two-way winner map</small>
-          <span class="question-card-history" data-launch-history data-launch-history-kind="winner-map"
-                data-kind="winner-map" data-audit-source="outputs/.dashboard_jobs.json · finished sessions">No prior session for this configuration.</span>
         </span>
       </label>
       <label class="question-card">
@@ -115,8 +109,6 @@
           <strong>At what value do two strategies tie?</strong>
           <span>Find the parameter value where two selected strategies have equal net benefit.</span>
           <small class="mono">break-even search</small>
-          <span class="question-card-history" data-launch-history data-launch-history-kind="break-even"
-                data-kind="break-even" data-audit-source="outputs/.dashboard_jobs.json · finished sessions">No prior session for this configuration.</span>
         </span>
       </label>
     </fieldset>
@@ -130,7 +122,10 @@
           <option value="{{ config_name }}"{% if config_name == default_config_name %} selected{% endif %}
                   data-start="{{ period.start_date if period else '' }}"
                   data-end="{{ period.end_date if period else '' }}"
-                  data-timezone="{{ period.timezone if period else '' }}">{{ config_name }}</option>
+                  data-timezone="{{ period.timezone if period else '' }}">
+            {% if config_name == default_config_name %}{{ default_config_label }} (editable)
+            {% elif 'field_validation' in config_name %}Field validation preset (read-only)
+            {% else %}{{ config_name | replace('.yaml', '') | replace('.yml', '') | replace('_', ' ') | title }} (read-only){% endif %}</option>
           {% endfor %}
         </select>
       </label>
@@ -213,7 +208,7 @@
               data-audit-source="outputs/.dashboard_jobs.json · finished sessions"
               aria-live="polite">No prior session for this question and configuration.</span>
       </div>
-      <button id="launch" class="primary launch-button" type="button" {% if not configs %}disabled{% endif %}>Start analysis</button>
+      <button id="launch" class="primary launch-button" type="submit" {% if not configs %}disabled{% endif %}>Run study</button>
       <span id="launch-error" class="error-text" role="alert"></span>
     </div>
   </form>
@@ -257,9 +252,24 @@
         <option value="{{ kind }}">{{ kind | replace('-', ' ') }}</option>
         {% endfor %}
       </select></label>
+    <label class="runs-filter-field"><span>Status</span>
+      <select id="run-filter-status-code">
+        <option value="">All statuses</option>
+        <option value="certified">Certified</option>
+        <option value="not_certified">Not certified</option>
+        <option value="complete">Complete — no recommendation</option>
+        <option value="incomplete">Incomplete</option>
+        <option value="unknown">Status unknown</option>
+      </select></label>
+    <label class="runs-filter-field"><span>Run source</span>
+      <select id="run-filter-provenance" aria-describedby="run-filter-status">
+        <option value="study" selected>Study runs</option>
+        <option value="">All runs, including technical/test</option>
+        <option value="test">Technical/test only</option>
+      </select></label>
     <span id="run-filter-status" class="hint runs-filter-status" role="status"></span>
     <span class="runs-toolbar-actions">
-      <button type="button" id="select-all-runs" aria-pressed="false">Select all</button>
+      <button type="button" id="select-all-runs" aria-pressed="false">Select all matching runs</button>
     </span>
   </div>
   <div class="run-gallery" id="runs-table">

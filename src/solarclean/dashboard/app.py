@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
 import io
 import json
 import math
@@ -32,7 +33,7 @@ import stat
 import tempfile
 import time
 import zipfile
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import date, datetime
 from datetime import time as datetime_time
 from functools import lru_cache
@@ -987,6 +988,31 @@ def _resolved_config_section(run_dir: Path, section: str) -> dict[str, object]:
     return raw if isinstance(raw, dict) else {}
 
 
+def _comparison_period_context(run_dir: Path) -> dict[str, object]:
+    """Conservative display semantics from the run's stored simulation period."""
+
+    simulation = _resolved_config_section(run_dir, "simulation")
+    try:
+        start = datetime.fromisoformat(str(simulation["start"]).replace("Z", "+00:00"))
+        end = datetime.fromisoformat(str(simulation["end"]).replace("Z", "+00:00"))
+    except (KeyError, TypeError, ValueError):
+        full_year = False
+    else:
+        # Keep this definition aligned with the comparison backend's
+        # _simulation_period_is_full_year policy.
+        full_year = (
+            start.year == end.year
+            and start.month == 1
+            and start.day == 1
+            and end.month == 12
+            and end.day == 31
+        )
+    return {
+        "period_is_full_year": full_year,
+        "period_label": "Full-year totals" if full_year else "Configured-period totals",
+    }
+
+
 def _weather_cache_status(config: SolarCleanConfig) -> dict[str, str]:
     """Read-only readiness signal for the selected configuration cockpit."""
 
@@ -1047,8 +1073,31 @@ def _config_cockpits(
         except Exception as exc:
             cockpits[name] = {"error": str(exc)}
             continue
-        prefix = f"{config.simulation.run_id_prefix}-"
-        last = next((entry for entry in run_entries if entry.run_id.startswith(prefix)), None)
+        selected_study = _study_from_resolved_config(config.model_dump(mode="json"))
+        if selected_study is not None:
+            try:
+                selected_study["registry_checksum"] = ParameterRegistry.from_yaml(
+                    _registry_path(_config_path(name))
+                ).checksum()
+            except Exception:
+                # Legacy/unavailable registries leave this input unknown. The
+                # cockpit remains readable, but a known unequal checksum can
+                # never be selected as the current finding.
+                selected_study["registry_checksum"] = ""
+        # A run-id prefix is a filename convention, not proof that the stored
+        # inputs still match an edited configuration. Select by the same
+        # immutable config fingerprint used by cross-run evidence joins.
+        last = next(
+            (
+                entry
+                for entry in run_entries
+                if entry.kind in ("compare-all-scenarios", "compare-multi-year")
+                and selected_study is not None
+                and (entry_study := _run_study(entry.path)) is not None
+                and _studies_compatible(entry_study, selected_study)
+            ),
+            None,
+        )
         last_run: dict[str, object] | None = None
         if last is not None:
             recommendation = artifacts.load_json(last.path / "recommendation.json") or {}
@@ -1117,14 +1166,106 @@ def _provenance(run_dir: Path) -> dict[str, object] | None:
 # --------------------------------------------------------------------------
 # Studies: grouping runs by the stored identity that produced them
 # --------------------------------------------------------------------------
-# A "study" is the (site, period, assumption set) a run was executed against,
-# read from the run's own config_resolved.yaml. Grouping and cross-linking by
-# study is reshaping only: it joins stored identity fields, never results.
+# A "study" is one exact set of decision inputs read from a run's own
+# config_resolved.yaml. The human label remains site/period/assumption-set,
+# while grouping and cross-run evidence joins use a deterministic fingerprint
+# of all decision-relevant configuration content.
+
+
+# These settings can change how or where a run is executed or serialized, but
+# cannot change its simulated or economic decision. Everything else is
+# included by default so newly added scientific sections are safe without a
+# dashboard allow-list update.
+_NON_DECISION_CONFIG_PATHS = frozenset(
+    {
+        ("output",),
+        ("logging",),
+        ("simulation", "run_id_prefix"),
+        ("weather", "cache_enabled"),
+        ("weather", "cache_directory"),
+        ("weather", "timeout_seconds"),
+        ("farm", "store_cohort_daily_details"),
+        ("calibration", "source_note"),
+    }
+)
+
+
+def _canonical_decision_value(value: object, path: tuple[str, ...] = ()) -> object:
+    """Return stable JSON-safe decision data with runtime-only fields removed."""
+
+    if isinstance(value, Mapping):
+        normalized: dict[str, object] = {}
+        for raw_key, item in value.items():
+            key = str(raw_key)
+            child_path = (*path, key)
+            if child_path in _NON_DECISION_CONFIG_PATHS:
+                continue
+            normalized[key] = _canonical_decision_value(item, child_path)
+        return normalized
+    if isinstance(value, list | tuple):
+        return [_canonical_decision_value(item, path) for item in value]
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, date | datetime):
+        return value.isoformat()
+    return value
+
+
+def _decision_config_fingerprint(resolved: Mapping[str, object]) -> str:
+    """Versioned SHA-256 identity for configuration that can affect a decision."""
+
+    payload = _canonical_decision_value(resolved)
+    encoded = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _study_from_resolved_config(resolved: Mapping[str, object]) -> dict[str, str] | None:
+    """Build a fingerprint identity and readable label from one config snapshot."""
+
+    raw_site = resolved.get("site")
+    raw_simulation = resolved.get("simulation")
+    raw_calibration = resolved.get("calibration")
+    site = raw_site if isinstance(raw_site, Mapping) else {}
+    simulation = raw_simulation if isinstance(raw_simulation, Mapping) else {}
+    calibration = raw_calibration if isinstance(raw_calibration, Mapping) else {}
+
+    name = str(site.get("name", ""))
+    start = str(simulation.get("start", ""))[:10]
+    end = str(simulation.get("end", ""))[:10]
+    assumption_set = str(calibration.get("assumption_set", ""))
+    if not name and not start:
+        return None
+
+    latitude, longitude = site.get("latitude"), site.get("longitude")
+    coordinates = (
+        f"{latitude}, {longitude}"
+        if isinstance(latitude, int | float) and isinstance(longitude, int | float)
+        else ""
+    )
+    fingerprint = _decision_config_fingerprint(resolved)
+    label_parts = [name or "Unnamed site"]
+    if coordinates:
+        label_parts.append(coordinates)
+    if start or end:
+        label_parts.append(f"{start or '?'} — {end or '?'}")
+    if assumption_set:
+        label_parts.append(assumption_set)
+    return {
+        "key": f"config-v2-{fingerprint}",
+        "fingerprint": fingerprint,
+        "label": " · ".join(label_parts),
+    }
 
 
 @lru_cache(maxsize=1024)
-def _study_info_cached(path_text: str, mtime_ns: int) -> tuple[str, str, str, str, str] | None:
-    """Parse one immutable config_resolved.yaml snapshot into study fields."""
+def _study_info_cached(path_text: str, mtime_ns: int) -> tuple[str, str, str] | None:
+    """Parse one immutable config snapshot into key, fingerprint, and label."""
 
     del mtime_ns  # cache key component; contents are read below
     try:
@@ -1133,28 +1274,10 @@ def _study_info_cached(path_text: str, mtime_ns: int) -> tuple[str, str, str, st
         return None
     if not isinstance(resolved, dict):
         return None
-    raw_site = resolved.get("site")
-    raw_simulation = resolved.get("simulation")
-    raw_calibration = resolved.get("calibration")
-    site = raw_site if isinstance(raw_site, dict) else {}
-    simulation = raw_simulation if isinstance(raw_simulation, dict) else {}
-    calibration = raw_calibration if isinstance(raw_calibration, dict) else {}
-    # Coordinates are part of the identity: the location picker moves the
-    # site's coordinates without renaming it, so name alone would merge
-    # genuinely different sites into one study.
-    latitude, longitude = site.get("latitude"), site.get("longitude")
-    coordinates = (
-        f"{latitude}, {longitude}"
-        if isinstance(latitude, int | float) and isinstance(longitude, int | float)
-        else ""
-    )
-    return (
-        str(site.get("name", "")),
-        coordinates,
-        str(simulation.get("start", ""))[:10],
-        str(simulation.get("end", ""))[:10],
-        str(calibration.get("assumption_set", "")),
-    )
+    study = _study_from_resolved_config(resolved)
+    if study is None:
+        return None
+    return study["key"], study["fingerprint"], study["label"]
 
 
 def _run_study(run_dir: Path) -> dict[str, str] | None:
@@ -1168,21 +1291,46 @@ def _run_study(run_dir: Path) -> dict[str, str] | None:
     info = _study_info_cached(str(config_path.resolve()), mtime_ns)
     if info is None:
         return None
-    site, coordinates, start, end, assumption_set = info
-    if not site and not start:
-        return None
-    key = "|".join((site, coordinates, start, end, assumption_set))
-    label_parts = [site or "Unnamed site"]
-    if coordinates:
-        label_parts.append(coordinates)
-    if start or end:
-        label_parts.append(f"{start or '?'} — {end or '?'}")
-    if assumption_set:
-        label_parts.append(assumption_set)
-    return {"key": key, "label": " · ".join(label_parts)}
+    key, fingerprint, label = info
+    metadata = artifacts.load_json(run_dir / "metadata.json") or artifacts.load_json(
+        run_dir / "comparison_metadata.json"
+    )
+    summary = artifacts.load_json(run_dir / "summary.json")
+    metadata = metadata or {}
+    summary = summary or {}
+    return {
+        "key": key,
+        "fingerprint": fingerprint,
+        "label": label,
+        # Current comparison packages record both checksums. Legacy and
+        # analysis packages may not; missing means unknown, never unequal.
+        "weather_checksum": str(
+            metadata.get("weather_checksum") or summary.get("weather_checksum") or ""
+        ),
+        "registry_checksum": str(metadata.get("parameter_registry_checksum") or ""),
+    }
 
 
-_UNFILED_STUDY = {"key": "__unfiled__", "label": "No stored configuration"}
+def _studies_compatible(first: Mapping[str, str], second: Mapping[str, str]) -> bool:
+    """Whether two stored snapshots may safely contribute cross-run evidence."""
+
+    if first.get("fingerprint") != second.get("fingerprint"):
+        return False
+    for checksum_field in ("weather_checksum", "registry_checksum"):
+        first_checksum = first.get(checksum_field, "")
+        second_checksum = second.get(checksum_field, "")
+        if first_checksum and second_checksum and first_checksum != second_checksum:
+            return False
+    return True
+
+
+_UNFILED_STUDY = {
+    "key": "__unfiled__",
+    "fingerprint": "",
+    "label": "No stored configuration",
+    "weather_checksum": "",
+    "registry_checksum": "",
+}
 
 
 def _grouped_run_entries(
@@ -1309,7 +1457,7 @@ def _related_run_summary(entry: artifacts.RunEntry) -> str:
 
 
 def _related_runs(run_id: str, run_dir: Path) -> dict[str, object]:
-    """Sibling runs of the same study plus compare candidates (stored joins)."""
+    """Live archive siblings compatible with one immutable run snapshot."""
 
     study = _run_study(run_dir)
     siblings: list[dict[str, object]] = []
@@ -1317,7 +1465,7 @@ def _related_runs(run_id: str, run_dir: Path) -> dict[str, object]:
     for entry, entry_study in _grouped_run_entries(artifacts.list_runs(_OUTPUTS_DIR)):
         if entry.run_id == run_id:
             continue
-        same_study = study is not None and entry_study["key"] == study["key"]
+        same_study = study is not None and _studies_compatible(entry_study, study)
         if same_study and len(siblings) < 8:
             siblings.append(
                 {
@@ -1343,6 +1491,8 @@ def _related_runs(run_id: str, run_dir: Path) -> dict[str, object]:
         "study": study,
         "siblings": siblings,
         "comparables": comparables[:20],
+        "context_source": "live_archive",
+        "compatibility_basis": "decision_config_fingerprint_v2",
     }
 
 
@@ -1356,7 +1506,7 @@ def _sibling_mc_context(run_id: str, run_dir: Path) -> dict[str, object] | None:
         if entry.kind != "monte-carlo" or entry.run_id == run_id:
             continue
         entry_study = _run_study(entry.path)
-        if entry_study is None or entry_study["key"] != study["key"]:
+        if entry_study is None or not _studies_compatible(entry_study, study):
             continue
         summary = artifacts.load_json(entry.path / "monte_carlo_summary.json")
         if summary is None:
@@ -1400,7 +1550,7 @@ def _calibration_priority(
             if entry.kind != "sensitivity-oneway" or entry.run_id == run_id:
                 continue
             entry_study = _run_study(entry.path)
-            if entry_study is None or entry_study["key"] != study["key"]:
+            if entry_study is None or not _studies_compatible(entry_study, study):
                 continue
             summary = artifacts.load_json(entry.path / "sensitivity_oneway_summary.json")
             if summary is not None:
@@ -1652,6 +1802,8 @@ def _first_message(items: object) -> str | None:
 def _finding_statement(
     recommendation: dict[str, object] | None,
     reconciliation: dict[str, object] | None,
+    *,
+    period_is_full_year: bool = True,
 ) -> dict[str, str] | None:
     """One plain-language conclusion composed only from stored result fields."""
 
@@ -1666,9 +1818,11 @@ def _finding_statement(
                 "text": f"Run not certified — “{message}” ({first.get('name', 'unnamed check')}).",
             }
 
-    if recommendation and recommendation.get(
-        "calculation_valid", recommendation.get("valid", False)
-    ):
+    calculation_valid = bool(
+        recommendation
+        and recommendation.get("calculation_valid", recommendation.get("valid", False))
+    )
+    if recommendation and calculation_valid:
         winner = recommendation.get("winner")
         snapshot = recommendation.get("kpi_snapshot")
         winner_kpis = snapshot.get(winner) if isinstance(snapshot, dict) else None
@@ -1676,12 +1830,28 @@ def _finding_statement(
             winner_kpis.get("net_annual_benefit_sar") if isinstance(winner_kpis, dict) else None
         )
         margin = recommendation.get("decisive_margin_sar")
-        parts = [f"{str(winner).capitalize()} wins this year"]
+        raw_tier = str(recommendation.get("recommendation_tier", "legacy"))
+        raw_valid = recommendation.get("valid")
+        recommendation_accepted = raw_tier != "exploratory" and (
+            bool(raw_valid) if raw_valid is not None else raw_tier == "legacy"
+        )
+        period_phrase = "this year" if period_is_full_year else "the configured period"
+        if not recommendation_accepted:
+            warning = _first_message(recommendation.get("warnings"))
+            text = (
+                f"Exploratory result only — {str(winner).capitalize()} ranks first for "
+                f"{period_phrase}, but no certified winner was accepted."
+            )
+            if warning:
+                text += f" {warning}"
+            return {"tone": "warn", "text": text}
+
+        parts = [f"{str(winner).capitalize()} wins {period_phrase}"]
         if isinstance(benefit, int | float) and math.isfinite(float(benefit)):
             parts.append(f"net benefit {_format_sar(benefit)} SAR")
         if isinstance(margin, int | float) and math.isfinite(float(margin)):
             parts.append(f"a {_format_sar(margin)} SAR margin over the runner-up")
-        tier = str(recommendation.get("recommendation_tier", "legacy")).replace("_", "-")
+        tier = raw_tier.replace("_", "-")
         if tier != "legacy":
             parts.append(tier)
         if isinstance(checks, list):
@@ -1815,6 +1985,125 @@ def _kpi_diff(run_a: Path, run_b: Path) -> dict[str, object]:
 # --------------------------------------------------------------------------
 
 
+_RUN_CARD_RESULT_ARTIFACTS = {
+    "fetch-weather": "summary.json",
+    "run-baseline": "summary.json",
+    "run-clean": "summary.json",
+    "compare-multi-year": "multi_year_summary.json",
+    "monte-carlo": "monte_carlo_summary.json",
+    "sensitivity-oneway": "sensitivity_oneway_summary.json",
+    "sensitivity-winner-map": "sensitivity_twoway_summary.json",
+    "break-even": "breakeven_report.json",
+}
+
+
+def _run_card_status(run: artifacts.RunEntry) -> dict[str, str]:  # noqa: PLR0911
+    """Describe stored result state without confusing it with process failure.
+
+    A completed comparison can be internally consistent yet intentionally
+    decline to certify a winner.  That is a result state, not a crashed job.
+    Only artifact evidence is used here; missing or malformed artifacts stay
+    visibly incomplete/unknown instead of being promoted to success.
+    """
+
+    if run.kind == "compare-all-scenarios":
+        recommendation = artifacts.load_json(run.path / "recommendation.json")
+        if recommendation is None:
+            return {
+                "status_code": "incomplete",
+                "status_label": "Incomplete",
+                "status_detail": "Expected recommendation.json is missing or unreadable.",
+            }
+
+        reconciliation = artifacts.load_json(run.path / "reconciliation_report.json")
+        raw_valid = recommendation.get("valid")
+        raw_calculation_valid = recommendation.get("calculation_valid", raw_valid)
+        winner = recommendation.get("winner")
+        tier = str(recommendation.get("recommendation_tier") or "legacy").lower()
+
+        failed_reconciliation = reconciliation is not None and (
+            reconciliation.get("passed") is False
+        )
+        explicitly_not_accepted = (
+            raw_valid is False or raw_calculation_valid is False or tier == "exploratory"
+        )
+        if failed_reconciliation or explicitly_not_accepted:
+            detail = _first_message(recommendation.get("warnings"))
+            if failed_reconciliation:
+                checks = reconciliation.get("checks") if reconciliation is not None else None
+                first_failed = (
+                    next(
+                        (
+                            check
+                            for check in checks
+                            if isinstance(check, dict) and check.get("passed") is False
+                        ),
+                        None,
+                    )
+                    if isinstance(checks, list)
+                    else None
+                )
+                if first_failed is not None and first_failed.get("message"):
+                    detail = str(first_failed["message"])
+                detail = detail or "Stored reconciliation checks did not pass."
+            else:
+                detail = detail or "The stored recommendation was not accepted as decision-grade."
+            return {
+                "status_code": "not_certified",
+                "status_label": "Not certified",
+                "status_detail": detail,
+            }
+
+        evidence_complete = (
+            isinstance(raw_valid, bool)
+            and isinstance(raw_calculation_valid, bool)
+            and isinstance(winner, str)
+            and bool(winner)
+            and (reconciliation is None or isinstance(reconciliation.get("passed"), bool))
+        )
+        if not evidence_complete:
+            return {
+                "status_code": "incomplete",
+                "status_label": "Incomplete",
+                "status_detail": "The stored recommendation is missing required decision fields.",
+            }
+        if (
+            raw_valid
+            and raw_calculation_valid
+            and (reconciliation is None or reconciliation.get("passed") is True)
+        ):
+            return {
+                "status_code": "certified",
+                "status_label": "Certified",
+                "status_detail": "The stored recommendation was accepted as decision-grade.",
+            }
+        return {
+            "status_code": "not_certified",
+            "status_label": "Not certified",
+            "status_detail": "The stored comparison did not produce a certified winner.",
+        }
+
+    expected_artifact = _RUN_CARD_RESULT_ARTIFACTS.get(run.kind)
+    if expected_artifact is not None:
+        if artifacts.load_json(run.path / expected_artifact) is not None:
+            return {
+                "status_code": "complete",
+                "status_label": "Complete",
+                "status_detail": f"Stored analysis result available in {expected_artifact}.",
+            }
+        return {
+            "status_code": "incomplete",
+            "status_label": "Incomplete",
+            "status_detail": f"Expected {expected_artifact} is missing or unreadable.",
+        }
+
+    return {
+        "status_code": "unknown",
+        "status_label": "Status unknown",
+        "status_detail": "This run type has no recognized result-status artifact.",
+    }
+
+
 def _run_cards(
     grouped: list[tuple[artifacts.RunEntry, dict[str, str]]],
     previous_study_key: str | None,
@@ -1829,6 +2118,8 @@ def _run_cards(
     last_key = previous_study_key
     for run, study in grouped:
         site = _resolved_config_section(run.path, "site").get("name")
+        status = _run_card_status(run)
+        fingerprint = study.get("fingerprint", "")
         runs.append(
             {
                 "run_id": run.run_id,
@@ -1851,7 +2142,14 @@ def _run_cards(
                 ),
                 "study_key": study["key"],
                 "study_label": study["label"],
+                "study_short_id": fingerprint[:8].upper() if fingerprint else "UNFILED",
                 "new_study": study["key"] != last_key,
+                "provenance": (
+                    "test"
+                    if run.run_id.lower().startswith(("test-", "offline-fixture-"))
+                    else "study"
+                ),
+                **status,
                 "fingerprint_url": f"/api/runs/{run.run_id}/fingerprint",
             }
         )
@@ -1968,15 +2266,27 @@ def _dossier_winner_map(entry: artifacts.RunEntry | None) -> dict[str, object] |
 def _study_dossier_context(key: str) -> dict[str, object]:
     """Latest stored evidence of each analysis kind for one study identity."""
 
-    matching: list[artifacts.RunEntry] = []
-    study: dict[str, str] | None = None
+    candidates: list[tuple[artifacts.RunEntry, dict[str, str]]] = []
     for entry in artifacts.list_runs(_OUTPUTS_DIR):
         entry_study = _run_study(entry.path)
         if entry_study is not None and entry_study["key"] == key:
-            matching.append(entry)
-            study = entry_study
-    if study is None:
+            candidates.append((entry, entry_study))
+    if not candidates:
         raise HTTPException(status_code=404, detail="Study not found")
+
+    # The URL identifies the decision configuration. Starting with its newest
+    # run, form one pairwise-compatible evidence set so a checksum-less legacy
+    # record cannot bridge two known-different weather/economics snapshots.
+    study = dict(candidates[0][1])
+    compatible_candidates: list[tuple[artifacts.RunEntry, dict[str, str]]] = []
+    for candidate in candidates:
+        _, candidate_study = candidate
+        if all(
+            _studies_compatible(candidate_study, accepted_study)
+            for _, accepted_study in compatible_candidates
+        ):
+            compatible_candidates.append(candidate)
+    matching = [entry for entry, _ in compatible_candidates]
 
     by_kind: dict[str, artifacts.RunEntry] = {}
     expected_artifact = {
@@ -2016,6 +2326,11 @@ def _study_dossier_context(key: str) -> dict[str, object]:
         **evidence,
         "records": records,
         "gaps": {name: value is None for name, value in evidence.items()},
+        "context_flags": {
+            "evidence_records": "immutable_run_snapshots",
+            "evidence_selection": "live_archive_context",
+            "compatibility_basis": "decision_config_fingerprint_v2",
+        },
     }
 
 
@@ -2107,7 +2422,13 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
         "rerun_supported": kind in _RERUNNABLE_KINDS,
         "document_status": "ANALYSIS RECORD",
         "related": _related_runs(run_id, run_dir),
+        "context_flags": {
+            "primary_run": "immutable_snapshot",
+            "cross_run_joins": "live_archive_context",
+            "compatibility_basis": "decision_config_fingerprint_v2",
+        },
     }
+    context.update(_comparison_period_context(run_dir))
 
     if kind == "compare-all-scenarios":
         ranking = artifacts.load_json(run_dir / "scenario_ranking.json")
@@ -2130,10 +2451,25 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
                 "reconciliation": reconciliation,
                 "certification": _certification(reconciliation, recommendation, validation_status),
                 "calibration_priority": _calibration_priority(run_id, run_dir, validation_status),
-                "headline": _headline_cards(recommendation),
-                "finding": _finding_statement(recommendation, reconciliation),
+                "headline": _headline_cards(
+                    recommendation,
+                    period_is_full_year=bool(context["period_is_full_year"]),
+                ),
+                "finding": _finding_statement(
+                    recommendation,
+                    reconciliation,
+                    period_is_full_year=bool(context["period_is_full_year"]),
+                ),
                 "document_status": (
-                    "VERIFIED" if reconciliation and reconciliation.get("passed") else "HOLD"
+                    "VERIFIED"
+                    if reconciliation
+                    and reconciliation.get("passed")
+                    and recommendation
+                    and recommendation.get("valid")
+                    and recommendation.get("recommendation_tier") != "exploratory"
+                    else "EXPLORATORY"
+                    if reconciliation and reconciliation.get("passed")
+                    else "HOLD"
                 ),
                 "daily_energy": artifacts.daily_energy_series(run_dir),
                 "daily_clean_reference": artifacts.daily_clean_reference_series(run_dir),
@@ -2264,7 +2600,9 @@ def compare_runs(request: Request, a: str, b: str) -> HTMLResponse:
     # Before/after framing only makes sense for iterations of one study; two
     # different sites or assumption sets are neutral A/B alternatives.
     same_study = (
-        studies[0] is not None and studies[1] is not None and studies[0]["key"] == studies[1]["key"]
+        studies[0] is not None
+        and studies[1] is not None
+        and _studies_compatible(studies[0], studies[1])
     )
     return templates.TemplateResponse(
         request,
@@ -2495,7 +2833,11 @@ def _load_run_config(config_path: Path, options: LaunchRequest) -> SolarCleanCon
     )
 
 
-def _headline_cards(recommendation: dict[str, object] | None) -> list[dict[str, str]] | None:
+def _headline_cards(
+    recommendation: dict[str, object] | None,
+    *,
+    period_is_full_year: bool = True,
+) -> list[dict[str, str]] | None:
     """Top-of-page cards from stored recommendation values (formatting only)."""
     if not recommendation or not recommendation.get(
         "calculation_valid", recommendation.get("valid", False)
@@ -2525,6 +2867,9 @@ def _headline_cards(recommendation: dict[str, object] | None) -> list[dict[str, 
             "audit_detail": f"Stored certified winner = {winner}",
         }
     ]
+    benefit_period = "annual" if period_is_full_year else "configured-period"
+    sar_unit = "SAR/year" if period_is_full_year else "SAR/configured period"
+    energy_unit = "kWh/year" if period_is_full_year else "kWh/configured period"
     baseline_won = winner == "baseline"
     margin = recommendation.get("decisive_margin_sar")
     if isinstance(margin, int | float) and math.isfinite(margin):
@@ -2536,14 +2881,14 @@ def _headline_cards(recommendation: dict[str, object] | None) -> list[dict[str, 
                     "Best mitigation falls short by" if baseline_won else "Margin over runner-up"
                 ),
                 "value": _format_sar(margin),
-                "unit": "SAR/year",
+                "unit": sar_unit,
                 "audit_source": "recommendation.json · decisive_margin_sar",
                 "audit_detail": "Stored margin between the first- and second-ranked strategies.",
             }
         )
     for label, key, unit in (
-        ("Total net annual benefit", "net_annual_benefit_sar", "SAR/year"),
-        ("Energy gain vs baseline", "energy_gain_vs_baseline_kwh", "kWh/year"),
+        (f"Total net {benefit_period} benefit", "net_annual_benefit_sar", sar_unit),
+        ("Energy gain vs baseline", "energy_gain_vs_baseline_kwh", energy_unit),
         ("Incremental payback", "incremental_payback_years_vs_baseline", "years"),
     ):
         if baseline_won and key == "energy_gain_vs_baseline_kwh":

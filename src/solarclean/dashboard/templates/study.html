@@ -29,7 +29,7 @@
     <div>
       <dt>Decisive margin</dt>
       <dd class="mono" data-audit-source="{{ comparison.audit_source }}">
-        {% if comparison.margin_sar is not none %}{{ comparison.margin_sar | sar }} SAR/year{% else %}–{% endif %}
+        {% if comparison.margin_sar is not none %}{{ comparison.margin_sar | sar }} SAR (stored period){% else %}–{% endif %}
       </dd>
     </div>
     <div><dt>Recommendation tier</dt><dd>{{ comparison.recommendation_tier or "–" }}</dd></div>

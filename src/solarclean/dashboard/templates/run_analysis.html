@@ -4,6 +4,8 @@
 {% block title %}{{ run_id }} · SolarClean-DT{% endblock %}
 {% block body_class %}run-document{% endblock %}
 {% block content %}
+{% set period_heading = 'Annual' if period_is_full_year else 'Configured-period' %}
+{% set period_noun = 'year' if period_is_full_year else 'configured period' %}
 
 {% set kind_eyebrows = {
   "monte-carlo": "Monte Carlo uncertainty analysis",
@@ -23,7 +25,7 @@
   </div>
   {% include "_title_block.html" %}
 </div>
-<div class="run-head run-command-bar">
+<div class="run-head run-command-bar print-exclude">
   <a class="quiet-link run-back-link" href="/">&larr; back to runs</a>
   <span class="run-head-actions">
     {% if rerun_supported %}
@@ -78,9 +80,9 @@
 {% if mc_trials %}
 <section class="panel">
   <h2>Net benefit distribution across trials</h2>
-  <canvas id="mc-trials-chart" height="90" role="img" aria-label="Dot plot of stored net annual benefit for every reconciled trial, one row per scenario"
+  <canvas id="mc-trials-chart" height="90" role="img" aria-label="Dot plot of stored net benefit for the configured run period for every reconciled trial, one row per scenario"
           data-audit-source="monte_carlo_trials.csv · reconciled trial net benefits"></canvas>
-  <p class="hint">Every reconciled trial's stored net annual benefit, one dot per trial per
+  <p class="hint">Every reconciled trial's stored net benefit for the {{ period_noun }}, one dot per trial per
     scenario (from <code>monte_carlo_trials.csv</code>). Overlapping clouds mean the ranking is
     seed-sensitive; separated clouds mean it is robust.</p>
 </section>
@@ -92,8 +94,8 @@
           data-audit-source="monte_carlo_summary.json · scenario win_probability"></canvas>
 </section>
 <section class="panel">
-  <h2>Net annual benefit spread (mean, P5, P95)</h2>
-  <canvas id="mc-benefit-chart" height="90" role="img" aria-label="Bar chart of stored mean, P5, and P95 net annual benefit per scenario"
+  <h2>Net {{ 'annual' if period_is_full_year else 'configured-period' }} benefit spread (mean, P5, P95)</h2>
+  <canvas id="mc-benefit-chart" height="90" role="img" aria-label="Bar chart of stored mean, P5, and P95 net benefit for the configured run period per scenario"
           data-audit-source="monte_carlo_summary.json · mean, P5, and P95 net benefit"></canvas>
   <p class="hint">Values are the stored statistics from <code>monte_carlo_summary.json</code>;
     nothing is recomputed for this chart.</p>
@@ -151,7 +153,7 @@
   <h2>Break-even: {{ strategy_label(breakeven_chart.scenario_a) }} minus {{ strategy_label(breakeven_chart.scenario_b) }}</h2>
   <canvas id="breakeven-chart" height="90" role="img" aria-label="Scatter chart of the stored margin at each evaluated parameter value with the zero line and break-even crossings"
           data-audit-source="breakeven_report.json · evaluations[].margin_sar + crossover_values"></canvas>
-  <p class="hint">Stored margin (net annual benefit of {{ breakeven_chart.scenario_a }} minus
+  <p class="hint">Stored margin (net benefit for the {{ period_noun }} of {{ breakeven_chart.scenario_a }} minus
     {{ breakeven_chart.scenario_b }}) at every evaluated value of
     <code>{{ breakeven_chart.parameter_name }}</code>. Where the curve crosses zero, the two
     strategies tie{% if breakeven_chart.crossovers %} — found at

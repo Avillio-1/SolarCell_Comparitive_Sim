@@ -8,17 +8,30 @@
   <a class="quiet-link" href="/">back to runs</a>
 </div>
 
-<section class="panel" id="site-location">
+{% if not is_default %}
+<p class="warn-note config-readonly-notice" role="note">
+  <strong>Read-only configuration.</strong> Only the {{ default_config_label }} configuration
+  can be edited and saved in the dashboard. This page is available for inspection only.
+</p>
+{% endif %}
+
+<section class="panel{{ ' config-readonly' if not is_default }}" id="site-location">
   <div class="panel-heading">
     <div><span class="step-label">Configuration essentials</span>
       <h2>Site location, timezone, and period</h2>
-      <p>The knobs most runs actually change. Applying writes a validated YAML edit into the
-        source below — coordinates, both timezone fields, DST-correct period offsets, and
-        (optionally) new whole-day period dates in one step.</p></div>
+      {% if is_default %}
+      <p>The settings most runs change. Applying writes a validated YAML edit into the source
+        below: coordinates, both timezone fields, DST-correct period offsets, and optional
+        whole-day period dates.</p>
+      {% else %}
+      <p>Stored site and period values are shown below for reference. Open the
+        {{ default_config_label }} configuration to make dashboard edits.</p>
+      {% endif %}</div>
   </div>
   <div class="map-wrap">
     <svg id="site-map" viewBox="-180 -90 360 180" preserveAspectRatio="xMidYMid meet"
-         role="img" aria-label="World map. Click to pick the site location.">
+         role="img" aria-label="World map{% if is_default %}. Click to pick the site location{% else %}, read-only site location{% endif %}."
+         {% if not is_default %}aria-disabled="true" style="pointer-events: none"{% endif %}>
       <rect class="map-sea" x="-180" y="-90" width="360" height="180"></rect>
       <path id="site-map-land" class="map-land" d=""></path>
       <circle id="site-map-marker" class="map-marker" r="2.2" hidden></circle>
@@ -26,27 +39,27 @@
   </div>
   <div class="field-row">
     <label class="wide"><span>Site name</span>
-      <input id="site-name" type="text" autocomplete="organization"></label>
-    <label><span>Latitude (°N)</span>
-      <input id="site-lat" type="number" step="0.0001" min="-90" max="90" autocomplete="off"></label>
-    <label><span>Longitude (°E)</span>
-      <input id="site-lon" type="number" step="0.0001" min="-180" max="180" autocomplete="off"></label>
+      <input id="site-name" type="text" autocomplete="organization"{% if not is_default %} disabled{% endif %}></label>
+    <label><span>Latitude (°)</span>
+      <input id="site-lat" type="number" step="0.0001" min="-90" max="90" autocomplete="off"{% if not is_default %} disabled{% endif %}></label>
+    <label><span>Longitude (°)</span>
+      <input id="site-lon" type="number" step="0.0001" min="-180" max="180" autocomplete="off"{% if not is_default %} disabled{% endif %}></label>
     <label class="wide"><span>Detected timezone</span>
       <input id="site-timezone" type="text" readonly aria-readonly="true">
     </label>
   </div>
   <div class="field-row">
     <label><span>Period start</span>
-      <input id="site-start-date" type="date" autocomplete="off"></label>
+      <input id="site-start-date" type="date" autocomplete="off"{% if not is_default %} disabled{% endif %}></label>
     <label><span>Period end</span>
-      <input id="site-end-date" type="date" autocomplete="off"></label>
-    <button id="apply-location" type="button">Apply to YAML source</button>
+      <input id="site-end-date" type="date" autocomplete="off"{% if not is_default %} disabled{% endif %}></label>
+    <button id="apply-location" type="button"{% if not is_default %} disabled{% endif %}>Apply to YAML source</button>
     <span id="location-status" class="hint" role="status"></span>
   </div>
   <dl class="provider-note" id="provider-note">
     <div>
       <dt>What the location changes</dt>
-      <dd>Applying the map position updates <code>site.latitude</code>,
+      <dd>A saved map position sets <code>site.latitude</code>,
         <code>site.longitude</code>, both timezone fields, and DST-correct whole-day period
         offsets (00:00–23:00); the location's IANA timezone is detected automatically from the
         coordinates. With <code>nasa_power</code>, it also changes the fetched and cached hourly
@@ -58,8 +71,9 @@
     <div>
       <dt>What stays fixed</dt>
       <dd>Dust-event frequency and the Riyadh <code>central-v2</code> cost calibration do not
-        change with the selected coordinates. Apply the location to the YAML source, then
-        validate and save as usual.</dd>
+        change with the selected coordinates. {% if is_default %}Apply the location to the YAML
+        source, then validate and save as usual.{% else %}These values remain inspection-only on
+        this preset page.{% endif %}</dd>
     </div>
   </dl>
   <p class="hint" id="provider-warning" role="note" hidden></p>
@@ -67,23 +81,24 @@
 
 <section class="panel">
   <details id="config-editor-details" class="config-editor-details">
-    <summary><h2>YAML source (advanced)</h2>
+    <summary><h2>YAML source{% if not is_default %} (read-only){% else %} (advanced){% endif %}</h2>
       <span id="config-dirty" class="hint config-dirty" hidden>● Unsaved changes</span></summary>
-    <p class="hint">Edits are checked with the same loader the simulator uses, so anything that
+    <p class="hint">{% if is_default %}Edits are checked with the same loader the simulator uses, so anything that
     validates here will load for a run.
     <strong>Validate and save</strong> updates only the {{ default_config_label }} configuration.
-    {% if is_default %}<strong>Reset to Riyadh defaults</strong> restores the original factory
-    preset in the editor; validate and save it to make those settings active.{% else %}
-    <strong>Restore page-load values</strong> returns the editor to the values from when this page
-    opened.{% endif %}</p>
+    <strong>Reset to Riyadh defaults</strong> restores the original factory preset in the editor;
+    validate and save it to make those settings active.{% else %}This source is shown for audit
+    and comparison. Only the {{ default_config_label }} configuration can be edited in the
+    dashboard.{% endif %}</p>
     <textarea id="config-editor" class="mono" spellcheck="false"
-              data-name="{{ name }}" data-is-default="{{ 'true' if is_default else 'false' }}">{{ content }}</textarea>
+              data-name="{{ name }}" data-is-default="{{ 'true' if is_default else 'false' }}"
+              {% if not is_default %}readonly aria-readonly="true"{% endif %}>{{ content }}</textarea>
     <div class="field-row">
-      <button class="primary" id="validate-btn" type="button">Validate</button>
+      <button class="primary" id="validate-btn" type="button">{% if is_default %}Validate{% else %}Validate stored source{% endif %}</button>
       {% if is_default %}
       <button class="primary" id="save-default-btn" type="button">Validate and save</button>
+      <button id="reset-config-btn" type="button">Reset to Riyadh defaults</button>
       {% endif %}
-      <button id="reset-config-btn" type="button">{% if is_default %}Reset to Riyadh defaults{% else %}Restore page-load values{% endif %}</button>
     </div>
     <p id="config-status" role="status"></p>
   </details>

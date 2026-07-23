@@ -64,11 +64,57 @@
   var auditToggle = document.getElementById("audit-toggle");
   var auditPopover = document.getElementById("audit-popover");
   var auditBanner = document.getElementById("audit-banner");
+  var auditKeyboardSelector =
+    'a[href], button, input, select, textarea, summary, [contenteditable="true"], [tabindex]';
+  var auditInteractiveDescendantSelector =
+    'a[href], button, input, select, textarea, summary, [contenteditable="true"]';
+
+  function setAuditSourceKeyboardState(enabled) {
+    document.querySelectorAll("[data-audit-source]").forEach(function (target) {
+      var naturallyKeyboardAccessible = target.matches(auditKeyboardSelector);
+      var containsInteractiveControl = Boolean(
+        target.querySelector(auditInteractiveDescendantSelector)
+      );
+      if (enabled && !naturallyKeyboardAccessible && !containsInteractiveControl &&
+          !target.hasAttribute("tabindex")) {
+        target.setAttribute("tabindex", "0");
+        target.dataset.auditTabindexAdded = "true";
+        if (!target.hasAttribute("aria-label")) {
+          var visibleValue = target.textContent.trim().replace(/\s+/g, " ").slice(0, 100);
+          target.setAttribute(
+            "aria-label",
+            "Show stored source for " + (visibleValue || "this value") + ": " +
+              target.dataset.auditSource
+          );
+          target.dataset.auditAriaLabelAdded = "true";
+        }
+      } else if (!enabled && target.dataset.auditTabindexAdded === "true") {
+        target.removeAttribute("tabindex");
+        if (target.dataset.auditAriaLabelAdded === "true") target.removeAttribute("aria-label");
+        delete target.dataset.auditTabindexAdded;
+        delete target.dataset.auditAriaLabelAdded;
+      }
+    });
+  }
+
+  function openAuditPopover(target) {
+    if (!auditPopover || !target) return;
+    document.getElementById("audit-popover-title").textContent =
+      target.dataset.auditSource || "Stored artifact";
+    document.getElementById("audit-popover-detail").textContent =
+      target.dataset.auditDetail || "This figure is read from the named stored artifact.";
+    var check = document.getElementById("audit-popover-check");
+    check.textContent = target.dataset.auditCheck || "";
+    check.hidden = !target.dataset.auditCheck;
+    anchorPopover(auditPopover, target);
+  }
+
   function setAuditMode(enabled) {
     document.body.classList.toggle("audit-mode", enabled);
     if (auditToggle) auditToggle.setAttribute("aria-pressed", enabled ? "true" : "false");
     if (auditBanner) auditBanner.hidden = !enabled;
     if (!enabled && auditPopover) auditPopover.hidden = true;
+    setAuditSourceKeyboardState(enabled);
   }
   if (auditToggle) {
     auditToggle.addEventListener("click", function () {
@@ -86,19 +132,21 @@
     if (!document.body.classList.contains("audit-mode") || !auditPopover) return;
     var target = event.target.closest("[data-audit-source]");
     if (!target) return;
+    var action = event.target.closest(auditInteractiveDescendantSelector);
+    if (action && action !== target) return;
     event.preventDefault();
-    document.getElementById("audit-popover-title").textContent =
-      target.dataset.auditSource || "Stored artifact";
-    document.getElementById("audit-popover-detail").textContent =
-      target.dataset.auditDetail || "This figure is read from the named stored artifact.";
-    var check = document.getElementById("audit-popover-check");
-    check.textContent = target.dataset.auditCheck || "";
-    check.hidden = !target.dataset.auditCheck;
-    anchorPopover(auditPopover, target);
+    openAuditPopover(target);
   });
   var auditClose = document.querySelector(".audit-close");
   if (auditClose) auditClose.addEventListener("click", function () { auditPopover.hidden = true; });
   document.addEventListener("keydown", function (event) {
+    if ((event.key === "Enter" || event.key === " ") &&
+        document.body.classList.contains("audit-mode") &&
+        event.target instanceof Element && event.target.matches("[data-audit-source]")) {
+      event.preventDefault();
+      openAuditPopover(event.target);
+      return;
+    }
     if (event.key !== "Escape") return;
     if (auditPopover && !auditPopover.hidden) {
       auditPopover.hidden = true;
@@ -106,6 +154,7 @@
     }
     if (document.body.classList.contains("audit-mode")) setAuditMode(false);
   });
+  if (auditPopover) auditPopover.setAttribute("aria-live", "polite");
 
   // --- info popovers (accessible replacement for title tooltips) --------
 
@@ -277,7 +326,17 @@
   if (kindCards) {
     var showOptionsForKind = function () {
       document.querySelectorAll(".kind-opts").forEach(function (row) {
-        row.hidden = row.dataset.kind !== selectedKind();
+        var active = row.dataset.kind === selectedKind();
+        row.hidden = !active;
+        row.querySelectorAll("input, select, textarea, button").forEach(function (control) {
+          if (!active && !control.disabled) {
+            control.disabled = true;
+            control.dataset.kindDisabled = "true";
+          } else if (active && control.dataset.kindDisabled === "true") {
+            control.disabled = false;
+            delete control.dataset.kindDisabled;
+          }
+        });
       });
       if (selectedKind() === "sensitivity-oneway") updateOneWayWorkload();
       updateLaunchExpectations();
@@ -289,6 +348,8 @@
   var configSelect = document.getElementById("config");
   var configLink = document.getElementById("config-link");
   if (configSelect && configLink) {
+    var parameterCatalogSequence = 0;
+    var parameterCatalogController = null;
     var updateSimulationPeriod = function () {
       var option = configSelect.selectedOptions[0];
       if (!option) return;
@@ -338,13 +399,27 @@
       updateConfigLink();
       updateSimulationPeriod();
       updateLaunchExpectations();
-      fetch("/api/configs/" + encodeURIComponent(configSelect.value) + "/parameters")
+      var requestedConfig = configSelect.value;
+      var requestSequence = ++parameterCatalogSequence;
+      if (parameterCatalogController) parameterCatalogController.abort();
+      parameterCatalogController = typeof AbortController !== "undefined"
+        ? new AbortController() : null;
+      var fetchOptions = parameterCatalogController
+        ? { signal: parameterCatalogController.signal } : {};
+      fetch("/api/configs/" + encodeURIComponent(requestedConfig) + "/parameters", fetchOptions)
         .then(function (response) {
           if (!response.ok) throw new Error("HTTP " + response.status);
           return response.json();
         })
-        .then(updateParameterCatalog)
-        .catch(function () { /* launch endpoint will report the registry error */ });
+        .then(function (parameters) {
+          if (requestSequence !== parameterCatalogSequence ||
+              configSelect.value !== requestedConfig) return;
+          updateParameterCatalog(parameters);
+        })
+        .catch(function (error) {
+          if (error.name === "AbortError") return;
+          // The launch endpoint remains the authoritative registry validator.
+        });
     });
     updateConfigLink();
     updateSimulationPeriod();
@@ -353,15 +428,18 @@
   // --- launching runs -----------------------------------------------------
 
   var launchButton = document.getElementById("launch");
-  if (launchButton) {
-    launchButton.addEventListener("click", function () {
+  var launchForm = document.getElementById("launch-form");
+  if (launchButton && launchForm) {
+    // Restore native form semantics even though older templates cancel their
+    // inline submit handler. Enter now submits, and the browser applies its
+    // required/min/max validation before this listener runs.
+    launchForm.onsubmit = null;
+    launchButton.type = "submit";
+    launchForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      if (launchButton.disabled) return;
       var errorEl = document.getElementById("launch-error");
       errorEl.textContent = "";
-      // Ask once, on a user gesture, so a finished run can notify a
-      // backgrounded tab. Declining is respected and never re-prompted here.
-      if (typeof Notification !== "undefined" && Notification.permission === "default") {
-        try { Notification.requestPermission(); } catch (e) { /* unsupported */ }
-      }
 
       var body = { kind: selectedKind(), config: configSelect.value };
       var startDate = document.getElementById("start-date").value;
@@ -409,8 +487,16 @@
           errorEl.textContent = "Break-even needs a registry parameter name.";
           return;
         }
+        if (body.scenario_a === body.scenario_b) {
+          errorEl.textContent = "Pick two different scenarios for the break-even search.";
+          return;
+        }
       }
 
+      // Ask only after validation, while submission is still a user gesture.
+      if (typeof Notification !== "undefined" && Notification.permission === "default") {
+        try { Notification.requestPermission(); } catch (e) { /* unsupported */ }
+      }
       launchButton.disabled = true;
       fetch("/api/runs", {
         method: "POST",
@@ -763,13 +849,8 @@
   // bulk deletes go through an explicit dialog stating the count.
 
   function pruneStudyHeaders() {
-    document.querySelectorAll("#runs-table .study-header").forEach(function (header) {
-      var key = header.dataset.study || "";
-      var survivor = Array.prototype.some.call(
-        document.querySelectorAll("#runs-table .run-card"),
-        function (card) { return card.dataset.study === key; }
-      );
-      if (!survivor) header.remove();
+    document.querySelectorAll("#runs-table .study-group").forEach(function (group) {
+      if (!group.querySelector(".run-card")) group.remove();
     });
   }
 
@@ -786,7 +867,7 @@
           var row = document.querySelector('[data-run="' + runId + '"]');
           if (row) row.remove();
           pruneStudyHeaders();
-          updateBulkDeleteState();
+          applyRunFilter();
         })
         .catch(function (error) { if (errorEl) errorEl.textContent = error.message; });
     });
@@ -829,6 +910,30 @@
     if (status) status.textContent = message;
   }
 
+  // Every fragment is self-contained. If pagination splits one study across
+  // two pages, fold the first incoming grid into the last existing group.
+  function appendRunGroups(fragment) {
+    var incomingGroups = Array.from(fragment.querySelectorAll(".study-group"));
+    if (!incomingGroups.length) {
+      runsTable.appendChild(fragment);
+      return;
+    }
+    incomingGroups.forEach(function (group) {
+      var existingGroups = runsTable.querySelectorAll(".study-group");
+      var lastGroup = existingGroups.length ? existingGroups[existingGroups.length - 1] : null;
+      if (lastGroup && lastGroup.dataset.study === group.dataset.study) {
+        var targetGrid = lastGroup.querySelector(".study-run-grid");
+        if (targetGrid) {
+          group.querySelectorAll(".run-card").forEach(function (card) {
+            targetGrid.appendChild(card);
+          });
+          return;
+        }
+      }
+      runsTable.appendChild(group);
+    });
+  }
+
   function loadNextRunPage() {
     if (!runsTable || !archiveHasMore()) return Promise.resolve(false);
     if (archiveLoadPromise) return archiveLoadPromise;
@@ -852,7 +957,7 @@
             if (checkbox) checkbox.checked = true;
           });
         }
-        runsTable.appendChild(template.content);
+        appendRunGroups(template.content);
         initRunFingerprints(runsTable);
         runArchiveLoader.dataset.nextPage = page < totalPages ? String(page + 1) : "";
         var loadedCount = runsTable.querySelectorAll(".run-card").length;
@@ -908,7 +1013,7 @@
         selectedCount === checkboxes.length;
       selectAllButton.disabled = checkboxes.length === 0 || selectEverything;
       selectAllButton.textContent = selectEverything ? "Loading all runs…" :
-        allSelected ? "Clear selection" : "Select all";
+        allSelected ? "Clear matching selection" : "Select all matching runs";
       selectAllButton.setAttribute("aria-pressed", allSelected ? "true" : "false");
     }
   }
@@ -919,10 +1024,14 @@
   function applyRunFilter() {
     var textInput = document.getElementById("run-filter-text");
     var kindSelect2 = document.getElementById("run-filter-kind");
-    if (!runsTable || (!textInput && !kindSelect2)) return;
+    var statusSelect = document.getElementById("run-filter-status-code");
+    var provenanceSelect = document.getElementById("run-filter-provenance");
+    if (!runsTable) return;
     var query = ((textInput && textInput.value) || "").trim().toLowerCase();
     var kind = (kindSelect2 && kindSelect2.value) || "";
-    var filterActive = Boolean(query || kind);
+    var statusCode = (statusSelect && statusSelect.value) || "";
+    var provenance = (provenanceSelect && provenanceSelect.value) || "";
+    var filterActive = Boolean(query || kind || statusCode || provenance);
     if (filterActive && archiveHasMore()) {
       setArchiveStatus("Loading the full archive to search it…");
       loadAllRunPages().then(applyRunFilter);
@@ -931,8 +1040,11 @@
     var cards = Array.from(runsTable.querySelectorAll(".run-card"));
     var shown = 0;
     cards.forEach(function (card) {
+      var searchableText = (card.textContent + " " + (card.dataset.search || "")).toLowerCase();
       var matches = (!kind || card.dataset.kind === kind) &&
-        (!query || card.textContent.toLowerCase().indexOf(query) !== -1);
+        (!statusCode || card.dataset.status === statusCode) &&
+        (!provenance || card.dataset.provenance === provenance) &&
+        (!query || searchableText.indexOf(query) !== -1);
       card.hidden = !matches;
       if (matches) {
         shown += 1;
@@ -942,19 +1054,27 @@
         if (checkbox) checkbox.checked = false;
       }
     });
-    // Study headers follow their cards: a header with nothing visible under
-    // it is noise while filtering.
-    runsTable.querySelectorAll(".study-header").forEach(function (header) {
-      var key = header.dataset.study || "";
-      header.hidden = !cards.some(function (card) {
-        return !card.hidden && card.dataset.study === key;
-      });
+    // Hide the entire study unit when none of its own cards match.
+    runsTable.querySelectorAll(".study-group").forEach(function (group) {
+      group.hidden = !group.querySelector(".run-card:not([hidden])");
     });
     var status = document.getElementById("run-filter-status");
     if (status) {
-      status.textContent = filterActive
-        ? (shown ? shown + " of " + cards.length + " runs match" : "No runs match this filter")
-        : "";
+      var hiddenTechnical = provenance === "study" ? cards.filter(function (card) {
+        return card.dataset.provenance === "test";
+      }).length : 0;
+      if (hiddenTechnical && shown === 0) {
+        status.textContent = hiddenTechnical + " technical/test runs hidden - " +
+          "change Run source to include them.";
+      } else if (hiddenTechnical) {
+        status.textContent = shown + " study runs shown; " + hiddenTechnical +
+          " technical/test runs hidden.";
+      } else if (filterActive) {
+        status.textContent = shown ? shown + " of " + cards.length + " runs match" :
+          "No runs match these filters.";
+      } else {
+        status.textContent = "";
+      }
     }
     if (runArchiveLoader) {
       runArchiveLoader.hidden = filterActive || !archiveHasMore();
@@ -1002,8 +1122,12 @@
     });
     var runFilterText = document.getElementById("run-filter-text");
     var runFilterKind = document.getElementById("run-filter-kind");
+    var runFilterStatus = document.getElementById("run-filter-status-code");
+    var runFilterProvenance = document.getElementById("run-filter-provenance");
     if (runFilterText) runFilterText.addEventListener("input", applyRunFilter);
     if (runFilterKind) runFilterKind.addEventListener("change", applyRunFilter);
+    if (runFilterStatus) runFilterStatus.addEventListener("change", applyRunFilter);
+    if (runFilterProvenance) runFilterProvenance.addEventListener("change", applyRunFilter);
     var bulkButton = document.getElementById("delete-selected-runs");
     var bulkDialog = document.getElementById("bulk-delete-dialog");
     if (bulkButton && bulkDialog) {
@@ -1065,6 +1189,7 @@
       }, { rootMargin: "360px 0px" });
       archiveObserver.observe(runArchiveLoader);
     }
+    applyRunFilter();
   }
 
   // --- re-run an analysis ----------------------------------------------
@@ -1098,6 +1223,8 @@
   // stored-file preview; modifier clicks and the drawer's download action
   // retain the browser's native download/open behaviour.
 
+  var artifactDrawerReturnFocus = null;
+
   function currentRunId() {
     if (window.solarcleanRunId) return String(window.solarcleanRunId);
     var runTagged = document.querySelector("[data-run-id]");
@@ -1113,13 +1240,18 @@
     drawer.id = "artifact-preview-drawer";
     drawer.className = "artifact-preview-drawer";
     drawer.setAttribute("aria-labelledby", "artifact-preview-title");
+    drawer.setAttribute("aria-describedby", "artifact-preview-note");
+    drawer.hidden = true;
     drawer.innerHTML =
-      '<div class="artifact-preview-head"><div><span class="eyebrow">Stored artifact</span>' +
+      '<header class="artifact-preview-head"><div><span class="eyebrow">Stored artifact</span>' +
       '<h2 id="artifact-preview-title">Artifact preview</h2></div>' +
-      '<button type="button" id="artifact-preview-close" aria-label="Close artifact preview">×</button>' +
-      '</div><div id="artifact-preview-content" class="artifact-preview-content"></div>' +
-      '<p id="artifact-preview-note" class="hint"></p>' +
-      '<a id="artifact-preview-download" class="config-action" href="#">Download full artifact</a>';
+      '<button type="button" id="artifact-preview-close" class="artifact-preview-close" ' +
+      'aria-label="Close artifact preview">×</button></header>' +
+      '<div id="artifact-preview-content" class="artifact-preview-content"></div>' +
+      '<footer class="artifact-preview-footer">' +
+      '<p id="artifact-preview-note" class="hint artifact-preview-note"></p>' +
+      '<a id="artifact-preview-download" class="artifact-preview-download" href="#" ' +
+      'download>Download full artifact</a></footer>';
     document.body.appendChild(drawer);
     return drawer;
   }
@@ -1128,24 +1260,45 @@
     return document.getElementById(id) || drawer.querySelector(selector);
   }
 
-  function showArtifactDrawer(drawer) {
+  function showArtifactDrawer(drawer, returnFocus) {
+    artifactDrawerReturnFocus = returnFocus || document.activeElement;
     drawer.hidden = false;
+    drawer.removeAttribute("aria-hidden");
     if (typeof drawer.showModal === "function" && !drawer.open) drawer.showModal();
     else {
       drawer.classList.add("open");
       drawer.setAttribute("aria-hidden", "false");
     }
+    document.body.classList.add("artifact-drawer-open");
+    window.requestAnimationFrame(function () {
+      var close = artifactDrawerElement(
+        drawer, "artifact-preview-close", "[data-artifact-preview-close]"
+      );
+      if (close) close.focus();
+    });
   }
 
   function closeArtifactDrawer() {
     var drawer = document.getElementById("artifact-preview-drawer");
     if (!drawer) return;
+    var returnFocus = artifactDrawerReturnFocus;
+    artifactDrawerReturnFocus = null;
     if (typeof drawer.close === "function" && drawer.open) drawer.close();
     drawer.classList.remove("open");
-    if (drawer.tagName !== "DIALOG") {
-      drawer.hidden = true;
-      drawer.setAttribute("aria-hidden", "true");
+    drawer.hidden = true;
+    drawer.setAttribute("aria-hidden", "true");
+    document.body.classList.remove("artifact-drawer-open");
+    if (returnFocus && document.contains(returnFocus) &&
+        typeof returnFocus.focus === "function") {
+      window.requestAnimationFrame(function () { returnFocus.focus(); });
     }
+  }
+
+  function artifactDrawerFocusable(drawer) {
+    return Array.from(drawer.querySelectorAll(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
+      'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )).filter(function (element) { return !element.hidden; });
   }
 
   function previewKind(payload, artifactName) {
@@ -1217,6 +1370,7 @@
     );
     if (title) title.textContent = payload.name || artifactName;
     if (content) content.replaceChildren();
+    if (content) content.setAttribute("aria-busy", "false");
     if (note) note.textContent = "";
     if (download) {
       download.href = payload.download_url || downloadUrl;
@@ -1259,7 +1413,7 @@
     }
   }
 
-  function openArtifactPreview(runId, artifactName, downloadUrl) {
+  function openArtifactPreview(runId, artifactName, downloadUrl, trigger) {
     var drawer = ensureArtifactDrawer();
     var content = artifactDrawerElement(
       drawer, "artifact-preview-content", ".artifact-preview-content"
@@ -1268,8 +1422,9 @@
     var note = artifactDrawerElement(drawer, "artifact-preview-note", ".artifact-preview-note");
     if (title) title.textContent = artifactName;
     if (content) content.textContent = "Loading stored artifact…";
+    if (content) content.setAttribute("aria-busy", "true");
     if (note) note.textContent = "";
-    showArtifactDrawer(drawer);
+    showArtifactDrawer(drawer, trigger);
     fetch(
       "/api/runs/" + encodeURIComponent(runId) + "/artifact-preview/" +
       encodeURIComponent(artifactName)
@@ -1287,6 +1442,7 @@
       })
       .catch(function (error) {
         if (content) {
+          content.setAttribute("aria-busy", "false");
           content.textContent = "Preview unavailable: " + error.message;
         }
         var download = artifactDrawerElement(
@@ -1300,6 +1456,7 @@
   }
 
   document.addEventListener("click", function (event) {
+    if (event.defaultPrevented) return;
     var close = event.target.closest("#artifact-preview-close, [data-artifact-preview-close]");
     if (close) {
       closeArtifactDrawer();
@@ -1325,10 +1482,32 @@
     event.preventDefault();
     openArtifactPreview(runId, artifactName, href ||
       "/api/runs/" + encodeURIComponent(runId) + "/artifact/" +
-      encodeURIComponent(artifactName));
+      encodeURIComponent(artifactName), link);
   });
   document.addEventListener("keydown", function (event) {
-    if (event.key === "Escape") closeArtifactDrawer();
+    var drawer = document.getElementById("artifact-preview-drawer");
+    var open = drawer && !drawer.hidden && (drawer.open || drawer.classList.contains("open"));
+    if (!open) return;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeArtifactDrawer();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    var focusable = artifactDrawerFocusable(drawer);
+    if (!focusable.length) {
+      event.preventDefault();
+      return;
+    }
+    var first = focusable[0];
+    var last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
   });
 
   // --- config editor ------------------------------------------------------
@@ -1669,7 +1848,12 @@
         weather.className = "readiness readiness-" + state.weather_status.state;
         weather.textContent = state.weather_status.label;
       }
-      setText("cockpit-weather-detail", state.weather_status.detail);
+      var weatherDetail = state.weather_status.detail || "";
+      if (state.weather_status.state === "fetch") {
+        weatherDetail += (weatherDetail ? " - " : "") +
+          "It will be fetched automatically when you run the study.";
+      }
+      setText("cockpit-weather-detail", weatherDetail);
       var marker = document.getElementById("cockpit-map-marker");
       if (marker) marker.setAttribute("transform", "translate(" + state.longitude + " " + (-state.latitude) + ")");
       // Frame the locator window around the configured site so the marker is
@@ -2837,11 +3021,22 @@
     });
   }
 
+  function describeContextChart(canvas, label) {
+    if (!canvas) return;
+    if (!canvas.hasAttribute("role")) canvas.setAttribute("role", "img");
+    if (!canvas.hasAttribute("aria-label")) canvas.setAttribute("aria-label", label);
+    canvas.setAttribute("aria-describedby", "selected-day-summary");
+  }
+
   function drawContextTracks(payload) {
     var dates = payload.dailyEnergy.dates;
     var weather = payload.dailyWeather;
     var ghiCanvas = document.getElementById("daily-ghi-chart");
     if (weather && ghiCanvas) {
+      describeContextChart(
+        ghiCanvas,
+        "Daily GHI context chart aligned by date with the interactive daily explorer"
+      );
       var ghiOptions = trackOptions(false);
       ghiOptions.scales.y.beginAtZero = true;
       registerExplorerChart(new Chart(ghiCanvas, {
@@ -2861,6 +3056,10 @@
 
     var temperatureCanvas = document.getElementById("daily-temperature-chart");
     if (weather && temperatureCanvas) {
+      describeContextChart(
+        temperatureCanvas,
+        "Daily ambient and module temperature context chart aligned with the daily explorer"
+      );
       registerExplorerChart(new Chart(temperatureCanvas, {
         type: "line",
         data: { labels: dates, datasets: [
@@ -2888,6 +3087,10 @@
 
     var rainfallCanvas = document.getElementById("daily-rainfall-chart");
     if (payload.dailyRainfall && rainfallCanvas) {
+      describeContextChart(
+        rainfallCanvas,
+        "Daily rainfall context chart aligned by date with the interactive daily explorer"
+      );
       var rainfallOptions = trackOptions(false);
       rainfallOptions.scales.y.beginAtZero = true;
       registerExplorerChart(new Chart(rainfallCanvas, {
@@ -2907,6 +3110,10 @@
 
     var humidityCanvas = document.getElementById("daily-humidity-chart");
     if (humidityCanvas && payload.dailyHumidity) {
+      describeContextChart(
+        humidityCanvas,
+        "Daily mean relative humidity context chart aligned with the daily explorer"
+      );
       var humidityOptions = trackOptions(false);
       humidityOptions.scales.y.min = 0;
       humidityOptions.scales.y.max = 100;
@@ -2928,6 +3135,10 @@
 
     var eventCanvas = document.getElementById("daily-events-chart");
     if (eventCanvas) {
+      describeContextChart(
+        eventCanvas,
+        "Stored rain, cleaning, inspection, coating, and contamination events aligned by date"
+      );
       var eventOptions = trackOptions(true);
       eventOptions.scales.y.type = "category";
       eventOptions.scales.y.labels = ["Rain", "Clean", "Inspect", "Coating", "Contamination"];

@@ -3,7 +3,12 @@
    to open the two-run diff against another stored comparison. Display joins
    over stored artifacts only. #}
 {% if related and (related.siblings or related.comparables) %}
-<section class="related-runs" aria-label="Related runs in this study">
+<section class="related-runs live-study-context print-exclude"
+         aria-label="Live study context, excluded from the stored run record when printed">
+  <span class="related-context-label">
+    <strong>Live study context</strong>
+    <small>Navigation only - not part of this stored record</small>
+  </span>
   {% if related.study %}
   <span class="related-study"><span class="related-study-term">This study</span>
     <span class="mono">{{ related.study.label }}</span></span>

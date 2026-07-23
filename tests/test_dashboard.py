@@ -17,11 +17,13 @@ import csv
 import io
 import json
 import os
+import re
 import shutil
 import stat
 import threading
 import time
 import zipfile
+from collections.abc import Iterator
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import quote
@@ -58,9 +60,14 @@ from solarclean.dashboard.jobs import ActiveJobError, Job, JobCancelled, JobRegi
 
 
 @pytest.fixture(scope="module")
-def comparison_run() -> Path:
+def comparison_run() -> Iterator[Path]:
     result = CompareAllScenarios(fixture_config()).run()
-    return result.output_directory
+    try:
+        yield result.output_directory
+    finally:
+        # The real offline comparison is needed throughout this module, but it
+        # is test evidence rather than a user-authored dashboard run.
+        shutil.rmtree(result.output_directory, ignore_errors=True)
 
 
 @pytest.fixture(scope="module")
@@ -136,13 +143,14 @@ def test_launch_runs_selected_config_and_reports_progress(
     # the route logic is identical for the real full-year configurations.
     sandbox = tmp_path / "configs"
     sandbox.mkdir()
+    isolated_config = fixture_config({"output": {"base_directory": tmp_path / "generated_outputs"}})
     (sandbox / DEFAULT_CONFIG_NAME).write_text(
-        yaml.safe_dump(fixture_config().model_dump(mode="json"), sort_keys=False),
+        yaml.safe_dump(isolated_config.model_dump(mode="json"), sort_keys=False),
         encoding="utf-8",
     )
     selected_name = "dammam_humid_desert.yaml"
     (sandbox / selected_name).write_text(
-        yaml.safe_dump(fixture_config().model_dump(mode="json"), sort_keys=False),
+        yaml.safe_dump(isolated_config.model_dump(mode="json"), sort_keys=False),
         encoding="utf-8",
     )
     monkeypatch.setattr(dashboard_app, "_CONFIGS_DIR", sandbox)
@@ -440,7 +448,7 @@ def test_financial_ranking_explains_total_and_baseline_change(
 
     page = client.get(f"/run/{run_dir.name}").text
 
-    assert "Ranking by annual financial outcome" in page
+    assert "Ranking by configured period financial outcome" in page
     assert "Value of extra energy" in page
     assert "Net change" in page and "vs baseline" in page
     assert "0.18 SAR/kWh" in page
@@ -450,8 +458,11 @@ def test_financial_ranking_explains_total_and_baseline_change(
     assert "Net change vs doing nothing" in page
     assert "0 · reference" in page
     first = ranking_rows[0]
-    assert f"How {_format_sar(first['net_annual_benefit_sar'])} SAR/year is calculated" in page
-    assert "annual AC energy ×" in page
+    assert (
+        f"How {_format_sar(first['net_annual_benefit_sar'])} SAR/configured period is calculated"
+        in page
+    )
+    assert "configured period AC energy ×" in page
     assert "incremental_net_annual_benefit_vs_baseline_sar" in page
 
 
@@ -470,9 +481,12 @@ def test_cost_reconciliation_help_is_plain_english(
     assert "water price" in page
 
 
-def test_kpi_best_values_highlighted(client: TestClient, comparison_run: Path) -> None:
+def test_uncertified_kpis_are_not_highlighted_as_best(
+    client: TestClient, comparison_run: Path
+) -> None:
     page = client.get(f"/run/{comparison_run.name}").text
-    assert "best-cell" in page
+    assert "best-cell" not in page
+    assert "No “best” cells are highlighted because this run is not certified" in page
 
 
 def test_charts_replace_static_plot_grid(client: TestClient, comparison_run: Path) -> None:
@@ -624,7 +638,7 @@ def test_cost_table_grouped_with_subtotals(client: TestClient, comparison_run: P
     assert "Capital costs (CAPEX)" in page
     assert "Operating costs (OPEX)" in page
     assert "Subtotal" in page
-    assert "Total annual cost" in page
+    assert "Total configured period cost" in page
     assert "SAR/year" in page
 
 
@@ -1180,7 +1194,7 @@ def test_compare_runs_renders_stored_provenance_and_kpis(
         assert comparison_run.name in page.text
         assert other.name in page.text
         assert "Dammam (humid coastal desert)" in page.text
-        assert "Annual KPIs" in page.text
+        assert "Stored-period KPIs" in page.text
         # Different sites are alternatives, not iterations: neutral A/B labels.
         assert "RUN A" in page.text
         assert "A · BEFORE" not in page.text
@@ -1436,7 +1450,7 @@ def test_comparison_page_shows_headline_cards(client: TestClient, comparison_run
         page = client.get(f"/run/{run_dir.name}").text
         assert "Recommended strategy" in page
         assert 'class="headline-card"' in page
-        assert "Total net annual benefit" in page
+        assert "Total net configured-period benefit" in page
         assert "Margin over runner-up" in page
         assert "734,918" in page  # stored value, formatted for reading
     finally:
@@ -1613,7 +1627,7 @@ def test_compare_runs_is_diff_with_collapsed_identical_values(
         page = client.get("/compare-runs", params={"a": comparison_run.name, "b": other.name}).text
         assert "Changed assumptions" in page
         assert "identical fields collapsed" in page
-        assert "Annual KPIs · changed values" in page
+        assert "Stored-period KPIs · changed values" in page
         assert "identical KPI values collapsed" in page
         # Identical resolved configs = same study, so before/after framing applies.
         assert "A · BEFORE" in page
@@ -1884,6 +1898,465 @@ def test_runs_archive_is_grouped_by_study(client: TestClient, comparison_run: Pa
     assert study["label"] in page
 
 
+def test_run_card_view_model_distinguishes_result_state_and_provenance(tmp_path: Path) -> None:
+    outputs = tmp_path / "outputs"
+    payload = fixture_config().model_dump(mode="json")
+    run_ids = {
+        "certified": "study-compare-all-scenarios-20260718T050000Z-a1",
+        "not_certified": "test-fixture-compare-all-scenarios-20260718T040000Z-b2",
+        "complete": "study-monte-carlo-20260718T030000Z-c3",
+        "incomplete": "offline-fixture-monte-carlo-20260718T020000Z-d4",
+        "unknown": "study-unrecognized-20260718T010000Z-e5",
+    }
+    for run_id in run_ids.values():
+        run_dir = outputs / run_id
+        run_dir.mkdir(parents=True)
+        (run_dir / "config_resolved.yaml").write_text(
+            yaml.safe_dump(payload, sort_keys=False), encoding="utf-8"
+        )
+
+    certified = outputs / run_ids["certified"]
+    (certified / "recommendation.json").write_text(
+        json.dumps(
+            {
+                "winner": "coating",
+                "valid": True,
+                "calculation_valid": True,
+                "recommendation_tier": "decision_grade",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (certified / "reconciliation_report.json").write_text(
+        json.dumps({"passed": True, "checks": []}), encoding="utf-8"
+    )
+
+    not_certified = outputs / run_ids["not_certified"]
+    (not_certified / "recommendation.json").write_text(
+        json.dumps(
+            {
+                "winner": "coating",
+                "valid": False,
+                "calculation_valid": True,
+                "recommendation_tier": "exploratory",
+                "warnings": [{"message": "Fixture weather is test-only evidence."}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    complete = outputs / run_ids["complete"]
+    (complete / "monte_carlo_summary.json").write_text(
+        json.dumps({"trial_count": 10}), encoding="utf-8"
+    )
+
+    grouped = dashboard_app._grouped_run_entries(artifacts_module.list_runs(outputs))
+    cards = dashboard_app._run_cards(grouped, previous_study_key=None)
+    by_id = {str(card["run_id"]): card for card in cards}
+
+    assert by_id[run_ids["certified"]]["status_code"] == "certified"
+    assert by_id[run_ids["certified"]]["status_label"] == "Certified"
+    assert by_id[run_ids["not_certified"]]["status_code"] == "not_certified"
+    assert by_id[run_ids["not_certified"]]["status_label"] == "Not certified"
+    assert "Fixture weather" in str(by_id[run_ids["not_certified"]]["status_detail"])
+    assert by_id[run_ids["complete"]]["status_code"] == "complete"
+    assert by_id[run_ids["incomplete"]]["status_code"] == "incomplete"
+    assert by_id[run_ids["unknown"]]["status_code"] == "unknown"
+
+    assert by_id[run_ids["not_certified"]]["provenance"] == "test"
+    assert by_id[run_ids["incomplete"]]["provenance"] == "test"
+    assert by_id[run_ids["certified"]]["provenance"] == "study"
+    short_ids = {str(card["study_short_id"]) for card in cards}
+    assert len(short_ids) == 1
+    assert next(iter(short_ids)) != "UNFILED"
+    assert sum(bool(card["new_study"]) for card in cards) == 1
+
+
+def test_run_card_reconciliation_rejection_is_not_a_process_failure(tmp_path: Path) -> None:
+    run_dir = tmp_path / "study-compare-all-scenarios-20260718T000000Z-a1"
+    run_dir.mkdir()
+    (run_dir / "recommendation.json").write_text(
+        json.dumps(
+            {
+                "winner": "reactive",
+                "valid": True,
+                "calculation_valid": True,
+                "recommendation_tier": "decision_grade",
+            }
+        ),
+        encoding="utf-8",
+    )
+    (run_dir / "reconciliation_report.json").write_text(
+        json.dumps(
+            {
+                "passed": False,
+                "checks": [
+                    {
+                        "name": "cost_reconciles",
+                        "passed": False,
+                        "message": "Stored cost does not reconcile.",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    entry = artifacts_module.RunEntry(
+        run_id=run_dir.name,
+        path=run_dir,
+        kind="compare-all-scenarios",
+        created="",
+        winner="reactive",
+        valid=True,
+    )
+
+    status = dashboard_app._run_card_status(entry)
+
+    assert status == {
+        "status_code": "not_certified",
+        "status_label": "Not certified",
+        "status_detail": "Stored cost does not reconcile.",
+    }
+    assert "failed" not in status["status_label"].lower()
+
+
+@pytest.mark.parametrize("kind", ["fetch-weather", "run-baseline", "run-clean"])
+def test_run_card_core_outputs_are_complete(tmp_path: Path, kind: str) -> None:
+    run_dir = tmp_path / f"study-{kind}-20260718T000000Z-a1"
+    run_dir.mkdir()
+    (run_dir / "summary.json").write_text(json.dumps({"kind": kind}), encoding="utf-8")
+    entry = artifacts_module.RunEntry(
+        run_id=run_dir.name,
+        path=run_dir,
+        kind=kind,
+        created="",
+        winner=None,
+        valid=None,
+    )
+
+    status = dashboard_app._run_card_status(entry)
+
+    assert status["status_code"] == "complete"
+    assert status["status_label"] == "Complete"
+
+
+def test_dashboard_width_hardening_preserves_desktop_measure() -> None:
+    css = (dashboard_app._PACKAGE_DIR / "static" / "dashboard.css").read_text(encoding="utf-8")
+    assert "main { max-width: 1160px; margin: 0 auto;" in css
+    screen_hardening = css[css.index("@media screen") :]
+    assert not re.search(
+        r"main\s*,[^{}]*\{[^{}]*max-width:\s*100%",
+        screen_hardening,
+        flags=re.DOTALL,
+    )
+
+
+def test_command_hint_uses_windows_label_without_command_glyph() -> None:
+    base = (dashboard_app._PACKAGE_DIR / "templates" / "base.html").read_text(encoding="utf-8")
+    assert "Ctrl K" in base
+    assert "⌘" not in base
+
+
+@pytest.mark.parametrize(
+    ("path", "replacement"),
+    [
+        (("calibration", "parameter_registry_path"), "data/calibration/other-economics.yaml"),
+        (("soiling", "base_daily_soiling_loss_fraction"), 0.009),
+        (("coating", "costs", "material_cost_per_m2"), 999.0),
+        (("reactive_cv", "dispatch", "confidence_threshold"), 0.99),
+    ],
+)
+def test_study_fingerprint_separates_decision_config_edits(
+    path: tuple[str, ...], replacement: object
+) -> None:
+    """A shared label cannot make incompatible decision inputs siblings."""
+
+    original = fixture_config().model_dump(mode="json")
+    edited = json.loads(json.dumps(original))
+    target = edited
+    for part in path[:-1]:
+        target = target[part]
+    target[path[-1]] = replacement
+
+    original_study = dashboard_app._study_from_resolved_config(original)
+    edited_study = dashboard_app._study_from_resolved_config(edited)
+
+    assert original_study is not None and edited_study is not None
+    assert original_study["label"] == edited_study["label"]
+    assert original_study["key"] != edited_study["key"]
+    assert original_study["fingerprint"] != edited_study["fingerprint"]
+
+
+def test_study_fingerprint_ignores_execution_and_serialization_settings() -> None:
+    original = fixture_config().model_dump(mode="json")
+    edited = json.loads(json.dumps(original))
+    edited["simulation"]["run_id_prefix"] = "renamed-output-package"
+    edited["weather"]["cache_enabled"] = not edited["weather"]["cache_enabled"]
+    edited["weather"]["cache_directory"] = "another/cache"
+    edited["weather"]["timeout_seconds"] = 999
+    edited["farm"]["store_cohort_daily_details"] = not edited["farm"]["store_cohort_daily_details"]
+    edited["calibration"]["source_note"] = "presentation-only note"
+    edited["output"]["csv_float_format"] = "%.3f"
+    edited["logging"]["level"] = "DEBUG"
+
+    original_study = dashboard_app._study_from_resolved_config(original)
+    edited_study = dashboard_app._study_from_resolved_config(edited)
+
+    assert original_study is not None and edited_study is not None
+    assert original_study == edited_study
+
+
+def test_cockpit_finding_matches_config_snapshot_not_run_prefix(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configs = tmp_path / "configs"
+    outputs = tmp_path / "outputs"
+    configs.mkdir()
+    current = fixture_config().model_dump(mode="json")
+    # Prefix deliberately differs from both stored run ids. It is excluded
+    # from decision identity and must never be used as the match itself.
+    current["simulation"]["run_id_prefix"] = "currently-selected-prefix"
+    (configs / DEFAULT_CONFIG_NAME).write_text(
+        yaml.safe_dump(current, sort_keys=False), encoding="utf-8"
+    )
+
+    matching = outputs / "historic-compare-all-scenarios-20260717T000000Z-a1"
+    stale = outputs / "currently-selected-prefix-compare-all-scenarios-20260718T000000Z-b2"
+    matching.mkdir(parents=True)
+    stale.mkdir(parents=True)
+    stored_matching = json.loads(json.dumps(current))
+    stored_matching["simulation"]["run_id_prefix"] = "historic"
+    stored_stale = json.loads(json.dumps(current))
+    stored_stale["coating"]["costs"]["material_cost_per_m2"] = 1234.0
+    for run_dir, payload, winner in (
+        (matching, stored_matching, "coating"),
+        (stale, stored_stale, "reactive"),
+    ):
+        (run_dir / "config_resolved.yaml").write_text(
+            yaml.safe_dump(payload, sort_keys=False), encoding="utf-8"
+        )
+        (run_dir / "recommendation.json").write_text(
+            json.dumps(
+                {
+                    "winner": winner,
+                    "calculation_valid": True,
+                    "decisive_margin_sar": 50,
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(dashboard_app, "_CONFIGS_DIR", configs)
+    cockpit = dashboard_app._config_cockpits(
+        [DEFAULT_CONFIG_NAME], artifacts_module.list_runs(outputs)
+    )[DEFAULT_CONFIG_NAME]
+
+    assert cockpit["last_run"] is not None
+    assert cockpit["last_run"]["run_id"] == matching.name
+    assert cockpit["last_run"]["winner"] == "coating"
+
+
+def test_cockpit_finding_rejects_known_stale_economics_registry(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configs = tmp_path / "configs"
+    outputs = tmp_path / "outputs"
+    configs.mkdir()
+    payload = fixture_config().model_dump(mode="json")
+    config_path = configs / DEFAULT_CONFIG_NAME
+    config_path.write_text(yaml.safe_dump(payload, sort_keys=False), encoding="utf-8")
+    current_checksum = dashboard_app.ParameterRegistry.from_yaml(
+        dashboard_app._registry_path(config_path)
+    ).checksum()
+
+    current = outputs / "study-compare-all-scenarios-20260717T000000Z-a1"
+    stale = outputs / "study-compare-all-scenarios-20260718T000000Z-b2"
+    for run_dir, checksum, winner in (
+        (current, current_checksum, "coating"),
+        (stale, "known-edited-registry", "reactive"),
+    ):
+        run_dir.mkdir(parents=True)
+        (run_dir / "config_resolved.yaml").write_text(
+            yaml.safe_dump(payload, sort_keys=False), encoding="utf-8"
+        )
+        (run_dir / "metadata.json").write_text(
+            json.dumps({"parameter_registry_checksum": checksum}), encoding="utf-8"
+        )
+        (run_dir / "recommendation.json").write_text(
+            json.dumps({"winner": winner, "calculation_valid": True}), encoding="utf-8"
+        )
+
+    monkeypatch.setattr(dashboard_app, "_CONFIGS_DIR", configs)
+    cockpit = dashboard_app._config_cockpits(
+        [DEFAULT_CONFIG_NAME], artifacts_module.list_runs(outputs)
+    )[DEFAULT_CONFIG_NAME]
+
+    assert cockpit["last_run"] is not None
+    assert cockpit["last_run"]["run_id"] == current.name
+    assert cockpit["last_run"]["winner"] == "coating"
+
+
+def test_cross_run_context_excludes_same_label_with_edited_inputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outputs = tmp_path / "outputs"
+    comparison = outputs / "study-compare-all-scenarios-20260717T000000Z-a1"
+    oneway = outputs / "study-sensitivity-oneway-20260717T010000Z-b2"
+    comparison.mkdir(parents=True)
+    oneway.mkdir(parents=True)
+    original = fixture_config().model_dump(mode="json")
+    edited = json.loads(json.dumps(original))
+    edited["reactive_cv"]["crew"]["water_liters_per_cohort"] += 1
+    (comparison / "config_resolved.yaml").write_text(
+        yaml.safe_dump(original, sort_keys=False), encoding="utf-8"
+    )
+    (oneway / "config_resolved.yaml").write_text(
+        yaml.safe_dump(edited, sort_keys=False), encoding="utf-8"
+    )
+    (comparison / "recommendation.json").write_text(
+        json.dumps({"winner": "coating", "calculation_valid": True}), encoding="utf-8"
+    )
+    (oneway / "sensitivity_oneway_summary.json").write_text(
+        json.dumps({"parameter_results": []}), encoding="utf-8"
+    )
+    monkeypatch.setattr(dashboard_app, "_OUTPUTS_DIR", outputs)
+
+    related = dashboard_app._related_runs(comparison.name, comparison)
+    assert related["siblings"] == []
+    assert related["context_source"] == "live_archive"
+    assert related["compatibility_basis"] == "decision_config_fingerprint_v2"
+
+    study = dashboard_app._run_study(comparison)
+    assert study is not None
+    dossier = dashboard_app._study_dossier_context(study["key"])
+    assert dossier["oneway"] is None
+    assert [record["run_id"] for record in dossier["records"]] == [comparison.name]
+    assert dossier["context_flags"]["evidence_records"] == "immutable_run_snapshots"
+
+
+@pytest.mark.parametrize(
+    ("metadata_field", "study_field"),
+    [
+        ("weather_checksum", "weather_checksum"),
+        ("parameter_registry_checksum", "registry_checksum"),
+    ],
+)
+def test_cross_run_compatibility_rejects_known_input_checksum_mismatch(
+    tmp_path: Path, metadata_field: str, study_field: str
+) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    payload = fixture_config().model_dump(mode="json")
+    for run_dir, checksum in ((first, "aaa"), (second, "bbb")):
+        (run_dir / "config_resolved.yaml").write_text(
+            yaml.safe_dump(payload, sort_keys=False), encoding="utf-8"
+        )
+        (run_dir / "metadata.json").write_text(
+            json.dumps({metadata_field: checksum}), encoding="utf-8"
+        )
+
+    first_study = dashboard_app._run_study(first)
+    second_study = dashboard_app._run_study(second)
+    assert first_study is not None and second_study is not None
+    assert first_study["fingerprint"] == second_study["fingerprint"]
+    assert first_study[study_field] != second_study[study_field]
+    assert not dashboard_app._studies_compatible(first_study, second_study)
+
+    (second / "metadata.json").unlink()
+    legacy_study = dashboard_app._run_study(second)
+    assert legacy_study is not None
+    assert dashboard_app._studies_compatible(first_study, legacy_study)
+
+
+def test_dossier_legacy_run_cannot_bridge_known_checksum_mismatches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    outputs = tmp_path / "outputs"
+    payload = fixture_config().model_dump(mode="json")
+    run_specs = (
+        ("z-compare-all-scenarios-legacy", None),
+        ("y-compare-all-scenarios-checksum-a", "aaa"),
+        ("x-compare-all-scenarios-checksum-b", "bbb"),
+    )
+    for run_id, checksum in run_specs:
+        run_dir = outputs / run_id
+        run_dir.mkdir(parents=True)
+        (run_dir / "config_resolved.yaml").write_text(
+            yaml.safe_dump(payload, sort_keys=False), encoding="utf-8"
+        )
+        if checksum is not None:
+            (run_dir / "metadata.json").write_text(
+                json.dumps({"weather_checksum": checksum}), encoding="utf-8"
+            )
+
+    monkeypatch.setattr(dashboard_app, "_OUTPUTS_DIR", outputs)
+    study = dashboard_app._run_study(outputs / run_specs[0][0])
+    assert study is not None
+
+    dossier = dashboard_app._study_dossier_context(study["key"])
+    record_ids = [record["run_id"] for record in dossier["records"]]
+
+    assert run_specs[0][0] in record_ids
+    assert run_specs[1][0] in record_ids
+    assert run_specs[2][0] not in record_ids
+
+
+def test_comparison_period_context_is_conservative(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    partial = fixture_config().model_dump(mode="json")
+    (run_dir / "config_resolved.yaml").write_text(
+        yaml.safe_dump(partial, sort_keys=False), encoding="utf-8"
+    )
+    assert dashboard_app._comparison_period_context(run_dir) == {
+        "period_is_full_year": False,
+        "period_label": "Configured-period totals",
+    }
+
+    full_year = json.loads(json.dumps(partial))
+    full_year["simulation"]["start"] = "2025-01-01T00:00:00+03:00"
+    full_year["simulation"]["end"] = "2025-12-31T23:00:00+03:00"
+    (run_dir / "config_resolved.yaml").write_text(
+        yaml.safe_dump(full_year, sort_keys=False), encoding="utf-8"
+    )
+    assert dashboard_app._comparison_period_context(run_dir) == {
+        "period_is_full_year": True,
+        "period_label": "Full-year totals",
+    }
+
+
+def test_exploratory_finding_and_headlines_use_configured_period() -> None:
+    recommendation = {
+        "valid": False,
+        "calculation_valid": True,
+        "recommendation_tier": "exploratory",
+        "winner": "coating",
+        "decisive_margin_sar": 25.0,
+        "kpi_snapshot": {
+            "coating": {
+                "net_annual_benefit_sar": 100.0,
+                "energy_gain_vs_baseline_kwh": 50.0,
+            }
+        },
+        "warnings": [{"message": "Configured period is not a full site-year."}],
+    }
+
+    finding = dashboard_app._finding_statement(recommendation, None, period_is_full_year=False)
+    cards = dashboard_app._headline_cards(recommendation, period_is_full_year=False)
+
+    assert finding is not None and finding["tone"] == "warn"
+    assert "configured period" in finding["text"]
+    assert "no certified winner" in finding["text"]
+    assert cards is not None
+    assert any(card["label"] == "Total net configured-period benefit" for card in cards)
+    assert {card["unit"] for card in cards if card["unit"]} >= {
+        "SAR/configured period",
+        "kWh/configured period",
+    }
+
+
 def test_related_runs_strip_links_same_study_siblings(
     client: TestClient, comparison_run: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1895,7 +2368,7 @@ def test_related_runs_strip_links_same_study_siblings(
     monkeypatch.setattr(dashboard_app, "_OUTPUTS_DIR", outputs)
 
     page = client.get(f"/run/{run_a.name}").text
-    assert 'class="related-runs"' in page
+    assert 'class="related-runs live-study-context print-exclude"' in page
     assert run_b.name in page  # same config_resolved.yaml = same study
     assert "Compare against" in page
     assert f'name="a" value="{run_a.name}"' in page
@@ -2238,10 +2711,9 @@ def test_study_dossier_and_calibration_priority_join_latest_stored_evidence(
 
     comparison_page = client.get(f"/run/{comparison.name}").text
     assert "Where to spend calibration effort" in comparison_page
+    priority_start = comparison_page.index('id="calibration-priority"')
     priority_section = comparison_page[
-        comparison_page.index('id="calibration-priority"') : comparison_page.index(
-            'class="run-head run-command-bar"'
-        )
+        priority_start : comparison_page.index('id="artifact-files"', priority_start)
     ]
     assert priority_section.index("test.high_swing") < priority_section.index("test.low_swing")
     assert oneway.name in comparison_page

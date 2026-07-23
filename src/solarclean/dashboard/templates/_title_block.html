@@ -1,4 +1,5 @@
 {# CAD-style title block. Every field is read from stored run artifacts. #}
+{% set package_inventory_available = artifact_summary is defined or artifacts is defined %}
 {% set package_artifacts = artifacts if artifacts is defined else [] %}
 {% set package_count = artifact_summary.count if artifact_summary is defined else package_artifacts | length %}
 {% set package_bytes = artifact_summary.total_bytes if artifact_summary is defined else package_artifacts | sum(attribute="size_bytes") %}
@@ -55,6 +56,7 @@
       <dt>Status <span lang="ar" dir="rtl">الحالة</span></dt>
       <dd>{{ document_status or "ANALYSIS RECORD" }}</dd>
     </div>
+    {% if package_inventory_available %}
     <div class="tb-package">
       <dt>Package <span lang="ar" dir="rtl">حزمة السجل</span></dt>
       <dd class="mono" data-audit-source="output package · artifact inventory"
@@ -62,5 +64,6 @@
         {{ package_count }} files · {{ package_bytes | display_number }} B
       </dd>
     </div>
+    {% endif %}
   </dl>
 </section>
