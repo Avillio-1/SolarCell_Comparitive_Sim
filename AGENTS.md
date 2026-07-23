@@ -1,92 +1,54 @@
-# Agent Guide For SolarClean-DT
+# Contributor guide for SolarClean-DT
 
-## Repository Structure
+## Repository map
 
-- `src/solarclean/domain`: pure domain contracts, states, and simulation logic. Do not import CLI, persistence, HTTP, NASA, pvlib, plotting, databases, or dashboard code here.
-- `src/solarclean/domain/events`: immutable exogenous event tape models shared by baseline and future scenarios.
-- `src/solarclean/domain/scenario`: T1 frozen shared scenario contracts, strategy protocol, common result models, operational quantities, and comparison/persistence input contracts.
-- `src/solarclean/domain/random`: deterministic RNG stream allocation.
-- `src/solarclean/domain/calibration`: provisional calibration preset registry.
-- `src/solarclean/domain/validation`: validation report value objects.
-- `src/solarclean/application`: use cases and orchestration. This layer wires domain contracts to infrastructure adapters.
-- `src/solarclean/infrastructure`: adapters for NASA POWER, CSV/fixture weather, pvlib PVWatts, output persistence, and plotting.
-- `src/solarclean/cli`: Typer command wrappers only.
-- `src/solarclean/config`: YAML loading and validated configuration models.
-- `configs/default.yaml`: the sole runtime configuration.
-- `data/fixtures`: deterministic test-only weather and regression fixtures.
-- `data/local_weather`: example measured-weather CSV import files.
-- `outputs`: generated run directories; do not commit generated outputs if git is later initialized.
-- `docs`: architecture, data contracts, assumptions, and ADRs.
-- `tests`: offline unit/regression tests plus explicitly marked optional integration tests.
+- `src/solarclean/domain`: pure contracts, state, physics, strategies, economics, and simulation.
+- `src/solarclean/application`: use cases, comparisons, validation, and robustness studies.
+- `src/solarclean/infrastructure`: weather, pvlib, persistence, report, and plot adapters.
+- `src/solarclean/config`: YAML loading and strict Pydantic models.
+- `src/solarclean/cli` and `src/solarclean/dashboard`: interfaces over application use cases.
+- `configs/offline_fixture_full_year.yaml`: canonical network-free documentation configuration.
+- `configs/default.yaml`: live NASA POWER and dashboard-default configuration.
+- `data/calibration/parameter_registry.yaml`: calibration evidence and uncertainty ranges.
+- `data/external`: tracked processed field-validation inputs.
+- `docs`: concise Diátaxis documentation, scientific validation, and selective ADRs.
+- `tests`: offline tests plus explicitly marked network integrations.
 
-## Coding Standards
+## Engineering rules
 
-- Python 3.11 or newer.
-- Type hints throughout.
-- Use dataclasses for domain value/result types and Pydantic for configuration boundaries.
-- Use `pathlib.Path` rather than stringly typed paths.
-- Use timezone-aware datetimes; aggregate days in the configured site timezone.
-- Use `numpy.random.Generator` and `SeedSequence` for reproducible stochastic behavior.
-- Use the Phase 3.5 exogenous event tape when scenario comparability matters. Future scenario-specific RNG streams must not mutate or regenerate the shared tape.
-- Use the T1 `MitigationStrategy` contract for future scenario behavior. Do not create a second annual simulation loop for reactive CV, coating, economics, analytics, or dashboard work.
-- Store scenario-specific output fields in `DailyScenarioResult.extensions` or `AnnualScenarioResult.extensions`; common consumers must tolerate unknown extension keys.
-- Keep NASA-specific field names and HTTP behavior inside `solarclean.infrastructure.weather.nasa_power`.
-- Keep pvlib-specific objects inside `solarclean.infrastructure.pvlib_adapter`.
-- Do not put plotting, file writing, network calls, or CLI parsing into domain objects.
-- Do not implement drone, coating, economics, optimization, dashboard, database, or dispatch behavior in Phases 1-3.
+- Use Python 3.11 or newer and type hints throughout.
+- Use dataclasses for domain values and Pydantic at configuration boundaries.
+- Use `pathlib.Path`, timezone-aware datetimes, and site-local daily aggregation.
+- Use `numpy.random.Generator` and `SeedSequence` for deterministic random streams.
+- Keep HTTP, files, plotting, pvlib objects, CLI parsing, and dashboard behavior out of domain code.
+- Keep NASA-specific fields and HTTP behavior in `infrastructure.weather.nasa_power`.
+- Keep pvlib-specific objects in `infrastructure.pvlib_adapter`.
+- Use the immutable exogenous event tape for comparable scenarios.
+- Add scenario behavior through `MitigationStrategy`; do not add a second annual loop.
+- Put scenario-specific fields in result extensions. Common consumers must tolerate unknown keys.
+- Keep scientific constants in validated configuration or the calibration registry.
 
 ## Commands
 
-Install in editable development mode:
-
 ```powershell
-python -m pip install -e ".[dev]"
-```
-
-Run tests:
-
-```powershell
+python -m pip install -e ".[dev,dashboard]"
 python -m pytest -q
-python -m pytest --cov=solarclean --cov-report=term-missing
-```
-
-Format and lint:
-
-```powershell
-python -m ruff format .
 python -m ruff format --check .
 python -m ruff check .
-```
-
-Type check:
-
-```powershell
 python -m mypy src
 ```
 
-Run the default Riyadh NASA POWER configuration when internet access is available:
+Run the canonical comparison:
 
 ```powershell
-solarclean fetch-weather --config configs/default.yaml
-solarclean run-clean --config configs/default.yaml
-solarclean run-baseline --config configs/default.yaml
-solarclean validate-weather --config configs/default.yaml
-solarclean validate-phase-3-5 --config configs/default.yaml
-solarclean profile-full-year --config configs/default.yaml
+python -m solarclean.cli.main compare-all-scenarios `
+  --config configs/offline_fixture_full_year.yaml
 ```
 
-## Architectural Boundaries
+## Documentation
 
-- Simulation code accepts `WeatherDataset`, clean energy profiles, farm representations, and soiling models through explicit contracts.
-- Changing `weather.provider` from `nasa_power` to `csv` or `fixture` must not require changes in domain or PV simulation code.
-- Cohort IDs and cohort-level state are extension points for future inspections and cleaning, but those future controllers must not be added in this phase.
-- The event tape is the next clean Phase 4 extension point. New scenarios may consume it but must not change its generated exogenous events.
-- The frozen T1 scenario contracts are the shared boundary for parallel work. Cross-team changes require updated contract tests and an ADR.
-- Scientific constants belong in validated configuration, not hidden domain literals.
-
-## T1 Parallel Ownership
-
-- Core/contracts owner: `src/solarclean/domain/scenario`, shared simulation engine, baseline compatibility, and contract docs.
-- T2 reactive CV owner: future reactive/CV package and tests, implemented as a `MitigationStrategy`.
-- T3 coating/economics owner: future coating/economics packages and tests, consuming `AnnualScenarioResult`.
-- T4 analytics/dashboard owner: future output consumers and dashboard code, consuming scenario summaries/frames without mutating inputs.
+- Use `configs/offline_fixture_full_year.yaml` for network-free examples.
+- Put procedures in `docs/guides`, contracts in `docs/reference`, rationale in `docs/concepts`,
+  and evidence in `docs/validation`.
+- Add an ADR only for a decision that constrains multiple modules or future work.
+- Link to canonical pages instead of repeating them.

@@ -60,7 +60,7 @@ from solarclean.application.sensitivity import (
 from solarclean.config.loader import load_config
 from solarclean.config.models import SolarCleanConfig
 from solarclean.dashboard import artifacts
-from solarclean.dashboard.jobs import JOB_KINDS, ActiveJobError, Job, JobRegistry
+from solarclean.dashboard.jobs import JOB_KINDS, Job, JobRegistry
 from solarclean.domain.calibration.parameter_overrides import build_parameter_catalog
 from solarclean.domain.calibration.registry import ParameterRegistry
 from solarclean.domain.environment.weather import CANONICAL_WEATHER_COLUMNS, WeatherRequest
@@ -90,6 +90,7 @@ _OUTPUTS_DIR = _directory_from_env("SOLARCLEAN_OUTPUTS_DIR", _REPO_ROOT / "outpu
 _CONFIG_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_\-]+\.yaml$")
 _RUNS_PER_PAGE = 24
 _ARTIFACT_PREVIEW_ROWS = 50
+_ARTIFACT_JSON_PREVIEW_BYTES = 200_000
 
 app = FastAPI(title="SolarClean-DT dashboard", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=_PACKAGE_DIR / "static"), name="static")
@@ -272,7 +273,12 @@ def _best_flags(values: list[str], direction: str | None) -> list[bool]:
     return [number is not None and number == best for number in parsed]
 
 
-def _kpi_table(header: list[str], rows: list[list[str]]) -> dict[str, object]:
+def _kpi_table(
+    header: list[str],
+    rows: list[list[str]],
+    *,
+    period_is_full_year: bool = True,
+) -> dict[str, object]:
     """Transpose selected annual summary columns: scenarios across, KPIs down."""
     index = {name: position for position, name in enumerate(header)}
     scenario_col = index.get("scenario_name", index.get("scenario_id", 0))
@@ -289,7 +295,11 @@ def _kpi_table(header: list[str], rows: list[list[str]]) -> dict[str, object]:
                 "values": values,
                 "direction": direction,
                 "best": _best_flags(values, direction),
-                "help": _KPI_GLOSSARY.get(column, ""),
+                "help": (
+                    _KPI_GLOSSARY.get(column, "")
+                    if period_is_full_year
+                    else _KPI_CONFIGURED_PERIOD_GLOSSARY.get(column, _KPI_GLOSSARY.get(column, ""))
+                ),
                 "audit_sources": [
                     (
                         "scenario_annual_summary.csv · "
@@ -463,7 +473,7 @@ def _detection_performance(run_dir: Path) -> dict[str, object] | None:
 
 
 def _coating_service_life(run_dir: Path) -> dict[str, object] | None:
-    """Stored coating age, effects, dew temperatures, and collected water."""
+    """Stored coating traces plus transparent display-only diagnostics."""
 
     payload = _daily_scenario_columns(
         run_dir,
@@ -481,8 +491,26 @@ def _coating_service_life(run_dir: Path) -> dict[str, object] | None:
     )
     if payload is None:
         return None
+    dew_points = payload.get("dew_point_c")
+    surface_temperatures = payload.get("coated_surface_temperature_c")
+    if isinstance(dew_points, list) and isinstance(surface_temperatures, list):
+        payload["dew_margin_c"] = [
+            float(dew_point) - float(surface)
+            if isinstance(dew_point, int | float) and isinstance(surface, int | float)
+            else None
+            for dew_point, surface in zip(dew_points, surface_temperatures, strict=False)
+        ]
+    else:
+        payload["dew_margin_c"] = []
+
+    coating = _resolved_config_section(run_dir, "coating")
+    raw_physics = coating.get("physics")
+    physics = raw_physics if isinstance(raw_physics, dict) else {}
+    daytime_cooling = physics.get("daytime_cooling_fraction")
+    payload["temperature_effect_inactive"] = daytime_cooling == 0
     payload["audit_source"] = (
-        "scenario_daily_summary.csv · row scenario_name=coating · stored extension_* columns"
+        "scenario_daily_summary.csv · row scenario_name=coating · stored extension_* columns; "
+        "dew margin is displayed as stored dew point minus stored coated-surface temperature"
     )
     return payload
 
@@ -832,6 +860,33 @@ _KPI_GLOSSARY: dict[str, str] = {
     ),
 }
 
+_KPI_CONFIGURED_PERIOD_GLOSSARY: dict[str, str] = {
+    "annual_energy_loss_percent": (
+        "Energy lost to soiling and contamination, as a share of what perfectly "
+        "clean panels would have produced over the configured period."
+    ),
+    "annualized_capex_sar": (
+        "Upfront equipment and installation spend allocated using the stored service-life "
+        "assumptions for this configured-period comparison."
+    ),
+    "annual_opex_sar": "Recurring operating spend recorded for the configured period.",
+    "total_annual_cost_sar": (
+        "The stored CAPEX allocation plus operating spend for the configured period."
+    ),
+    "net_annual_benefit_sar": (
+        "Electricity revenue over the configured period minus its stored total cost. "
+        "The ranking metric: higher means the strategy pays off better."
+    ),
+    "incremental_roi_vs_baseline": (
+        "Return on investment of the mitigation relative to doing nothing over the configured "
+        "period: extra net benefit per SAR of extra cost."
+    ),
+    "effective_lcoe_sar_per_kwh": (
+        "Levelized cost of energy for the configured period: stored cost divided by delivered "
+        "energy. Lower is cheaper energy."
+    ),
+}
+
 
 def _mc_trials_series(header: list[str], rows: list[list[str]]) -> dict[str, object] | None:
     """Per-trial net benefit per scenario from monte_carlo_trials.csv (column picks)."""
@@ -1061,6 +1116,30 @@ def _weather_cache_status(config: SolarCleanConfig) -> dict[str, str]:
     }
 
 
+def _certified_winner(
+    recommendation: dict[str, object] | None,
+    reconciliation: dict[str, object] | None,
+) -> str | None:
+    """Return the sole winner only when every stored certification gate passes."""
+
+    if recommendation is None or reconciliation is None:
+        return None
+    winner = recommendation.get("winner")
+    tier = recommendation.get("recommendation_tier")
+    normalized_winner = winner.strip() if isinstance(winner, str) else ""
+    normalized_tier = tier.strip().lower() if isinstance(tier, str) else ""
+    if (
+        recommendation.get("valid") is not True
+        or recommendation.get("calculation_valid") is not True
+        or not normalized_tier
+        or normalized_tier == "exploratory"
+        or reconciliation.get("passed") is not True
+        or not normalized_winner
+    ):
+        return None
+    return normalized_winner
+
+
 def _config_cockpits(
     config_names: list[str], run_entries: list[artifacts.RunEntry]
 ) -> dict[str, dict[str, object]]:
@@ -1087,30 +1166,35 @@ def _config_cockpits(
         # A run-id prefix is a filename convention, not proof that the stored
         # inputs still match an edited configuration. Select by the same
         # immutable config fingerprint used by cross-run evidence joins.
-        last = next(
-            (
-                entry
-                for entry in run_entries
-                if entry.kind in ("compare-all-scenarios", "compare-multi-year")
-                and selected_study is not None
-                and (entry_study := _run_study(entry.path)) is not None
-                and _studies_compatible(entry_study, selected_study)
-            ),
-            None,
-        )
+        last: artifacts.RunEntry | None = None
+        last_recommendation: dict[str, object] | None = None
+        last_winner: str | None = None
+        for entry in run_entries:
+            if entry.kind != "compare-all-scenarios" or selected_study is None:
+                continue
+            entry_study = _run_study(entry.path)
+            if entry_study is None or not _studies_compatible(entry_study, selected_study):
+                continue
+            recommendation = artifacts.load_json(entry.path / "recommendation.json")
+            reconciliation = artifacts.load_json(entry.path / "reconciliation_report.json")
+            winner = _certified_winner(recommendation, reconciliation)
+            if winner is not None:
+                last = entry
+                last_recommendation = recommendation
+                last_winner = winner
+                break
         last_run: dict[str, object] | None = None
-        if last is not None:
-            recommendation = artifacts.load_json(last.path / "recommendation.json") or {}
-            margin = recommendation.get("decisive_margin_sar")
+        if last is not None and last_recommendation is not None and last_winner is not None:
+            margin = last_recommendation.get("decisive_margin_sar")
             last_run = {
                 "run_id": last.run_id,
-                "winner": last.winner,
+                "winner": last_winner,
                 "margin_sar": (
                     _format_sar(margin)
                     if isinstance(margin, int | float) and math.isfinite(float(margin))
                     else None
                 ),
-                "valid": last.valid,
+                "valid": True,
             }
         cockpits[name] = {
             "site_name": config.site.name,
@@ -1388,15 +1472,31 @@ _RUN_KIND_LABELS: dict[str, str] = {
     "fetch-weather": "Weather retrieval",
     "run-clean": "Clean production run",
     "run-baseline": "Baseline run",
+    "validate-weather": "Weather validation",
+    "validate-phase-3-5": "Phase 3.5 validation",
+    "validate-field": "Field validation",
+    "profile-full-year": "Full-year profile",
+}
+
+_TECHNICAL_RUN_KINDS = {
+    "fetch-weather",
+    "validate-weather",
+    "validate-phase-3-5",
+    "validate-field",
+    "profile-full-year",
 }
 
 
 def _comparison_summary_line(entry: artifacts.RunEntry) -> str:
-    if not entry.winner:
+    recommendation = artifacts.load_json(entry.path / "recommendation.json")
+    reconciliation = artifacts.load_json(entry.path / "reconciliation_report.json")
+    winner = _certified_winner(recommendation, reconciliation)
+    if winner is None:
         return "no certified winner"
-    text = f"winner {entry.winner}"
-    if entry.margin_sar is not None and math.isfinite(entry.margin_sar):
-        text += f" +{_format_sar(entry.margin_sar)} SAR"
+    text = f"winner {winner}"
+    margin = recommendation.get("decisive_margin_sar") if recommendation else None
+    if isinstance(margin, int | float) and math.isfinite(float(margin)):
+        text += f" +{_format_sar(margin)} SAR"
     return text
 
 
@@ -1799,7 +1899,7 @@ def _first_message(items: object) -> str | None:
     return None
 
 
-def _finding_statement(
+def _finding_statement(  # noqa: PLR0911, PLR0912
     recommendation: dict[str, object] | None,
     reconciliation: dict[str, object] | None,
     *,
@@ -1817,43 +1917,75 @@ def _finding_statement(
                 "tone": "fail",
                 "text": f"Run not certified — “{message}” ({first.get('name', 'unnamed check')}).",
             }
+    if reconciliation is not None and reconciliation.get("passed") is False:
+        return {
+            "tone": "fail",
+            "text": "Run not certified — the stored reconciliation report did not pass.",
+        }
 
-    calculation_valid = bool(
-        recommendation
-        and recommendation.get("calculation_valid", recommendation.get("valid", False))
-    )
+    calculation_valid = bool(recommendation and recommendation.get("calculation_valid") is True)
     if recommendation and calculation_valid:
         winner = recommendation.get("winner")
+        tied_winners = recommendation.get("tied_winners")
+        tied_names = (
+            [str(name).capitalize() for name in tied_winners if isinstance(name, str) and name]
+            if isinstance(tied_winners, list)
+            else []
+        )
+        period_phrase = "this year" if period_is_full_year else "the configured period"
+        if not isinstance(winner, str) or not winner:
+            if tied_names:
+                return {
+                    "tone": "neutral",
+                    "text": (
+                        f"No single certified winner — {' and '.join(tied_names)} are tied for "
+                        f"{period_phrase} within the configured ranking tolerance."
+                    ),
+                }
+            warning = _first_message(recommendation.get("warnings"))
+            text = "No certified winner — the stored recommendation has no sole winner."
+            if warning:
+                text += f" {warning}"
+            return {"tone": "warn", "text": text}
+
         snapshot = recommendation.get("kpi_snapshot")
         winner_kpis = snapshot.get(winner) if isinstance(snapshot, dict) else None
         benefit = (
             winner_kpis.get("net_annual_benefit_sar") if isinstance(winner_kpis, dict) else None
         )
         margin = recommendation.get("decisive_margin_sar")
-        raw_tier = str(recommendation.get("recommendation_tier", "legacy"))
-        raw_valid = recommendation.get("valid")
-        recommendation_accepted = raw_tier != "exploratory" and (
-            bool(raw_valid) if raw_valid is not None else raw_tier == "legacy"
-        )
-        period_phrase = "this year" if period_is_full_year else "the configured period"
-        if not recommendation_accepted:
+        raw_tier = recommendation.get("recommendation_tier")
+        tier = raw_tier if isinstance(raw_tier, str) else ""
+        certified_winner = _certified_winner(recommendation, reconciliation)
+        if certified_winner is None:
             warning = _first_message(recommendation.get("warnings"))
-            text = (
-                f"Exploratory result only — {str(winner).capitalize()} ranks first for "
-                f"{period_phrase}, but no certified winner was accepted."
-            )
+            if reconciliation is None:
+                text = (
+                    f"No certified winner — {winner.capitalize()} ranks first for "
+                    f"{period_phrase}, but the reconciliation report is missing or unreadable."
+                )
+            elif recommendation.get("valid") is False or tier.strip().lower() == "exploratory":
+                text = (
+                    f"Exploratory result only — {winner.capitalize()} ranks first for "
+                    f"{period_phrase}, but no certified winner was accepted."
+                )
+            else:
+                text = (
+                    f"No certified winner — {winner.capitalize()} ranks first for "
+                    f"{period_phrase}, but required certification fields are incomplete."
+                )
             if warning:
                 text += f" {warning}"
             return {"tone": "warn", "text": text}
 
-        parts = [f"{str(winner).capitalize()} wins {period_phrase}"]
+        parts = [f"{certified_winner.capitalize()} wins {period_phrase}"]
         if isinstance(benefit, int | float) and math.isfinite(float(benefit)):
             parts.append(f"net benefit {_format_sar(benefit)} SAR")
         if isinstance(margin, int | float) and math.isfinite(float(margin)):
             parts.append(f"a {_format_sar(margin)} SAR margin over the runner-up")
-        tier = raw_tier.replace("_", "-")
-        if tier != "legacy":
-            parts.append(tier)
+        display_tier = tier.replace("_", "-")
+        if display_tier:
+            parts.append(display_tier)
         if isinstance(checks, list):
             parts.append(f"all {len(checks)} checks passed")
         return {"tone": "pass", "text": " — ".join([parts[0], ", ".join(parts[1:])]) + "."}
@@ -1994,10 +2126,13 @@ _RUN_CARD_RESULT_ARTIFACTS = {
     "sensitivity-oneway": "sensitivity_oneway_summary.json",
     "sensitivity-winner-map": "sensitivity_twoway_summary.json",
     "break-even": "breakeven_report.json",
+    "validate-weather": "phase35_weather_report.json",
+    "validate-phase-3-5": "phase35_summary.json",
+    "validate-field": "field_validation_report.json",
 }
 
 
-def _run_card_status(run: artifacts.RunEntry) -> dict[str, str]:  # noqa: PLR0911
+def _run_card_status(run: artifacts.RunEntry) -> dict[str, str]:  # noqa: PLR0911, PLR0912
     """Describe stored result state without confusing it with process failure.
 
     A completed comparison can be internally consistent yet intentionally
@@ -2017,13 +2152,25 @@ def _run_card_status(run: artifacts.RunEntry) -> dict[str, str]:  # noqa: PLR091
 
         reconciliation = artifacts.load_json(run.path / "reconciliation_report.json")
         raw_valid = recommendation.get("valid")
-        raw_calculation_valid = recommendation.get("calculation_valid", raw_valid)
+        raw_calculation_valid = recommendation.get("calculation_valid")
         winner = recommendation.get("winner")
-        tier = str(recommendation.get("recommendation_tier") or "legacy").lower()
+        raw_tier = recommendation.get("recommendation_tier")
+        tier = raw_tier.strip().lower() if isinstance(raw_tier, str) else ""
 
-        failed_reconciliation = reconciliation is not None and (
-            reconciliation.get("passed") is False
-        )
+        if reconciliation is None:
+            return {
+                "status_code": "incomplete",
+                "status_label": "Incomplete",
+                "status_detail": "Expected reconciliation_report.json is missing or unreadable.",
+            }
+        if not isinstance(reconciliation.get("passed"), bool):
+            return {
+                "status_code": "incomplete",
+                "status_label": "Incomplete",
+                "status_detail": "The reconciliation report is missing its required verdict.",
+            }
+
+        failed_reconciliation = reconciliation.get("passed") is False
         explicitly_not_accepted = (
             raw_valid is False or raw_calculation_valid is False or tier == "exploratory"
         )
@@ -2057,9 +2204,8 @@ def _run_card_status(run: artifacts.RunEntry) -> dict[str, str]:  # noqa: PLR091
         evidence_complete = (
             isinstance(raw_valid, bool)
             and isinstance(raw_calculation_valid, bool)
-            and isinstance(winner, str)
-            and bool(winner)
-            and (reconciliation is None or isinstance(reconciliation.get("passed"), bool))
+            and isinstance(raw_tier, str)
+            and bool(raw_tier.strip())
         )
         if not evidence_complete:
             return {
@@ -2067,11 +2213,22 @@ def _run_card_status(run: artifacts.RunEntry) -> dict[str, str]:  # noqa: PLR091
                 "status_label": "Incomplete",
                 "status_detail": "The stored recommendation is missing required decision fields.",
             }
-        if (
-            raw_valid
-            and raw_calculation_valid
-            and (reconciliation is None or reconciliation.get("passed") is True)
-        ):
+        if not isinstance(winner, str) or not winner:
+            tied_winners = recommendation.get("tied_winners")
+            if isinstance(tied_winners, list) and tied_winners:
+                return {
+                    "status_code": "not_certified",
+                    "status_label": "No single winner",
+                    "status_detail": (
+                        "Top scenarios are tied within the configured ranking tolerance."
+                    ),
+                }
+            return {
+                "status_code": "incomplete",
+                "status_label": "Incomplete",
+                "status_detail": "The stored recommendation is missing its sole-winner field.",
+            }
+        if _certified_winner(recommendation, reconciliation) is not None:
             return {
                 "status_code": "certified",
                 "status_label": "Certified",
@@ -2146,7 +2303,8 @@ def _run_cards(
                 "new_study": study["key"] != last_key,
                 "provenance": (
                     "test"
-                    if run.run_id.lower().startswith(("test-", "offline-fixture-"))
+                    if run.kind in _TECHNICAL_RUN_KINDS
+                    or run.run_id.lower().startswith(("test-", "fixture-", "offline-fixture-"))
                     else "study"
                 ),
                 **status,
@@ -2171,12 +2329,18 @@ def _dossier_comparison(entry: artifacts.RunEntry | None) -> dict[str, object] |
     recommendation = artifacts.load_json(entry.path / "recommendation.json")
     if recommendation is None:
         return None
+    reconciliation = artifacts.load_json(entry.path / "reconciliation_report.json")
+    winner = _certified_winner(recommendation, reconciliation)
     return {
         **_dossier_run_fields(entry),
-        "winner": recommendation.get("winner"),
-        "margin_sar": recommendation.get("decisive_margin_sar"),
+        "winner": winner,
+        "margin_sar": recommendation.get("decisive_margin_sar") if winner else None,
         "recommendation_tier": recommendation.get("recommendation_tier"),
-        "calculation_valid": recommendation.get("calculation_valid", recommendation.get("valid")),
+        "calculation_valid": bool(
+            recommendation.get("calculation_valid") is True
+            and reconciliation is not None
+            and reconciliation.get("passed") is True
+        ),
         "audit_source": "recommendation.json · stored winner and decisive_margin_sar",
     }
 
@@ -2443,6 +2607,7 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
         validation_status = (
             raw_validation_status if isinstance(raw_validation_status, dict) else None
         )
+        certified_winner = _certified_winner(recommendation, reconciliation)
         context.update(
             {
                 "ranking": ranking,
@@ -2453,6 +2618,7 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
                 "calibration_priority": _calibration_priority(run_id, run_dir, validation_status),
                 "headline": _headline_cards(
                     recommendation,
+                    reconciliation,
                     period_is_full_year=bool(context["period_is_full_year"]),
                 ),
                 "finding": _finding_statement(
@@ -2460,17 +2626,8 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
                     reconciliation,
                     period_is_full_year=bool(context["period_is_full_year"]),
                 ),
-                "document_status": (
-                    "VERIFIED"
-                    if reconciliation
-                    and reconciliation.get("passed")
-                    and recommendation
-                    and recommendation.get("valid")
-                    and recommendation.get("recommendation_tier") != "exploratory"
-                    else "EXPLORATORY"
-                    if reconciliation and reconciliation.get("passed")
-                    else "HOLD"
-                ),
+                "result_certified": certified_winner is not None,
+                "document_status": "VERIFIED" if certified_winner is not None else "HOLD",
                 "daily_energy": artifacts.daily_energy_series(run_dir),
                 "daily_clean_reference": artifacts.daily_clean_reference_series(run_dir),
                 "daily_rainfall": artifacts.daily_rainfall_series(run_dir),
@@ -2496,7 +2653,11 @@ def run_detail(request: Request, run_id: str) -> HTMLResponse:
         if annual_path.is_file():
             header, rows = artifacts.read_csv_rows(annual_path)
             context["annual_summary"] = {"header": header, "rows": rows}
-            context["kpi_table"] = _kpi_table(header, rows)
+            context["kpi_table"] = _kpi_table(
+                header,
+                rows,
+                period_is_full_year=bool(context["period_is_full_year"]),
+            )
             context["water_balance"] = _water_balance_card(header, rows)
             context["financial_ranking"] = _financial_ranking(
                 header,
@@ -2795,19 +2956,19 @@ class LaunchRequest(BaseModel):
     config: str = "default.yaml"
     start_date: date | None = None
     end_date: date | None = None
-    trials: int = 25
-    base_seed: int | None = None
-    steps: int = 5
-    parameters: list[str] | None = None
+    trials: int = Field(default=25, ge=2, le=500)
+    base_seed: int | None = Field(default=None, ge=0, le=2**32 - 1)
+    steps: int = Field(default=5, ge=3, le=21)
+    parameters: list[str] | None = Field(default=None, max_length=100)
     parameter_a: str | None = None
     parameter_b: str | None = None
-    grid_steps: int = 5
+    grid_steps: int = Field(default=5, ge=3, le=15)
     parameter: str | None = None
     scenario_a: str = "coating"
     scenario_b: str = "baseline"
 
     @model_validator(mode="after")
-    def validate_period_override(self) -> LaunchRequest:
+    def validate_launch_options(self) -> LaunchRequest:
         if (self.start_date is None) != (self.end_date is None):
             raise ValueError("start_date and end_date must be supplied together")
         if (
@@ -2835,28 +2996,23 @@ def _load_run_config(config_path: Path, options: LaunchRequest) -> SolarCleanCon
 
 def _headline_cards(
     recommendation: dict[str, object] | None,
+    reconciliation: dict[str, object] | None,
     *,
     period_is_full_year: bool = True,
 ) -> list[dict[str, str]] | None:
-    """Top-of-page cards from stored recommendation values (formatting only)."""
-    if not recommendation or not recommendation.get(
-        "calculation_valid", recommendation.get("valid", False)
-    ):
-        return None
-    winner = recommendation.get("winner")
-    if not isinstance(winner, str):
+    """Top-of-page cards for a sole winner that passed every certification gate."""
+    winner = _certified_winner(recommendation, reconciliation)
+    if recommendation is None or winner is None:
         return None
     snapshot = recommendation.get("kpi_snapshot")
     winner_kpis = snapshot.get(winner) if isinstance(snapshot, dict) else None
     if not isinstance(winner_kpis, dict):
         winner_kpis = {}
     raw_tier = recommendation.get("recommendation_tier")
-    tier = str(raw_tier) if raw_tier is not None else "legacy"
+    tier = str(raw_tier) if raw_tier is not None else ""
     winner_label = {
         "decision_grade": "Decision-grade winner",
         "calibrated": "Calibrated winner",
-        "exploratory": "Exploratory winner",
-        "legacy": "Recommended strategy",
     }.get(tier, "Winner under assumptions")
     cards = [
         {
@@ -2987,32 +3143,61 @@ def _make_work(options: LaunchRequest, config_path: Path) -> Callable[[Job], Pat
     return work
 
 
-def _submit_if_idle(kind: str, config_name: str, work: Callable[[Job], Path]) -> Job:
-    """Atomically reject an active run or enqueue this one."""
-    try:
-        return jobs.submit(kind, config_name, work, require_idle=True)
-    except ActiveJobError as exc:
-        busy = exc.job
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"A {busy.kind} run is already {busy.status} (session {busy.job_id}). "
-                "Wait for it to finish or delete its session, then launch again."
-            ),
-        ) from exc
+def _enqueue_run(kind: str, config_name: str, work: Callable[[Job], Path]) -> Job:
+    """Queue an analysis; the registry executes analyses one at a time."""
+    return jobs.submit(kind, config_name, work)
 
 
 @app.post("/api/runs")
 def launch_run(body: LaunchRequest) -> JSONResponse:
     if body.kind not in JOB_KINDS:
         raise HTTPException(status_code=400, detail=f"kind must be one of {JOB_KINDS}")
-    if body.kind == "sensitivity-oneway" and not body.parameters:
+    if body.kind == "sensitivity-oneway" and (
+        not body.parameters or any(not parameter.strip() for parameter in body.parameters)
+    ):
         raise HTTPException(
             status_code=400,
             detail="Choose at least one parameter for one-way sensitivity.",
         )
+    if body.kind == "sensitivity-oneway" and body.parameters is not None:
+        normalized_parameters = [parameter.strip() for parameter in body.parameters]
+        if len(set(normalized_parameters)) != len(normalized_parameters):
+            raise HTTPException(
+                status_code=400,
+                detail="Choose each one-way sensitivity parameter only once.",
+            )
+    if body.kind == "winner-map":
+        if (
+            not body.parameter_a
+            or not body.parameter_a.strip()
+            or not body.parameter_b
+            or not body.parameter_b.strip()
+        ):
+            raise HTTPException(status_code=400, detail="Winner map needs both parameter names.")
+        if body.parameter_a.strip() == body.parameter_b.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Pick two different parameters for the winner map.",
+            )
+    if body.kind == "break-even":
+        if not body.parameter or not body.parameter.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Break-even needs a registry parameter name.",
+            )
+        allowed_scenarios = {"baseline", "reactive", "coating"}
+        if body.scenario_a not in allowed_scenarios or body.scenario_b not in allowed_scenarios:
+            raise HTTPException(
+                status_code=400,
+                detail="Break-even scenarios must be baseline, reactive, or coating.",
+            )
+        if body.scenario_a == body.scenario_b:
+            raise HTTPException(
+                status_code=400,
+                detail="Pick two different scenarios for the break-even search.",
+            )
     config_path = _config_path(body.config)
-    job = _submit_if_idle(body.kind, body.config, _make_work(body, config_path))
+    job = _enqueue_run(body.kind, body.config, _make_work(body, config_path))
     return JSONResponse(job.to_record(), status_code=202)
 
 
@@ -3099,7 +3284,7 @@ def rerun(run_id: str) -> JSONResponse:
             status_code=409, detail="Run has no config_resolved.yaml to re-run from."
         )
     options = _rerun_options(kind, run_dir)
-    job = _submit_if_idle(kind, f"re-run of {run_id}", _make_work(options, config_path))
+    job = _enqueue_run(kind, f"re-run of {run_id}", _make_work(options, config_path))
     return JSONResponse(job.to_record(), status_code=202)
 
 
@@ -3204,26 +3389,31 @@ def preview_artifact(run_id: str, name: str) -> JSONResponse:
         raise HTTPException(status_code=404, detail=f"No artifact {name} in run {run_id}")
     suffix = path.suffix.lower()
     download_url = f"/api/runs/{run_id}/artifact/{name}"
+    size_bytes = path.stat().st_size
     payload: dict[str, object] = {
         "name": name,
-        "size_bytes": path.stat().st_size,
+        "size_bytes": size_bytes,
         "download_url": download_url,
         "audit_source": name,
     }
     if suffix == ".csv":
-        header, rows = artifacts.read_csv_rows(path)
-        shown = rows[:_ARTIFACT_PREVIEW_ROWS]
+        header, shown, total_rows = artifacts.read_csv_preview(path, limit=_ARTIFACT_PREVIEW_ROWS)
         payload.update(
             {
                 "kind": "csv",
                 "header": header,
                 "rows": shown,
                 "shown_rows": len(shown),
-                "total_rows": len(rows),
-                "truncated": len(shown) < len(rows),
+                "total_rows": total_rows,
+                "truncated": len(shown) < total_rows,
             }
         )
     elif suffix == ".json":
+        if size_bytes > _ARTIFACT_JSON_PREVIEW_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail="JSON artifact is too large for an in-page preview; download it instead.",
+            )
         json_content = artifacts.load_json(path)
         if json_content is None:
             raise HTTPException(

@@ -216,6 +216,7 @@
 {% if mc_summary or oneway_tornado or breakeven_chart %}
 <script src="/static/chart.umd.js?v=20260714b"></script>
 <script>
+  window.solarcleanPeriodIsFullYear = {{ period_is_full_year | tojson }};
   window.solarcleanMonteCarlo = {{ mc_summary | tojson if mc_summary else 'null' }};
   window.solarcleanMcTrials = {{ mc_trials | tojson if mc_trials else 'null' }};
   window.solarcleanTornado = {{ oneway_tornado | tojson if oneway_tornado else 'null' }};

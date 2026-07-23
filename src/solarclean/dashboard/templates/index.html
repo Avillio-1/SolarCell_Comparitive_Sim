@@ -184,7 +184,7 @@
     </div>
     <div class="field-row kind-opts" data-kind="break-even" hidden>
       <div class="wide param-field">
-        <span class="param-field-label">Registry parameter <small class="field-hint">The assumption swept until the two strategies' net annual benefits are equal.</small></span>
+        <span class="param-field-label">Registry parameter <small class="field-hint">The assumption swept until the two strategies' net benefits over the configured period are equal.</small></span>
         <select id="be-parameter" class="param-native" aria-label="Break-even registry parameter">
           {% for p in parameters %}
           <option value="{{ p.name }}" title="registry range {{ p.low }} – {{ p.central }} – {{ p.high }} {{ p.unit }}">{{ p.name }} ({{ p.unit }})</option>
@@ -196,14 +196,15 @@
         <select id="scenario-a"><option>coating</option><option>reactive</option><option>baseline</option></select></label>
       <label><span>Scenario B</span>
         <select id="scenario-b"><option>baseline</option><option>reactive</option><option>coating</option></select></label>
-      <small class="field-hint wide">Scenario A and B are compared to find where their net annual
-        benefits are equal. Baseline has no mitigation; Reactive detects then cleans; Coating uses
+      <small class="field-hint wide">Scenario A and B are compared to find where their net benefits
+        over the configured period are equal. Baseline has no mitigation; Reactive detects then cleans; Coating uses
         coating-based mitigation.</small>
     </div>
 
     <div class="launch-footer">
       <div class="launch-expectation"><strong>Before you start</strong>
-        <span>Runs execute one at a time; the new run appears below with live progress and saves a reproducible result package.</span>
+        <span>Runs execute one at a time. If one is active, your new run waits in the queue; it
+          appears below immediately and saves a reproducible result package when complete.</span>
         <span id="launch-history-expectation" class="launch-history-expectation"
               data-audit-source="outputs/.dashboard_jobs.json · finished sessions"
               aria-live="polite">No prior session for this question and configuration.</span>

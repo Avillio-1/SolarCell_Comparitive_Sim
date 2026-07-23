@@ -7,9 +7,6 @@
 {% set period_heading = 'Annual' if period_is_full_year else 'Configured-period' %}
 {% set period_noun = 'year' if period_is_full_year else 'configured period' %}
 {% set period_value_unit = 'SAR/year' if period_is_full_year else 'SAR/configured period' %}
-{% set result_certified = recommendation and recommendation.valid and
-  recommendation.recommendation_tier != 'exploratory' and
-  (not reconciliation or reconciliation.passed) %}
 
 <div class="document-head">
   <div class="document-ident">
@@ -248,20 +245,23 @@
 {% if kpi_table %}
 <section class="panel" id="annual-kpis">
   <h2>{{ period_heading }} KPIs</h2>
-  <table class="data-table kpi-table">
-    <thead><tr><th scope="col"><span class="visually-hidden">KPI</span></th>{% for s in kpi_table.scenarios %}<th class="num" scope="col">{{ strategy_label(s) }}</th>{% endfor %}</tr></thead>
-    <tbody>
-      {% for row in kpi_table.rows %}
-      {% set display_label = row.label if period_is_full_year else row.label | replace('Annual ', 'Configured-period ') | replace('annual ', 'configured-period ') %}
-      <tr><th scope="row"{% if row.help %} class="has-help" tabindex="0" data-pop="{{ row.help }}"{% endif %}>{{ display_label }}</th>
-        {% for v in row["values"] %}<td class="num mono{{ ' best-cell' if result_certified and row.best[loop.index0] }}"
-          data-kpi-value="{{ v }}"
-          data-audit-source="{{ row.audit_sources[loop.index0] }}"
-          data-audit-detail="Stored value shown with display rounding; download the CSV for full precision.">{% if result_certified and row.best[loop.index0] %}<span class="best-mark" aria-hidden="true">▲</span><span class="visually-hidden">best in row: </span>{% endif %}{{ v | display_number }}</td>{% endfor %}
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
+  <div class="scroll-x kpi-table-scroll" tabindex="0" role="region"
+       aria-label="{{ period_heading }} KPI comparison by strategy">
+    <table class="data-table kpi-table">
+      <thead><tr><th scope="col"><span class="visually-hidden">KPI</span></th>{% for s in kpi_table.scenarios %}<th class="num" scope="col">{{ strategy_label(s) }}</th>{% endfor %}</tr></thead>
+      <tbody>
+        {% for row in kpi_table.rows %}
+        {% set display_label = row.label if period_is_full_year else row.label | replace('Annual ', 'Configured-period ') | replace('annual ', 'configured-period ') %}
+        <tr><th scope="row"{% if row.help %} class="has-help" tabindex="0" data-pop="{{ row.help }}"{% endif %}>{{ display_label }}</th>
+          {% for v in row["values"] %}<td class="num mono{{ ' best-cell' if result_certified and row.best[loop.index0] }}"
+            data-kpi-value="{{ v }}"
+            data-audit-source="{{ row.audit_sources[loop.index0] }}"
+            data-audit-detail="Stored value shown with display rounding; download the CSV for full precision.">{% if result_certified and row.best[loop.index0] %}<span class="best-mark" aria-hidden="true">▲</span><span class="visually-hidden">best in row: </span>{% endif %}{{ v | display_number }}</td>{% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
   <details class="assumption-block">
     <summary>What these metrics mean</summary>
     <ul class="glossary">
@@ -450,8 +450,15 @@
     </figure>
     <figure class="record-chart record-chart-wide"
             data-audit-source="scenario_daily_summary.csv · coating optical, temperature, and cleanliness effect kWh columns">
-      <figcaption><strong>Stored energy-effect decomposition</strong>
-        <span>Optical, temperature, and cleanliness effects · kWh/day</span></figcaption>
+      <figcaption>
+        <span class="record-chart-title">
+          <strong>Stored energy-effect decomposition</strong>
+          <button type="button" class="chart-explain"
+                  data-pop="Optical shows the effect of light transmission, temperature shows the effect of modeled panel cooling, and cleanliness shows the effect of dust and other surface contamination."
+                  aria-label="Explain the coating energy-effect chart">How to read</button>
+        </span>
+        <span>Optical, temperature, and cleanliness effects · kWh/day</span>
+      </figcaption>
       <div class="record-chart-frame">
         <canvas id="coating-effects-chart" height="92" role="img"
                 aria-label="Date-aligned chart of the stored optical, temperature, and cleanliness coating energy effects"
@@ -459,13 +466,20 @@
       </div>
     </figure>
     <figure class="record-chart record-chart-wide"
-            data-audit-source="scenario_daily_summary.csv · coating dew point, coated surface temperature, and collected water columns">
-      <figcaption><strong>Dew margin and collection</strong>
-        <span>Stored dew point and coated-surface temperature; collection remains a stored trace</span></figcaption>
+            data-audit-source="scenario_daily_summary.csv · stored coating dew point minus coated-surface temperature; modeled harvested-dew column">
+      <figcaption>
+        <span class="record-chart-title">
+          <strong>Dew margin and modeled harvest</strong>
+          <button type="button" class="chart-explain"
+                  data-pop="Dew margin is dew point minus surface temperature. A positive margin can support dew when the humidity gate is met. The green line is modeled harvested dew; rainfall is not included."
+                  aria-label="Explain the dew-margin and modeled-harvest chart">How to read</button>
+        </span>
+        <span>Derived dew margin · °C; modeled harvested dew · L/day</span>
+      </figcaption>
       <div class="record-chart-frame">
         <canvas id="coating-dew-margin-chart" height="92" role="img"
-                aria-label="Date-aligned track of stored dew point, coated-surface temperature, and actually collected water"
-                data-audit-source="scenario_daily_summary.csv · coating nightly dew and collection columns"></canvas>
+                aria-label="Date-aligned track of derived dew margin and modeled harvested dew"
+                data-audit-source="scenario_daily_summary.csv · stored dew point minus coated-surface temperature; modeled harvested-dew column"></canvas>
       </div>
     </figure>
   </div>
@@ -521,7 +535,15 @@
   <div class="detection-chart-grid">
     <figure class="record-chart"
             data-audit-source="scenario_daily_summary.csv · reactive missed contamination energy impact + recovered loss kWh">
-      <figcaption><strong>Missed vs recovered energy</strong><span>kWh/day · stored daily tracks</span></figcaption>
+      <figcaption>
+        <span class="record-chart-title">
+          <strong>Missed vs recovered energy</strong>
+          <button type="button" class="chart-explain"
+                  data-pop="Missed energy estimates loss from contamination the inspection process did not catch. Recovered energy estimates loss restored by cleaning actions. Lower missed and higher recovered are better."
+                  aria-label="Explain the missed-versus-recovered energy chart">How to read</button>
+        </span>
+        <span>kWh/day · stored daily tracks</span>
+      </figcaption>
       <div class="record-chart-frame">
         <canvas id="detection-energy-chart" height="94" role="img"
                 aria-label="Date-aligned chart of stored missed contamination impact and recovered loss energy"
@@ -530,8 +552,15 @@
     </figure>
     <figure class="record-chart"
             data-audit-source="scenario_daily_summary.csv · reactive queue length, backlog length, and weather cancelled flight">
-      <figcaption><strong>Queue and inspection backlog</strong>
-        <span>Daily counts · ticks mark stored weather-cancelled flights</span></figcaption>
+      <figcaption>
+        <span class="record-chart-title">
+          <strong>Queue and inspection backlog</strong>
+          <button type="button" class="chart-explain"
+                  data-pop="Queue is detected cleaning work waiting to be completed. Inspection backlog is scheduled inspection work that remains overdue. Diamond marks show flights cancelled by weather."
+                  aria-label="Explain the queue-and-inspection-backlog chart">How to read</button>
+        </span>
+        <span>Daily counts · diamonds mark stored weather-cancelled flights</span>
+      </figcaption>
       <div class="record-chart-frame">
         <canvas id="detection-queue-chart" height="94" role="img"
                 aria-label="Date-aligned chart of reactive queue and inspection backlog with weather-cancellation ticks"
@@ -549,7 +578,14 @@
 <section class="panel energy-explorer" id="energy-explorer" data-run-id="{{ run_id }}">
   <div class="energy-explorer-heading">
     <div>
-      <h2>Daily explorer</h2>
+      <div class="energy-explorer-title-row">
+        <h2>Daily explorer</h2>
+        <button type="button" class="explorer-guide-toggle" id="explorer-guide-toggle"
+                aria-expanded="false" aria-controls="explorer-guide">
+          <span class="explorer-guide-unread" id="explorer-guide-unread" aria-hidden="true"></span>
+          Technical guide
+        </button>
+      </div>
       <p>One instrument for the {{ period_noun }}: pick a metric, focus one strategy or compare all three.
         Hover to explore; click a date to keep its explanation open.</p>
     </div>
@@ -595,6 +631,150 @@
     </div>
   </div>
 
+  <section class="explorer-guide" id="explorer-guide" role="region"
+           aria-labelledby="explorer-guide-title" tabindex="-1" hidden>
+    <div class="explorer-guide-heading">
+      <div>
+        <span class="eyebrow">Signal + units decoder</span>
+        <h3 id="explorer-guide-title">Technical reading key</h3>
+        <p>Definitions, reference equations, and physical context for the stored daily record.</p>
+      </div>
+      <button type="button" class="explorer-guide-close" id="explorer-guide-close"
+              aria-label="Close the technical guide">Close</button>
+    </div>
+
+    <div class="explorer-guide-body">
+      <div class="explorer-guide-metrics">
+        <article class="explorer-guide-active" aria-live="polite" aria-atomic="true">
+          <div class="explorer-guide-active-heading">
+            <span>Active metric</span>
+            <span class="explorer-guide-unit" id="explorer-guide-active-unit">kWh/day</span>
+          </div>
+          <h4 id="explorer-guide-active-name">Energy</h4>
+          <p id="explorer-guide-active-definition">Modeled AC energy delivered by the selected
+            scenario after its contamination and physical effects.</p>
+          <code id="explorer-guide-active-formula">E<sub>actual,d</sub></code>
+          <p class="explorer-guide-reading" id="explorer-guide-active-reading">Compare scenarios
+            on the same date; the clean reference separates weather-driven potential from
+            scenario effects.</p>
+          <span class="explorer-guide-source" id="explorer-guide-active-source">stored field ·
+            actual_energy_kwh</span>
+        </article>
+
+        <section class="explorer-guide-reference" aria-labelledby="explorer-guide-reference-title">
+          <div class="explorer-guide-section-heading">
+            <span>Reference frame</span>
+            <h4 id="explorer-guide-reference-title">Three relationships that control the chart</h4>
+          </div>
+          <dl class="explorer-guide-equations">
+            <div>
+              <dt><code>E<sub>clean,d</sub></code></dt>
+              <dd>Same-day clean AC output under the same modeled irradiance and cell
+                temperature, before scenario contamination or operations.</dd>
+            </div>
+            <div>
+              <dt><code>L<sub>d</sub> = E<sub>clean,d</sub> − E<sub>actual,d</sub></code></dt>
+              <dd>Positive is below the clean reference; zero matches it. A negative value means
+                an enabled physical gain produced above-reference output.</dd>
+            </div>
+            <div>
+              <dt><code>G<sub>D</sub> = Σ<sub>d≤D</sub>(E<sub>scenario,d</sub> − E<sub>baseline,d</sub>)</code></dt>
+              <dd>Cumulative gain is a running balance. Its slope is the daily advantage; its
+                level is the advantage accrued through date <em>D</em>.</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section class="explorer-guide-dictionary" aria-labelledby="explorer-guide-metric-title">
+          <div class="explorer-guide-section-heading">
+            <span>Metric dictionary</span>
+            <h4 id="explorer-guide-metric-title">What each selector actually represents</h4>
+          </div>
+          <dl class="explorer-guide-terms">
+            <div><dt>Energy <span>kWh/day</span></dt>
+              <dd>Delivered modeled AC energy—not sunlight and not power at an instant.</dd></div>
+            <div><dt>Loss <span>kWh/day</span></dt>
+              <dd>The exact clean-reference gap, not only a dust-loss estimate.</dd></div>
+            <div><dt>Cleanliness <span>0–1</span></dt>
+              <dd>Scenario-specific generation-time cleanliness state; 1 is clean.
+                Baseline/reactive plot dust transmissivity; coating plots
+                dust × (1 − bird-loss fraction).</dd></div>
+            <div><dt>Cumulative gain <span>kWh</span></dt>
+              <dd>Running scenario-minus-baseline energy. A falling segment means the scenario
+                surrendered some advantage that day.</dd></div>
+            <div><dt>Bird loss <span>fraction</span></dt>
+              <dd>Modeled energy penalty from bird coverage; 0.01 means 1% loss, not 1% area.</dd></div>
+            <div><dt>Dew harvest <span>L/day</span></dt>
+              <dd>Modeled whole-farm collected condensate after collection efficiencies—not
+                rainfall or measured tank inflow.</dd></div>
+            <div><dt>Queue <span>cohorts</span></dt>
+              <dd>Detected cohort work items awaiting reactive cleaning; it is not panel count
+                or inspection backlog.</dd></div>
+          </dl>
+        </section>
+      </div>
+
+      <section class="explorer-guide-context" aria-labelledby="explorer-guide-context-title">
+        <div class="explorer-guide-section-heading">
+          <span>Physical context</span>
+          <h4 id="explorer-guide-context-title">Decode the aligned tracks</h4>
+        </div>
+        <dl class="explorer-guide-signals">
+          <div>
+            <dt><span class="explorer-guide-signal">GHI</span>
+              <strong>Global Horizontal Irradiance</strong></dt>
+            <dd>The solar power density received by a horizontal plane. The daily track plots its
+              time-integral—technically irradiation—in <code>kWh/m²/day</code>. The hourly
+              detail uses <code>W/m²</code>. High GHI raises available energy, but does not
+              determine output by itself.</dd>
+          </div>
+          <div>
+            <dt><span class="explorer-guide-signal">T</span>
+              <strong>Ambient / module-cell</strong></dt>
+            <dd>Daylight means, where daylight is GHI &gt; 20 W/m². Cell temperature is the PV
+              operating temperature used in the clean model; hotter cells generally reduce
+              conversion efficiency through the module temperature coefficient.</dd>
+          </div>
+          <div>
+            <dt><span class="explorer-guide-signal">RH</span>
+              <strong>Relative humidity</strong></dt>
+            <dd>The track is the daily mean. Dew eligibility is evaluated hourly and additionally
+              requires RH above its configured gate and surface temperature at or below dew
+              point—so the daily mean is context, not the collection trigger.</dd>
+          </div>
+          <div>
+            <dt><span class="explorer-guide-signal">P</span>
+              <strong>Rainfall</strong></dt>
+            <dd>Daily precipitation depth; 1 mm equals 1 L/m² on a horizontal surface. Rain may
+              trigger natural cleaning, but it is physically separate from modeled dew harvest.</dd>
+          </div>
+          <div>
+            <dt><span class="explorer-guide-signal">EV</span>
+              <strong>Stored events</strong></dt>
+            <dd>Recorded contamination, inspection, cleaning, coating, and rain markers. Alignment
+              identifies temporal coincidence; it does not by itself establish causation.</dd>
+          </div>
+        </dl>
+
+        <div class="explorer-guide-unit-key" aria-label="Unit key">
+          <div><code>kWh</code><span>energy over an interval</span></div>
+          <div><code>W/m²</code><span>instantaneous solar power density</span></div>
+          <div><code>kWh/m²/day</code><span>daily solar exposure</span></div>
+        </div>
+      </section>
+    </div>
+
+    <div class="explorer-guide-boundary">
+      <span class="explorer-guide-boundary-label">Resolution boundary</span>
+      <p>Scenario energy, loss, and state are stored daily. The hourly drill-down contains the
+        shared weather and clean reference only; it must not be read as hourly scenario output.</p>
+    </div>
+    <div class="explorer-guide-actions">
+      <p>The active-metric card updates with the selected metric while this guide is open.</p>
+      <button type="button" class="primary" id="explorer-guide-done">Close technical guide</button>
+    </div>
+  </section>
+
   <div class="explorer-fingerprint" id="explorer-scrubber">
     <span class="instrument-label">{{ period_heading }} fingerprint · GHI / dust / cleaning events —
       drag across it to zoom the explorer, click to select a day</span>
@@ -611,7 +791,8 @@
       </div>
       <p class="hint chart-key-hint">Keyboard: focus the chart, then ←/→ steps one day (Shift ←/→ steps a week), Home/End jumps to the period's ends.</p>
 
-      <div class="context-tracks" aria-label="Weather and event context aligned by date">
+      <div class="context-tracks" aria-label="Weather and event context aligned by date"
+           tabindex="-1">
         {% if daily_weather %}
         <div class="context-track">
           <div class="context-track-label"><strong>GHI</strong><span>kWh/m²/day</span></div>
@@ -659,7 +840,7 @@
 
       <table class="selected-scenario-table">
         <thead><tr><th>Scenario</th><th>Actual</th><th>Loss</th><th>Cleanliness</th>
-          <th>Bird loss</th><th>Dew water</th><th>Queue</th></tr></thead>
+          <th>Bird loss</th><th>Modeled dew</th><th>Queue</th></tr></thead>
         <tbody>
           {% for scenario in ["baseline", "reactive", "coating"] %}
           <tr data-selected-scenario="{{ scenario }}">
@@ -902,9 +1083,11 @@
       effectiveness: {dates: {{ coating_service_life.dates | tojson }}, values: {{ coating_service_life.effectiveness_fraction | tojson }}},
       opticalEffect: {dates: {{ coating_service_life.dates | tojson }}, values: {{ coating_service_life.optical_effect_kwh | tojson }}},
       temperatureEffect: {dates: {{ coating_service_life.dates | tojson }}, values: {{ coating_service_life.temperature_effect_kwh | tojson }}},
+      temperatureEffectInactive: {{ coating_service_life.temperature_effect_inactive | tojson }},
       cleanlinessEffect: {dates: {{ coating_service_life.dates | tojson }}, values: {{ coating_service_life.cleanliness_effect_kwh | tojson }}},
       dewPoint: {dates: {{ coating_service_life.dates | tojson }}, values: {{ coating_service_life.dew_point_c | tojson }}},
       surfaceTemperature: {dates: {{ coating_service_life.dates | tojson }}, values: {{ coating_service_life.coated_surface_temperature_c | tojson }}},
+      dewMargin: {dates: {{ coating_service_life.dates | tojson }}, values: {{ coating_service_life.dew_margin_c | tojson }}},
       collectedWater: {dates: {{ coating_service_life.dates | tojson }}, values: {{ coating_service_life.actually_collected_water_liters | tojson }}}
     }{% else %}null{% endif %}
   };

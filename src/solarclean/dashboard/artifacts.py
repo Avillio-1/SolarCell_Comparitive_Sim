@@ -55,6 +55,7 @@ def _detect_kind(run_id: str) -> str:
         "fetch-weather",
         "run-clean",
         "run-baseline",
+        "validate-field",
         "validate-weather",
         "validate-phase-3-5",
         "profile-full-year",
@@ -196,6 +197,35 @@ def read_csv_rows(path: Path, limit: int | None = None) -> tuple[list[str], list
 
     header, rows = _read_csv_rows_cached(str(path.resolve()), path.stat().st_mtime_ns, limit)
     return list(header), [list(row) for row in rows]
+
+
+@lru_cache(maxsize=24)
+def _read_csv_preview_cached(
+    path_text: str, mtime_ns: int, limit: int
+) -> tuple[tuple[str, ...], tuple[tuple[str, ...], ...], int]:
+    """Read a bounded CSV preview while counting rows without retaining them."""
+
+    del mtime_ns
+    csv.field_size_limit(_CSV_FIELD_SIZE_LIMIT)
+    with Path(path_text).open(encoding="utf-8", newline="") as handle:
+        reader = csv.reader(handle)
+        header = tuple(next(reader, []))
+        rows: list[tuple[str, ...]] = []
+        total_rows = 0
+        for row in reader:
+            total_rows += 1
+            if len(rows) < limit:
+                rows.append(tuple(row))
+    return header, tuple(rows), total_rows
+
+
+def read_csv_preview(path: Path, *, limit: int) -> tuple[list[str], list[list[str]], int]:
+    """Return at most ``limit`` rows plus an exact row count using bounded memory."""
+
+    header, rows, total_rows = _read_csv_preview_cached(
+        str(path.resolve()), path.stat().st_mtime_ns, limit
+    )
+    return list(header), [list(row) for row in rows], total_rows
 
 
 def daily_series(run_dir: Path, value_column: str) -> dict[str, object] | None:

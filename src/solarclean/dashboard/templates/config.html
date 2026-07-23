@@ -69,11 +69,11 @@
         fetched weather when enabled.</dd>
     </div>
     <div>
-      <dt>What stays fixed</dt>
-      <dd>Dust-event frequency and the Riyadh <code>central-v2</code> cost calibration do not
-        change with the selected coordinates. {% if is_default %}Apply the location to the YAML
-        source, then validate and save as usual.{% else %}These values remain inspection-only on
-        this preset page.{% endif %}</dd>
+      <dt>Calibration scope</dt>
+      <dd>Changing the map location updates site, timezone, and weather inputs; it does not
+        automatically create a site-specific dust or cost calibration. This configuration keeps
+        its named <code>calibration.assumption_set</code> until those assumptions are deliberately
+        edited and supported with local evidence.</dd>
     </div>
   </dl>
   <p class="hint" id="provider-warning" role="note" hidden></p>

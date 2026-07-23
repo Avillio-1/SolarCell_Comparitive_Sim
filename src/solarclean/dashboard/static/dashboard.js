@@ -1224,6 +1224,8 @@
   // retain the browser's native download/open behaviour.
 
   var artifactDrawerReturnFocus = null;
+  var artifactPreviewController = null;
+  var artifactPreviewRequestId = 0;
 
   function currentRunId() {
     if (window.solarcleanRunId) return String(window.solarcleanRunId);
@@ -1279,6 +1281,11 @@
   }
 
   function closeArtifactDrawer() {
+    artifactPreviewRequestId += 1;
+    if (artifactPreviewController) {
+      artifactPreviewController.abort();
+      artifactPreviewController = null;
+    }
     var drawer = document.getElementById("artifact-preview-drawer");
     if (!drawer) return;
     var returnFocus = artifactDrawerReturnFocus;
@@ -1414,6 +1421,10 @@
   }
 
   function openArtifactPreview(runId, artifactName, downloadUrl, trigger) {
+    if (artifactPreviewController) artifactPreviewController.abort();
+    var requestId = ++artifactPreviewRequestId;
+    var controller = typeof AbortController === "function" ? new AbortController() : null;
+    artifactPreviewController = controller;
     var drawer = ensureArtifactDrawer();
     var content = artifactDrawerElement(
       drawer, "artifact-preview-content", ".artifact-preview-content"
@@ -1427,7 +1438,8 @@
     showArtifactDrawer(drawer, trigger);
     fetch(
       "/api/runs/" + encodeURIComponent(runId) + "/artifact-preview/" +
-      encodeURIComponent(artifactName)
+      encodeURIComponent(artifactName),
+      controller ? { signal: controller.signal } : undefined
     )
       .then(function (response) {
         if (!response.ok) {
@@ -1438,9 +1450,11 @@
         return response.json();
       })
       .then(function (payload) {
+        if (requestId !== artifactPreviewRequestId) return;
         renderArtifactPreview(drawer, payload, artifactName, downloadUrl);
       })
       .catch(function (error) {
+        if (requestId !== artifactPreviewRequestId || error.name === "AbortError") return;
         if (content) {
           content.setAttribute("aria-busy", "false");
           content.textContent = "Preview unavailable: " + error.message;
@@ -1452,6 +1466,9 @@
           download.href = downloadUrl;
           download.hidden = false;
         }
+      })
+      .finally(function () {
+        if (requestId === artifactPreviewRequestId) artifactPreviewController = null;
       });
   }
 
@@ -1683,8 +1700,8 @@
         "weather.provider is nasa_power: runs fetch live NASA POWER weather for these " +
         "coordinates — hourly irradiance, temperature, wind, humidity, and precipitation " +
         "all change with the location. Daily rainfall, seasonal soiling, event dates, and " +
-        "cleaning use the selected timezone. Soiling/dust and cost calibration stay on " +
-        "the Riyadh central-v2 assumption set.";
+        "cleaning use the selected timezone. The named dust and cost calibration is unchanged " +
+        "until it is deliberately edited using site-specific evidence.";
     } else if (provider) {
       warning.hidden = false;
       warning.textContent =
@@ -2393,7 +2410,7 @@
     cells.forEach(function (cell, index) {
       if (!isFinite(values[index])) return;
       cell.classList.add("kpi-bar-cell");
-      cell.style.setProperty("--kpi-bar", (values[index] / max * 100).toFixed(1) + "%");
+      cell.style.setProperty("--kpi-bar-ratio", (values[index] / max).toFixed(4));
     });
   });
 
@@ -2412,6 +2429,150 @@
   var explorerMetric = "energy";
   var explorerRange = null; // [firstIndex, lastIndex] when the scrubber zooms
   var explorerRenderFrame = null;
+
+  function explorerGuideMetricInfo(metric) {
+    var normalized = {
+      bird: "bird-loss",
+      birdloss: "bird-loss",
+      water: "collected-water",
+      "queue-length": "queue",
+    }[metric] || metric;
+    var metrics = {
+      energy: {
+        name: "Energy",
+        unit: "kWh/day",
+        definition: "Modeled AC energy delivered by the selected scenario after its contamination, operational, and enabled physical effects.",
+        formula: "E_actual,d",
+        reading: "Compare scenarios on the same date; the clean reference separates weather-driven potential from scenario effects.",
+        source: "actual_energy_kwh",
+      },
+      loss: {
+        name: "Loss",
+        unit: "kWh/day",
+        definition: "The exact daily gap between the shared clean reference and the scenario's actual AC energy.",
+        formula: "L_d = E_clean,d − E_actual,d",
+        reading: "Positive is below the clean reference, zero matches it, and negative means an enabled physical gain produced above-reference output.",
+        source: "energy_loss_kwh",
+      },
+      cleanliness: {
+        name: "Cleanliness",
+        unit: "ratio · 0–1",
+        definition: "The scenario-specific cleanliness state used for that day's generation: 1 is clean. Baseline and reactive plot dust transmissivity; coating combines dust and bird loss.",
+        formula: "C_d ∈ [0,1]; coating: C_d = C_dust,d × (1 − f_bird,d)",
+        reading: "A change is a modeled state change, not a direct sensor measurement. Read upward movement with the aligned cleaning or rain events.",
+        source: "scenario-specific cleanliness fields",
+      },
+      cumgain: {
+        name: "Cumulative gain",
+        unit: "kWh",
+        definition: "The running energy balance between the selected scenario and baseline through the displayed date.",
+        formula: "G_D = Σ(d≤D)[E_scenario,d − E_baseline,d]",
+        reading: "The level is accrued advantage; the slope is daily advantage. A falling segment means some prior lead was surrendered that day.",
+        source: "cumulative_energy_gain_vs_baseline_kwh",
+      },
+      "bird-loss": {
+        name: "Bird loss",
+        unit: "fraction",
+        definition: "Modeled fractional energy penalty from bird-dropping coverage in the coating scenario.",
+        formula: "E_after bird = E_before bird × (1 − f_bird)",
+        reading: "0.01 means a 1% modeled energy loss. It does not mean that exactly 1% of panel area is covered.",
+        source: "extension_bird_loss_fraction",
+      },
+      "collected-water": {
+        name: "Dew harvest",
+        unit: "L/day",
+        definition: "Modeled whole-farm condensate remaining after collectable-water and actual-collection efficiency factors.",
+        formula: "V_actual,d = Σ_h(V_cond,h × η_collectable × η_actual)",
+        reading: "A nonzero value requires the hourly humidity gate and surface-at-or-below-dew-point condition. Rainfall is a separate quantity.",
+        source: "extension_actually_collected_water_liters",
+      },
+      queue: {
+        name: "Queue",
+        unit: "cohorts",
+        definition: "Detected cohort work items still awaiting reactive cleaning after the day's decision.",
+        formula: "Q_d = |updated cleaning queue_d|",
+        reading: "This is not a panel count or an age. Inspection backlog is tracked separately and can move differently.",
+        source: "extension_queue_length",
+      },
+    };
+    return metrics[normalized] || metrics.energy;
+  }
+
+  function updateExplorerGuideMetric(metric) {
+    var info = explorerGuideMetricInfo(metric);
+    var values = {
+      "explorer-guide-active-name": info.name,
+      "explorer-guide-active-unit": info.unit,
+      "explorer-guide-active-definition": info.definition,
+      "explorer-guide-active-formula": info.formula,
+      "explorer-guide-active-reading": info.reading,
+      "explorer-guide-active-source": "stored field · " + info.source,
+    };
+    Object.keys(values).forEach(function (id) {
+      var element = document.getElementById(id);
+      if (element) element.textContent = values[id];
+    });
+  }
+
+  function initExplorerGuide() {
+    var host = document.getElementById("energy-explorer");
+    var guide = document.getElementById("explorer-guide");
+    var toggle = document.getElementById("explorer-guide-toggle");
+    if (!host || !guide || !toggle || host.dataset.guideBound) return;
+    host.dataset.guideBound = "true";
+
+    var close = document.getElementById("explorer-guide-close");
+    var done = document.getElementById("explorer-guide-done");
+    var unread = document.getElementById("explorer-guide-unread");
+    var seenKey = "solarclean-explorer-guide-dismissed";
+    updateExplorerGuideMetric(explorerMetric);
+
+    try {
+      if (localStorage.getItem(seenKey) === "true" && unread) unread.hidden = true;
+    } catch (error) { /* storage is optional */ }
+
+    function markGuideSeen() {
+      if (unread) unread.hidden = true;
+      try { localStorage.setItem(seenKey, "true"); } catch (error) { /* ignore */ }
+    }
+
+    function setGuideOpen(open, returnFocus) {
+      guide.hidden = !open;
+      toggle.setAttribute("aria-expanded", open ? "true" : "false");
+      if (open) {
+        updateExplorerGuideMetric(explorerMetric);
+        guide.focus();
+      } else if (returnFocus) {
+        toggle.focus();
+      }
+    }
+
+    toggle.addEventListener("click", function () {
+      var opening = guide.hidden;
+      if (opening) markGuideSeen();
+      setGuideOpen(opening, false);
+    });
+    if (close) {
+      close.addEventListener("click", function () {
+        markGuideSeen();
+        setGuideOpen(false, true);
+      });
+    }
+    if (done) {
+      done.addEventListener("click", function () {
+        markGuideSeen();
+        setGuideOpen(false, false);
+        var startingControl = host.querySelector(".metric-choice.active");
+        if (startingControl) startingControl.focus();
+      });
+    }
+    guide.addEventListener("keydown", function (event) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      markGuideSeen();
+      setGuideOpen(false, true);
+    });
+  }
 
   function cssVar(name, fallback) {
     var value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -3234,16 +3395,16 @@
       },
       water: {
         data: explorerPayload.dailyCollectedWater,
-        yLabel: "Actually collected water (L/day)",
+        yLabel: "Modeled harvested dew (L/day)",
         format: litersDisplay,
-        summaryLabel: "actually collected water",
+        summaryLabel: "modeled harvested dew",
         showReference: false,
       },
       "collected-water": {
         data: explorerPayload.dailyCollectedWater,
-        yLabel: "Actually collected water (L/day)",
+        yLabel: "Modeled harvested dew (L/day)",
         format: litersDisplay,
-        summaryLabel: "actually collected water",
+        summaryLabel: "modeled harvested dew",
         showReference: false,
       },
       queue: {
@@ -3283,6 +3444,7 @@
     var spec = explorerMetricSpec(metric);
     if (!spec || !energyExplorerChart) return;
     explorerMetric = metric;
+    updateExplorerGuideMetric(metric);
     document.querySelectorAll("[data-energy-metric]").forEach(function (button) {
       var selected = button.getAttribute("data-energy-metric") === metric;
       button.classList.toggle("active", selected);
@@ -3663,12 +3825,13 @@
       panel.effectiveness_fraction;
     var optical = panel.opticalEffect || panel.optical_effect_kwh;
     var temperature = panel.temperatureEffect || panel.temperature_effect_kwh;
+    var temperatureInactive = panel.temperatureEffectInactive === true ||
+      panel.temperature_effect_inactive === true;
     var cleanliness = panel.cleanlinessEffect || panel.cleanliness_effect_kwh;
-    var dewPoint = panel.dewPoint || panel.dew_point_c;
-    var surface = panel.surfaceTemperature || panel.coated_surface_temperature_c;
+    var dewMargin = panel.dewMargin || panel.dew_margin_c;
     var water = panel.collectedWater || panel.actually_collected_water_liters;
     var dates = storedDates(panel, [
-      age, effectiveness, optical, temperature, cleanliness, dewPoint, surface, water,
+      age, effectiveness, optical, temperature, cleanliness, dewMargin, water,
     ]);
 
     var ageValues = flatStoredValues(age, "coating");
@@ -3726,7 +3889,9 @@
     var effectDatasets = [];
     appendStoredDatasets(effectDatasets, optical, "Optical effect", "#7b5aa6", []);
     appendStoredDatasets(
-      effectDatasets, temperature, "Temperature effect", "#a3453c", []
+      effectDatasets, temperature,
+      temperatureInactive ? "Temperature effect (inactive)" : "Temperature effect",
+      "#a3453c", []
     );
     appendStoredDatasets(
       effectDatasets, cleanliness, "Cleanliness effect", "#2f7d5c", []
@@ -3737,27 +3902,42 @@
     );
 
     var dewDatasets = [];
-    appendStoredDatasets(dewDatasets, dewPoint, "Dew point (°C)", "#2f7fa3", [], "y");
     appendStoredDatasets(
-      dewDatasets, surface, "Coated surface (°C)", "#a3453c", [], "y"
+      dewDatasets, dewMargin, "Dew margin (°C)", "#2f7fa3", [], "y"
     );
     appendStoredDatasets(
-      dewDatasets, water, "Actually collected water (L)", "#2f7d5c", [], "yWater"
+      dewDatasets, water, "Modeled harvested dew (L)", "#2f7d5c", [], "yWater"
     );
     drawStoredLineChart(
       firstChartCanvas(["coating-dew-margin-chart", "coating-dew-chart"]),
-      dates, dewDatasets, "Stored nighttime temperature (°C)", function (options) {
+      dates, dewDatasets, "Dew margin (°C)", function (options) {
+        options.scales.y.beginAtZero = true;
+        options.scales.y.grid.color = function (context) {
+          return context.tick.value === 0 ? chartInk() : chartGrid();
+        };
+        options.scales.y.grid.lineWidth = function (context) {
+          return context.tick.value === 0 ? 1.4 : 1;
+        };
+        options.scales.y.grid.borderDash = function (context) {
+          return context.tick.value === 0 ? [3, 3] : [];
+        };
         if (Object.keys(storedSeries(water)).length) {
           options.scales.yWater = {
             type: "linear", position: "right", beginAtZero: true,
             title: {
-              display: true, text: "Collected water (L)",
+              display: true, text: "Modeled harvested dew (L)",
               font: { size: 11 }, color: chartInk(),
             },
             ticks: { font: { size: 11 }, color: chartInk() },
             grid: { drawOnChartArea: false },
           };
         }
+        options.plugins.tooltip.callbacks = {
+          label: function (context) {
+            var suffix = context.dataset.yAxisID === "yWater" ? " L" : " °C";
+            return context.dataset.label + ": " + finiteDisplay(context.parsed.y, 2) + suffix;
+          },
+        };
       }
     );
   }
@@ -3852,6 +4032,7 @@
     payload.dailyBirdLoss = payload.dailyBirdLoss || payload.dailyBirdLossFraction;
     payload.dailyCollectedWater = payload.dailyCollectedWater || payload.dailyWaterCollected;
     payload.dailyQueue = payload.dailyQueue || payload.dailyQueueLength;
+    initExplorerGuide();
     initDustCalendars(payload);
     drawEnergyExplorer(payload);
     drawDetectionPerformance(payload.detectionPerformance || payload.detection || {
@@ -3876,6 +4057,14 @@
   };
 
   // Analysis results pages: charts of stored artifact values only.
+  function analysisPeriodAdjective() {
+    return window.solarcleanPeriodIsFullYear ? "annual" : "configured-period";
+  }
+
+  function analysisPeriodUnit() {
+    return window.solarcleanPeriodIsFullYear ? "SAR/year" : "SAR/configured period";
+  }
+
   window.drawAnalysisCharts = function () {
     if (typeof Chart === "undefined") return;
     applyChartTypography();
@@ -3907,7 +4096,10 @@
     });
     var options = baseOptions("");
     options.scales.x.title = {
-      display: true, text: "Net annual benefit (SAR)", font: { size: 11 }, color: chartInk(),
+      display: true,
+      text: "Net " + analysisPeriodAdjective() + " benefit (SAR)",
+      font: { size: 11 },
+      color: chartInk(),
     };
     options.scales.x.type = "linear";
     options.scales.y.min = -0.6;
@@ -3927,7 +4119,10 @@
     options.indexAxis = "y";
     options.plugins.legend.display = false;
     options.scales.x.title = {
-      display: true, text: "Net annual benefit swing (SAR)", font: { size: 11 }, color: chartInk(),
+      display: true,
+      text: "Net " + analysisPeriodAdjective() + " benefit swing (SAR)",
+      font: { size: 11 },
+      color: chartInk(),
     };
     options.scales.y.ticks.autoSkip = false;
     registerChart(new Chart(canvas, {
@@ -3982,7 +4177,7 @@
         pointStyle: "rectRot",
       });
     }
-    var options = baseOptions("Margin (SAR/year)");
+    var options = baseOptions("Margin (" + analysisPeriodUnit() + ")");
     options.scales.x.type = "linear";
     options.scales.x.title = {
       display: true,
@@ -4041,7 +4236,7 @@
             };
           }),
         },
-        options: baseOptions("Net annual benefit (SAR)"),
+        options: baseOptions("Net " + analysisPeriodAdjective() + " benefit (SAR)"),
       }));
     }
   }

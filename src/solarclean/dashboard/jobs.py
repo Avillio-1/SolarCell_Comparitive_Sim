@@ -18,6 +18,7 @@ import json
 import threading
 import traceback
 import uuid
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -145,6 +146,8 @@ class JobRegistry:
     def __init__(self, history_path: Path | None = None) -> None:
         self._jobs: dict[str, Job] = {}
         self._lock = threading.Lock()
+        self._pending: deque[tuple[Job, Callable[[Job], Path]]] = deque()
+        self._worker: threading.Thread | None = None
         self._history_path = history_path
         self._history: list[dict[str, object]] = self._load_history()
 
@@ -205,11 +208,43 @@ class JobRegistry:
                 if active is not None:
                     raise ActiveJobError(active)
             self._jobs[job.job_id] = job
+            self._pending.append((job, work))
+            if self._worker is None:
+                self._worker = threading.Thread(
+                    target=self._drain_queue,
+                    name="dashboard-job-worker",
+                    daemon=True,
+                )
+                worker_to_start = self._worker
+            else:
+                worker_to_start = None
 
-        def _run() -> None:
+        if worker_to_start is not None:
+            worker_to_start.start()
+        return job
+
+    def _drain_queue(self) -> None:
+        """Run submitted analyses serially in FIFO order."""
+        while True:
             with self._lock:
-                job.status = "running"
-                job.started_at = datetime.now(UTC)
+                if not self._pending:
+                    self._worker = None
+                    return
+                job, work = self._pending.popleft()
+                if job.cancel_requested:
+                    job.status = "cancelled"
+                    job.detail = "Cancelled by user before starting."
+                    job.finished_at = datetime.now(UTC)
+                    cancelled_before_start = True
+                else:
+                    job.status = "running"
+                    job.started_at = datetime.now(UTC)
+                    cancelled_before_start = False
+
+            if cancelled_before_start:
+                self._record_finished(job)
+                continue
+
             try:
                 if job.cancel_requested:
                     raise JobCancelled(f"job {job.job_id} cancelled before start")
@@ -232,9 +267,6 @@ class JobRegistry:
                 with self._lock:
                     job.finished_at = datetime.now(UTC)
                 self._record_finished(job)
-
-        threading.Thread(target=_run, name=f"dashboard-{kind}-{job.job_id}", daemon=True).start()
-        return job
 
     def get(self, job_id: str) -> Job | None:
         with self._lock:

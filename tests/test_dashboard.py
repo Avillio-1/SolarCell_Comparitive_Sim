@@ -136,6 +136,71 @@ def test_launch_period_override_requires_two_ordered_dates(client: TestClient) -
     assert reversed_period.status_code == 422
 
 
+@pytest.mark.parametrize(
+    ("payload", "field"),
+    [
+        ({"kind": "monte-carlo", "trials": 1}, "trials"),
+        ({"kind": "monte-carlo", "trials": 501}, "trials"),
+        ({"kind": "sensitivity-oneway", "steps": 2, "parameters": ["x"]}, "steps"),
+        ({"kind": "sensitivity-oneway", "steps": 22, "parameters": ["x"]}, "steps"),
+        (
+            {
+                "kind": "winner-map",
+                "parameter_a": "x",
+                "parameter_b": "y",
+                "grid_steps": 16,
+            },
+            "grid_steps",
+        ),
+    ],
+)
+def test_launch_rejects_workloads_outside_form_limits(
+    client: TestClient, payload: dict[str, object], field: str
+) -> None:
+    response = client.post("/api/runs", json=payload)
+
+    assert response.status_code == 422
+    assert any(field in error["loc"] for error in response.json()["detail"])
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        (
+            {
+                "kind": "sensitivity-oneway",
+                "parameters": ["economics.a", "economics.a"],
+            },
+            "Choose each one-way sensitivity parameter only once.",
+        ),
+        (
+            {
+                "kind": "winner-map",
+                "parameter_a": "economics.a",
+                "parameter_b": "economics.a",
+            },
+            "Pick two different parameters for the winner map.",
+        ),
+        (
+            {
+                "kind": "break-even",
+                "parameter": "economics.a",
+                "scenario_a": "coating",
+                "scenario_b": "coating",
+            },
+            "Pick two different scenarios for the break-even search.",
+        ),
+    ],
+)
+def test_launch_rejects_invalid_method_combinations(
+    client: TestClient, payload: dict[str, object], message: str
+) -> None:
+    response = client.post("/api/runs", json=payload)
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == message
+
+
 def test_launch_runs_selected_config_and_reports_progress(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -533,6 +598,50 @@ def test_charts_replace_static_plot_grid(client: TestClient, comparison_run: Pat
     assert "comparison_daily_energy.png" in page  # still listed as an artifact
 
 
+def test_daily_explorer_has_technical_reading_guide(
+    client: TestClient, comparison_run: Path
+) -> None:
+    page = client.get(f"/run/{comparison_run.name}").text
+    script = client.get("/static/dashboard.js").text
+    stylesheet = client.get("/static/dashboard.css").text
+
+    assert 'id="explorer-guide-toggle"' in page
+    assert 'aria-controls="explorer-guide"' in page
+    assert 'id="explorer-guide"' in page
+    assert 'aria-labelledby="explorer-guide-title"' in page
+    assert "Technical reading key" in page
+    assert "Global Horizontal Irradiance" in page
+    assert "kWh/m²/day" in page
+    assert "The hourly" in page
+    assert "detail uses <code>W/m²</code>" in page
+    assert "L<sub>d</sub> = E<sub>clean,d</sub> − E<sub>actual,d</sub>" in page
+    assert "G<sub>D</sub> = Σ<sub>d≤D</sub>" in page
+    assert "coating plots" in page
+    assert "dust × (1 − bird-loss fraction)" in page
+    assert "1 mm equals 1 L/m²" in page
+    assert "not the collection trigger" in page
+    assert "must not be read as hourly scenario output" in page
+    assert 'id="explorer-guide-active-name"' in page
+    assert "Close technical guide" in page
+    assert 'data-guide-target="' not in page
+
+    assert "function initExplorerGuide()" in script
+    assert "function explorerGuideMetricInfo(metric)" in script
+    assert "function updateExplorerGuideMetric(metric)" in script
+    assert "solarclean-explorer-guide-dismissed" in script
+    assert 'toggle.setAttribute("aria-expanded", open ? "true" : "false")' in script
+    assert 'event.key !== "Escape"' in script
+    assert "V_actual,d = Σ_h(V_cond,h × η_collectable × η_actual)" in script
+    assert '"explorer-guide-active-source": "stored field · " + info.source' in script
+    assert "updateExplorerGuideMetric(metric);" in script
+    assert "startingControl.focus()" in script
+
+    assert ".explorer-guide-active" in stylesheet
+    assert ".explorer-guide-signals" in stylesheet
+    assert ".explorer-guide-unit-key" in stylesheet
+    assert '.explorer-guide-toggle[aria-expanded="true"]' in stylesheet
+
+
 def test_comparison_page_has_water_balance_and_dew_simulator(
     client: TestClient,
     comparison_run: Path,
@@ -678,6 +787,55 @@ def test_kpi_table_marks_best_by_metric_direction() -> None:
     assert by_label["Incremental payback vs baseline (yr)"]["best"] == [False, False, True]
     # Operational quantities carry no direction, so nothing is highlighted.
     assert by_label["External cleaning water consumed (L)"]["best"] == [False, False, False]
+
+
+def test_kpi_table_uses_configured_period_help_for_partial_runs() -> None:
+    header = [
+        "scenario_name",
+        "annual_energy_loss_percent",
+        "annualized_capex_sar",
+        "annual_opex_sar",
+        "total_annual_cost_sar",
+        "net_annual_benefit_sar",
+        "incremental_roi_vs_baseline",
+        "effective_lcoe_sar_per_kwh",
+    ]
+    table = _kpi_table(
+        header,
+        [["coating", "1", "2", "3", "4", "5", "6", "7"]],
+        period_is_full_year=False,
+    )
+    help_text = " ".join(str(row["help"]) for row in table["rows"])
+
+    assert "configured period" in help_text
+    assert "over the year" not in help_text
+    assert "Recurring yearly" not in help_text
+    assert "Annual electricity revenue" not in help_text
+    assert "annual cost divided" not in help_text
+
+
+def test_annual_kpi_table_uses_non_overlapping_scroll_layout(
+    client: TestClient, comparison_run: Path
+) -> None:
+    page = client.get(f"/run/{comparison_run.name}").text
+    css = (dashboard_app._PACKAGE_DIR / "static" / "dashboard.css").read_text(encoding="utf-8")
+
+    assert 'class="scroll-x kpi-table-scroll"' in page
+    assert "AC energy (kWh)" in page
+    assert ".kpi-table { display: table; min-width: 680px; }" in css
+    assert ".kpi-table thead th {" not in css
+
+
+def test_kpi_micro_bars_are_inset_within_each_value_cell() -> None:
+    css = (dashboard_app._PACKAGE_DIR / "static" / "dashboard.css").read_text(encoding="utf-8")
+    script = (dashboard_app._PACKAGE_DIR / "static" / "dashboard.js").read_text(encoding="utf-8")
+
+    assert ".kpi-bar-cell::after" in css
+    assert "right: 9px;" in css
+    assert "left: 9px;" in css
+    assert "transform: scaleX(var(--kpi-bar-ratio, 0));" in css
+    assert '--kpi-bar-ratio", (values[index] / max).toFixed(4)' in script
+    assert "background-size: var(--kpi-bar" not in css
 
 
 def test_financial_ranking_joins_stored_explanation_values_without_recalculation() -> None:
@@ -948,11 +1106,13 @@ def test_factory_default_runs_live_weather_for_riyadh() -> None:
 
 def test_config_page_states_location_semantics(client: TestClient) -> None:
     page = client.get(f"/config/{DEFAULT_CONFIG_NAME}").text
-    # States what a location change does (live NASA POWER weather), the fixed
-    # calibration assumption, and the humidity-coupled exceptions.
-    assert "NASA POWER" in page
-    assert "Riyadh central-v2" in page
-    assert "humidity-coupled soiling" in page
+    flat = " ".join(page.split())
+    # States what a location change does (live NASA POWER weather), the explicit
+    # calibration boundary, and the humidity-coupled exceptions.
+    assert "NASA POWER" in flat
+    assert "does not automatically create a site-specific dust or cost calibration" in flat
+    assert "calibration.assumption_set" in flat
+    assert "humidity-coupled soiling" in flat
 
 
 def test_config_page_has_offline_map_picker(client: TestClient) -> None:
@@ -1273,7 +1433,7 @@ def test_launch_form_explains_advanced_analysis_fields(client: TestClient) -> No
     assert "Choose at least one assumption; use Select all only for an exhaustive sweep." in flat
     assert "assumptions varied together" in flat
     assert "grid size; 5 means 5 × 5 = 25 comparisons." in flat
-    assert "net annual benefits are equal" in flat
+    assert "net benefits over the configured period are equal" in flat
     assert "Baseline has no mitigation" in flat
     assert "Reactive detects then cleans" in flat
     assert "Coating uses coating-based mitigation" in flat
@@ -1327,6 +1487,19 @@ def test_parameter_catalog_uses_registry_relative_to_custom_config_dir(
 # --------------------------------------------------------------------------
 # Analysis-page charts (tornado, winner map, MC distribution, break-even)
 # --------------------------------------------------------------------------
+
+
+def test_analysis_chart_labels_follow_the_configured_period() -> None:
+    script = (dashboard_app._PACKAGE_DIR / "static" / "dashboard.js").read_text(encoding="utf-8")
+    template = (dashboard_app._PACKAGE_DIR / "templates" / "run_analysis.html").read_text(
+        encoding="utf-8"
+    )
+
+    assert "analysisPeriodAdjective" in script
+    assert "analysisPeriodUnit" in script
+    assert '"Net annual benefit (SAR)"' not in script
+    assert '"Margin (SAR/year)"' not in script
+    assert "window.solarcleanPeriodIsFullYear" in template
 
 
 def _delete_run(client: TestClient, run_dir: Path) -> None:
@@ -1433,6 +1606,8 @@ def test_comparison_page_shows_headline_cards(client: TestClient, comparison_run
     run_dir.mkdir(parents=True, exist_ok=True)
     recommendation = {
         "valid": True,
+        "calculation_valid": True,
+        "recommendation_tier": "decision_grade",
         "winner": "coating",
         "decisive_margin_sar": 12345.6,
         "kpi_snapshot": {
@@ -1446,9 +1621,12 @@ def test_comparison_page_shows_headline_cards(client: TestClient, comparison_run
         "warnings": [],
     }
     (run_dir / "recommendation.json").write_text(json.dumps(recommendation), encoding="utf-8")
+    (run_dir / "reconciliation_report.json").write_text(
+        json.dumps({"passed": True, "checks": []}), encoding="utf-8"
+    )
     try:
         page = client.get(f"/run/{run_dir.name}").text
-        assert "Recommended strategy" in page
+        assert "Decision-grade winner" in page
         assert 'class="headline-card"' in page
         assert "Total net configured-period benefit" in page
         assert "Margin over runner-up" in page
@@ -1513,6 +1691,8 @@ def test_kpi_glossary_is_plain_english(client: TestClient, comparison_run: Path)
     assert "What these metrics mean" in page
     assert "Levelized cost of energy" in page
     assert "Return on investment" in page
+    assert "over the year" not in page
+    assert "Recurring yearly" not in page
 
 
 def test_run_page_shows_weather_provenance(client: TestClient, comparison_run: Path) -> None:
@@ -1772,26 +1952,74 @@ def test_auth_token_gates_every_route(client: TestClient, monkeypatch: pytest.Mo
     assert client.get("/").status_code == 200  # workstation default stays open
 
 
-def test_launch_rejects_concurrent_runs(client: TestClient, comparison_run: Path) -> None:
+def test_launch_queues_concurrent_runs(client: TestClient, comparison_run: Path) -> None:
     release = threading.Event()
+    started = threading.Event()
 
     def work(job: Job) -> Path:
+        started.set()
         release.wait(timeout=30)
         return Path("outputs/fake")
 
     job = dashboard_app.jobs.submit("compare", "synthetic.yaml", work)
+    assert started.wait(timeout=10)
     try:
-        blocked = client.post("/api/runs", json={"kind": "compare"})
-        assert blocked.status_code == 409
-        assert "already" in blocked.json()["detail"]
-        rerun_blocked = client.post(f"/api/runs/{comparison_run.name}/rerun")
-        assert rerun_blocked.status_code == 409
+        queued = client.post("/api/runs", json={"kind": "compare"})
+        assert queued.status_code == 202
+        assert queued.json()["status"] == "queued"
+        assert queued.json()["started_at"] is None
+        rerun_queued = client.post(f"/api/runs/{comparison_run.name}/rerun")
+        assert rerun_queued.status_code == 202
+        assert rerun_queued.json()["status"] == "queued"
+        assert client.delete(f"/api/jobs/{queued.json()['job_id']}").status_code == 200
+        assert client.delete(f"/api/jobs/{rerun_queued.json()['job_id']}").status_code == 200
     finally:
         release.set()
     deadline = time.time() + 10
     while job.status != "done" and time.time() < deadline:
         time.sleep(0.02)
     assert dashboard_app.jobs.delete(job.job_id) is not None
+
+
+def test_registry_executes_queued_jobs_in_fifo_order() -> None:
+    registry = JobRegistry()
+    first_started = threading.Event()
+    release_first = threading.Event()
+    execution_order: list[str] = []
+
+    def first_work(job: Job) -> Path:
+        execution_order.append(job.config_name)
+        first_started.set()
+        release_first.wait(timeout=10)
+        return Path("outputs/first")
+
+    def later_work(job: Job) -> Path:
+        execution_order.append(job.config_name)
+        return Path(f"outputs/{job.config_name}")
+
+    first = registry.submit("compare", "first", first_work)
+    assert first_started.wait(timeout=10)
+    second = registry.submit("compare", "second", later_work)
+    third = registry.submit("compare", "third", later_work)
+
+    assert second.status == "queued"
+    assert second.started_at is None
+    assert third.status == "queued"
+    assert third.started_at is None
+
+    release_first.set()
+    deadline = time.time() + 10
+    while third.status != "done" and time.time() < deadline:
+        time.sleep(0.01)
+
+    assert first.status == second.status == third.status == "done"
+    assert execution_order == ["first", "second", "third"]
+    assert first.finished_at is not None
+    assert second.started_at is not None
+    assert first.finished_at <= second.started_at
+    assert second.finished_at is not None
+    assert third.started_at is not None
+    assert second.finished_at <= third.started_at
 
 
 def test_registry_idle_check_and_enqueue_are_atomic() -> None:
@@ -1944,6 +2172,9 @@ def test_run_card_view_model_distinguishes_result_state_and_provenance(tmp_path:
         ),
         encoding="utf-8",
     )
+    (not_certified / "reconciliation_report.json").write_text(
+        json.dumps({"passed": True, "checks": []}), encoding="utf-8"
+    )
 
     complete = outputs / run_ids["complete"]
     (complete / "monte_carlo_summary.json").write_text(
@@ -2020,6 +2251,81 @@ def test_run_card_reconciliation_rejection_is_not_a_process_failure(tmp_path: Pa
     assert "failed" not in status["status_label"].lower()
 
 
+def test_run_card_requires_reconciliation_artifact_for_certification(tmp_path: Path) -> None:
+    run_dir = tmp_path / "study-compare-all-scenarios-20260718T000000Z-a1"
+    run_dir.mkdir()
+    (run_dir / "recommendation.json").write_text(
+        json.dumps(
+            {
+                "winner": "coating",
+                "valid": True,
+                "calculation_valid": True,
+                "recommendation_tier": "decision_grade",
+            }
+        ),
+        encoding="utf-8",
+    )
+    entry = artifacts_module.RunEntry(
+        run_id=run_dir.name,
+        path=run_dir,
+        kind="compare-all-scenarios",
+        created="",
+        winner="coating",
+        valid=True,
+    )
+
+    status = dashboard_app._run_card_status(entry)
+
+    assert status["status_code"] == "incomplete"
+    assert status["status_label"] == "Incomplete"
+    assert "reconciliation_report.json" in status["status_detail"]
+
+
+def test_tied_recommendation_never_becomes_a_certified_winner(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    recommendation = {
+        "winner": None,
+        "tied_winners": ["coating", "reactive"],
+        "valid": True,
+        "calculation_valid": True,
+        "recommendation_tier": "decision_grade",
+        "decisive_margin_sar": 0.0,
+        "kpi_snapshot": {},
+    }
+    reconciliation = {"passed": True, "checks": []}
+    run_dir = tmp_path / "study-compare-all-scenarios-20260718T000000Z-a1"
+    run_dir.mkdir()
+    (run_dir / "recommendation.json").write_text(json.dumps(recommendation), encoding="utf-8")
+    (run_dir / "reconciliation_report.json").write_text(
+        json.dumps(reconciliation), encoding="utf-8"
+    )
+    entry = artifacts_module.RunEntry(
+        run_id=run_dir.name,
+        path=run_dir,
+        kind="compare-all-scenarios",
+        created="",
+        winner=None,
+        valid=True,
+    )
+
+    finding = dashboard_app._finding_statement(recommendation, reconciliation)
+    status = dashboard_app._run_card_status(entry)
+
+    assert dashboard_app._certified_winner(recommendation, reconciliation) is None
+    assert finding is not None and finding["tone"] == "neutral"
+    assert "No single certified winner" in finding["text"]
+    assert "None wins" not in finding["text"]
+    assert status["status_code"] == "not_certified"
+    assert status["status_label"] == "No single winner"
+    monkeypatch.setattr(dashboard_app, "_OUTPUTS_DIR", tmp_path)
+    page = client.get(f"/run/{run_dir.name}").text
+    assert "No single certified winner" in page
+    assert ">HOLD<" in page
+    assert "None wins" not in page
+    assert 'class="headline-card"' not in page
+
+
 @pytest.mark.parametrize("kind", ["fetch-weather", "run-baseline", "run-clean"])
 def test_run_card_core_outputs_are_complete(tmp_path: Path, kind: str) -> None:
     run_dir = tmp_path / f"study-{kind}-20260718T000000Z-a1"
@@ -2038,6 +2344,30 @@ def test_run_card_core_outputs_are_complete(tmp_path: Path, kind: str) -> None:
 
     assert status["status_code"] == "complete"
     assert status["status_label"] == "Complete"
+
+
+def test_field_validation_run_is_recognized_and_hidden_as_technical(tmp_path: Path) -> None:
+    outputs = tmp_path / "outputs"
+    run_dir = outputs / "pvdaq-1429-validate-field-20260718T000000Z-a1"
+    run_dir.mkdir(parents=True)
+    (run_dir / "config_resolved.yaml").write_text(
+        yaml.safe_dump(fixture_config().model_dump(mode="json"), sort_keys=False),
+        encoding="utf-8",
+    )
+    (run_dir / "field_validation_report.json").write_text(
+        json.dumps({"report_type": "field_validation"}), encoding="utf-8"
+    )
+
+    entries = artifacts_module.list_runs(outputs)
+    cards = dashboard_app._run_cards(
+        dashboard_app._grouped_run_entries(entries), previous_study_key=None
+    )
+
+    assert len(cards) == 1
+    assert entries[0].kind == "validate-field"
+    assert cards[0]["kind_label"] == "Field validation"
+    assert cards[0]["status_code"] == "complete"
+    assert cards[0]["provenance"] == "test"
 
 
 def test_dashboard_width_hardening_preserves_desktop_measure() -> None:
@@ -2139,11 +2469,16 @@ def test_cockpit_finding_matches_config_snapshot_not_run_prefix(
             json.dumps(
                 {
                     "winner": winner,
+                    "valid": True,
                     "calculation_valid": True,
+                    "recommendation_tier": "decision_grade",
                     "decisive_margin_sar": 50,
                 }
             ),
             encoding="utf-8",
+        )
+        (run_dir / "reconciliation_report.json").write_text(
+            json.dumps({"passed": True, "checks": []}), encoding="utf-8"
         )
 
     monkeypatch.setattr(dashboard_app, "_CONFIGS_DIR", configs)
@@ -2153,6 +2488,61 @@ def test_cockpit_finding_matches_config_snapshot_not_run_prefix(
 
     assert cockpit["last_run"] is not None
     assert cockpit["last_run"]["run_id"] == matching.name
+    assert cockpit["last_run"]["winner"] == "coating"
+
+
+def test_cockpit_skips_newer_uncertified_comparison(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configs = tmp_path / "configs"
+    outputs = tmp_path / "outputs"
+    configs.mkdir()
+    payload = fixture_config().model_dump(mode="json")
+    (configs / DEFAULT_CONFIG_NAME).write_text(
+        yaml.safe_dump(payload, sort_keys=False), encoding="utf-8"
+    )
+    certified = outputs / "study-compare-all-scenarios-20260717T000000Z-a1"
+    exploratory = outputs / "study-compare-all-scenarios-20260718T000000Z-b2"
+    for run_dir in (certified, exploratory):
+        run_dir.mkdir(parents=True)
+        (run_dir / "config_resolved.yaml").write_text(
+            yaml.safe_dump(payload, sort_keys=False), encoding="utf-8"
+        )
+        (run_dir / "reconciliation_report.json").write_text(
+            json.dumps({"passed": True, "checks": []}), encoding="utf-8"
+        )
+    (certified / "recommendation.json").write_text(
+        json.dumps(
+            {
+                "winner": "coating",
+                "valid": True,
+                "calculation_valid": True,
+                "recommendation_tier": "decision_grade",
+                "decisive_margin_sar": 75.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (exploratory / "recommendation.json").write_text(
+        json.dumps(
+            {
+                "winner": "reactive",
+                "valid": False,
+                "calculation_valid": True,
+                "recommendation_tier": "exploratory",
+                "decisive_margin_sar": 100.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(dashboard_app, "_CONFIGS_DIR", configs)
+    cockpit = dashboard_app._config_cockpits(
+        [DEFAULT_CONFIG_NAME], artifacts_module.list_runs(outputs)
+    )[DEFAULT_CONFIG_NAME]
+
+    assert cockpit["last_run"] is not None
+    assert cockpit["last_run"]["run_id"] == certified.name
     assert cockpit["last_run"]["winner"] == "coating"
 
 
@@ -2183,7 +2573,18 @@ def test_cockpit_finding_rejects_known_stale_economics_registry(
             json.dumps({"parameter_registry_checksum": checksum}), encoding="utf-8"
         )
         (run_dir / "recommendation.json").write_text(
-            json.dumps({"winner": winner, "calculation_valid": True}), encoding="utf-8"
+            json.dumps(
+                {
+                    "winner": winner,
+                    "valid": True,
+                    "calculation_valid": True,
+                    "recommendation_tier": "decision_grade",
+                }
+            ),
+            encoding="utf-8",
+        )
+        (run_dir / "reconciliation_report.json").write_text(
+            json.dumps({"passed": True, "checks": []}), encoding="utf-8"
         )
 
     monkeypatch.setattr(dashboard_app, "_CONFIGS_DIR", configs)
@@ -2327,7 +2728,7 @@ def test_comparison_period_context_is_conservative(tmp_path: Path) -> None:
     }
 
 
-def test_exploratory_finding_and_headlines_use_configured_period() -> None:
+def test_exploratory_finding_uses_configured_period_without_winner_cards() -> None:
     recommendation = {
         "valid": False,
         "calculation_valid": True,
@@ -2344,17 +2745,12 @@ def test_exploratory_finding_and_headlines_use_configured_period() -> None:
     }
 
     finding = dashboard_app._finding_statement(recommendation, None, period_is_full_year=False)
-    cards = dashboard_app._headline_cards(recommendation, period_is_full_year=False)
+    cards = dashboard_app._headline_cards(recommendation, None, period_is_full_year=False)
 
     assert finding is not None and finding["tone"] == "warn"
     assert "configured period" in finding["text"]
-    assert "no certified winner" in finding["text"]
-    assert cards is not None
-    assert any(card["label"] == "Total net configured-period benefit" for card in cards)
-    assert {card["unit"] for card in cards if card["unit"]} >= {
-        "SAR/configured period",
-        "kWh/configured period",
-    }
+    assert "no certified winner" in finding["text"].lower()
+    assert cards is None
 
 
 def test_related_runs_strip_links_same_study_siblings(
@@ -2409,6 +2805,8 @@ def test_headline_relabels_when_baseline_wins() -> None:
     cards = dashboard_app._headline_cards(
         {
             "valid": True,
+            "calculation_valid": True,
+            "recommendation_tier": "decision_grade",
             "winner": "baseline",
             "decisive_margin_sar": 101046.0,
             "kpi_snapshot": {
@@ -2417,7 +2815,8 @@ def test_headline_relabels_when_baseline_wins() -> None:
                     "energy_gain_vs_baseline_kwh": 0.0,
                 }
             },
-        }
+        },
+        {"passed": True},
     )
     labels = [card["label"] for card in cards]
     assert "Best mitigation falls short by" in labels
@@ -2427,10 +2826,13 @@ def test_headline_relabels_when_baseline_wins() -> None:
     mitigation_cards = dashboard_app._headline_cards(
         {
             "valid": True,
+            "calculation_valid": True,
+            "recommendation_tier": "decision_grade",
             "winner": "coating",
             "decisive_margin_sar": 500.0,
             "kpi_snapshot": {"coating": {"energy_gain_vs_baseline_kwh": 42.0}},
-        }
+        },
+        {"passed": True},
     )
     mitigation_labels = [card["label"] for card in mitigation_cards]
     assert "Margin over runner-up" in mitigation_labels
@@ -2497,6 +2899,19 @@ def test_detection_coating_and_explorer_instruments_render_stored_series(
     assert 'id="coating-service-life"' in page
     assert "Coating service life" in page
     assert "Stored energy-effect decomposition" in page
+    assert "Optical shows the effect of light transmission" in page
+    assert "Dew margin and modeled harvest" in page
+    assert "How to read" in page
+    assert "Dew margin is dew point minus surface temperature" in page
+    assert "rainfall is not included" in page
+    assert "Missed energy estimates loss from contamination" in page
+    assert "Lower missed and higher recovered are better" in page
+    assert "Queue is detected cleaning work waiting to be completed" in page
+    assert "Diamond marks show flights cancelled by weather" in page
+    script = client.get("/static/dashboard.js").text
+    assert "Modeled harvested dew (L/day)" in script
+    assert "options.scales.y.grid.borderDash = function (context)" in script
+    assert "context.tick.value === 0 ? [3, 3] : []" in script
     for canvas_id in (
         "detection-energy-chart",
         "detection-queue-chart",
@@ -2584,6 +2999,22 @@ def test_detection_and_coating_contexts_pass_through_stored_columns(
     assert expected_optical is not None
     assert coating["dates"] == expected_optical["dates"]
     assert coating["optical_effect_kwh"] == expected_optical["series"]["coating"]
+    expected_dew_point = artifacts_module.daily_series(comparison_run, "extension_dew_point_c")
+    expected_surface = artifacts_module.daily_series(
+        comparison_run, "extension_coated_surface_temperature_c"
+    )
+    assert expected_dew_point is not None
+    assert expected_surface is not None
+    expected_margin = [
+        dew_point - surface
+        for dew_point, surface in zip(
+            expected_dew_point["series"]["coating"],
+            expected_surface["series"]["coating"],
+            strict=True,
+        )
+    ]
+    assert coating["dew_margin_c"] == pytest.approx(expected_margin)
+    assert coating["temperature_effect_inactive"] is True
 
 
 def test_hourly_day_endpoint_returns_only_stored_weather_and_clean_reference(
@@ -2629,6 +3060,10 @@ def test_artifact_preview_payloads_are_bounded_and_guarded(
     (run_dir / "record.json").write_text(
         json.dumps({"winner": "coating", "margin": 12.5}), encoding="utf-8"
     )
+    (run_dir / "large.json").write_text(
+        json.dumps({"payload": "x" * dashboard_app._ARTIFACT_JSON_PREVIEW_BYTES}),
+        encoding="utf-8",
+    )
     (run_dir / "config.yaml").write_text("site:\n  name: Preview\n", encoding="utf-8")
     (run_dir / "plot.png").write_bytes(b"\x89PNG\r\n\x1a\n")
     monkeypatch.setattr(dashboard_app, "_OUTPUTS_DIR", outputs)
@@ -2642,6 +3077,9 @@ def test_artifact_preview_payloads_are_bounded_and_guarded(
     json_payload = client.get(f"/api/runs/{run_dir.name}/artifact-preview/record.json").json()
     assert json_payload["kind"] == "json"
     assert '"winner": "coating"' in json_payload["content"]
+    large_json = client.get(f"/api/runs/{run_dir.name}/artifact-preview/large.json")
+    assert large_json.status_code == 413
+    assert "too large" in large_json.json()["detail"]
     yaml_payload = client.get(f"/api/runs/{run_dir.name}/artifact-preview/config.yaml").json()
     assert yaml_payload["kind"] == "text"
     assert "name: Preview" in yaml_payload["content"]
@@ -2651,6 +3089,15 @@ def test_artifact_preview_payloads_are_bounded_and_guarded(
 
     escaped = client.get(f"/api/runs/{run_dir.name}/artifact-preview/..%2Foutside.txt")
     assert escaped.status_code in (404, 422)
+
+
+def test_artifact_drawer_cancels_stale_preview_requests() -> None:
+    script = (dashboard_app._PACKAGE_DIR / "static" / "dashboard.js").read_text(encoding="utf-8")
+
+    assert "artifactPreviewRequestId" in script
+    assert "new AbortController()" in script
+    assert 'error.name === "AbortError"' in script
+    assert "requestId !== artifactPreviewRequestId" in script
 
 
 def test_study_dossier_and_calibration_priority_join_latest_stored_evidence(
@@ -2772,7 +3219,7 @@ def test_launch_history_and_decluttered_static_copy(
 
     config_page = client.get(f"/config/{DEFAULT_CONFIG_NAME}").text
     assert "What the location changes" in config_page
-    assert "What stays fixed" in config_page
+    assert "Calibration scope" in config_page
     assert 'class="provider-note"' in config_page
 
     script = client.get("/static/dashboard.js").text

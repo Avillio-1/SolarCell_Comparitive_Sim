@@ -1,23 +1,14 @@
 # External field-validation data
 
-This directory keeps only the compact, processed daily CSV inputs needed to
-reproduce the documented field-validation analyses offline. Raw PVDAQ downloads,
-NASA POWER caches, and generated validation-output directories are intentionally
-excluded from Git.
+This directory contains compact processed daily inputs used by the three documented NREL PVDAQ
+holdouts. Raw downloads, NASA POWER caches, and generated reports are intentionally excluded from
+Git.
 
-## Sources and attribution
+The source dataset is NREL PVDAQ in the Open Energy Data Initiative, DOI
+[10.25984/1846021](https://doi.org/10.25984/1846021). NASA POWER weather must be cited using its
+[referencing guide](https://power.larc.nasa.gov/docs/referencing/).
 
-- NREL PVDAQ public datasets: Open Energy Data Initiative (OEDI), DOI
-  [10.25984/1846021](https://doi.org/10.25984/1846021). Cite the dataset as
-  described on its [OEDI catalog page](https://data.openei.org/submissions/4568).
-- NASA POWER weather data: obtained from the NASA Langley Research Center POWER
-  project. Follow the [POWER referencing guide](https://power.larc.nasa.gov/docs/referencing/)
-  and record the service version and access date when regenerating a cache.
-
-The processed CSVs are derived from the public PVDAQ data. They are not original
-project measurements.
-
-## Tracked processed inputs
+## Tracked inputs
 
 | File | SHA-256 |
 | --- | --- |
@@ -29,16 +20,5 @@ project measurements.
 | `pvdaq_system_1429_2017_h1_measured.csv` | `ecc547dc55731bbeb6e1d7634e9112378e21553ec3c57c7a7d861a1599349a85` |
 | `pvdaq_system_1429_2017_tuning_janapr.csv` | `8ec0fbb620ab443e213c2a8783d711ff4e25c64b125442e7191a5a3abca62b8d` |
 
-## Reproduction
-
-Use `scripts/download_pvdaq_days.py` to fetch raw PVDAQ day files and
-`scripts/convert_field_dataset.py` to recreate the processed daily inputs. The
-site-specific commands and validation protocol are documented in:
-
-- `docs/audits/pvdaq34_field_validation_2026-07-18.md`
-- `docs/audits/rtc_multi_site_field_validation.md`
-
-Running `validate-field` recreates the ignored `*_nasa_cache/` and
-`*_validation_outputs/` directories. Preserve release-grade results outside the
-source repository (for example, in a GitHub Release or research-data archive)
-and record their checksums in the corresponding audit document.
+Reproduction and data-quality rules are documented in
+[docs/validation/reproducibility.md](../../docs/validation/reproducibility.md).
