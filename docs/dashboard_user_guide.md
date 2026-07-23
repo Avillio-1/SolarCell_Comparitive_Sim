@@ -75,9 +75,11 @@ Notes and known limits:
 selected configuration, not a marketing hero. It shows the resolved site and
 coordinates, an offline locator map (clicking it opens the location picker on
 the config page), simulation period, assumption set, exact weather-cache
-readiness, and the most recent matching run's winner and margin. Changing the
-configuration selector updates the cockpit as well as the launch-period fields
-and sensitivity catalog.
+readiness, and the most recent compatible run's winner and margin. Compatibility
+uses a versioned fingerprint of the decision-relevant resolved configuration,
+plus stored weather and parameter-registry checksums when available; a matching
+run-ID prefix alone is not enough. Changing the configuration selector updates
+the cockpit as well as the launch-period fields and sensitivity catalog.
 
 **Configuration and period.** The bundled **Default** configuration
 (`configs/default.yaml`) starts with the Riyadh site, **live NASA POWER weather**
@@ -89,17 +91,24 @@ the resolved dates are recorded in that run's `config_resolved.yaml`.
 
 Partial-year and multi-year periods are useful for simulation experiments, but
 annual-labelled output fields then represent the configured period total. The
-comparison intentionally blocks an economic recommendation unless the period
+dashboard labels those records **Configured-period**, marks them exploratory or
+on hold rather than verified, and does not apply winner or “best” highlighting.
+The source artifacts retain their legacy `annual_*` field names. The comparison
+intentionally blocks an economic recommendation unless the period
 is exactly one Jan 1–Dec 31 site-year. Live NASA POWER runs also depend on the
 requested dates being available from the provider.
 
 Because the provider is live, the site coordinates genuinely drive the
 simulation — see "Map location picker" below. The first run for a given
 location and period fetches the weather from NASA POWER (internet required)
-and caches it under `data/cache/weather`; later runs reuse the cache.
+and caches it under `data/cache/weather`; later runs reuse the cache. The
+cockpit's **needs fetch** state is therefore informational, not a blocked
+launch: starting the study performs that first fetch automatically.
 
 **Analyses.** The launch form asks the question first: five radio cards phrase
 each analysis as the question it answers, with the method name as fine print.
+Only controls for the selected question participate in browser validation, so
+switching methods cannot leave a hidden invalid field blocking the launch.
 
 | Question card | Method | Wraps |
 |---|---|---|
@@ -156,22 +165,27 @@ session never deletes run directories; those are managed separately (below).
 Finished sessions are persisted to `outputs/.dashboard_jobs.json`, so cards
 survive server restarts.
 
-**The run archive.** The gallery shows every run directory under `outputs/`
-(dashboard- or CLI-made), **grouped by study** — the site, period, and
-assumption set stored in each run's own `config_resolved.yaml` — with studies
-ordered by their most recent run and runs newest-first inside each study. A
-study header rules off each block, so "Riyadh · 2025 · central-v2" reads as
-one investigation rather than a flat list of ids. Cards lead with the finding:
-site, human date, the stored winner with its margin (or the MC majority
-winner's win share), and the validity chip; the run id is demoted to small
-type. Older card batches append automatically near the bottom; the button
-there is a manual fallback, not pagination. Fingerprints load only when their
-cards approach the viewport. **Select all** loads and selects the remaining
-batches before enabling the bulk action. Comparison packages that contain
-daily artifacts carry one slice per stored day, combining daily GHI and
-baseline cleanliness, with stored cleaning events as ticks; packages without
-daily artifacts show an explicit "daily tape unavailable" hatch rather than
-inventing a year.
+**The run archive.** The archive retains every run directory under `outputs/`
+(dashboard- or CLI-made), but its **Run source** filter defaults to study runs.
+Obvious technical fixtures (`test-*` and `offline-fixture-*`) remain stored and
+can be revealed explicitly; they are never silently deleted. Runs are
+**grouped by study** — the site, period, decision-config fingerprint, and
+assumption set stored with the run — with studies ordered by their most recent
+run and runs newest-first inside each study. Every study owns its own responsive
+card grid, so a one- or two-run study cannot leave artificial holes before the
+next heading. The short fingerprint beside the heading distinguishes studies
+whose readable labels happen to match.
+
+Cards use one evidence-based state: **Certified**, **Not certified**,
+**Complete**, **Incomplete**, or **Status unknown**. A declined recommendation
+is not mislabeled as a crashed process, and an uncertified strategy is not
+presented as a winner. **View details** is the primary action; export and the
+two-step destructive action remain secondary. Text, analysis type, status, and
+source filters operate across the stored archive. **Select all matching runs**
+loads any remaining batches and selects only the currently matching cards.
+Fingerprints still load lazily as cards approach the viewport; packages without
+daily artifacts state that the daily tape is unavailable rather than inventing
+one.
 
 Selecting cards raises a **contextual action bar** pinned near the bottom of
 the panel (count, Compare 2 selected, Delete selected, Clear) so actions stay
@@ -223,7 +237,8 @@ Reading order is intentional:
    near-identical lines. If any reconciliation check fails the block turns
    red, a notice quotes the stored failure, and the ranking section is absent
    — the dashboard never shows a winner the backend refused to certify.
-1. **Finding banner and decision strip.** The declarative stored finding, a
+1. **Decision first.** The declarative stored finding appears immediately after
+   identity and certification, before navigation or supporting analysis. A
    **decision strip** — the stored net change vs baseline per scenario drawn
    as diverging bars around a zero line (bar length is the same purely visual
    |value|/max scaling the KPI micro-bars use) — and compact headline cards
@@ -233,13 +248,13 @@ Reading order is intentional:
    baseline wins, the margin card relabels to "Best mitigation falls short
    by" (same stored number, honest framing) and the degenerate "energy gain
    vs baseline: 0" card is dropped.
-2. **Related runs.** A strip under the command bar lists the study's other
-   stored runs (same site, period, and assumption set) with a one-line stored
+2. **Related runs.** A visibly dashed **Live study context** strip under the
+   command bar lists compatible stored runs with a one-line stored
    finding each — the Monte Carlo majority winner, the tornado's top driver,
    break-even crossings — plus a "Compare against" selector that opens the
-   two-run diff. Runs stop being islands: the comparison, its uncertainty
-   check, and its sensitivity sweeps read as one investigation.
-3. **Ranking and recommendation.** The annual financial-outcome ranking makes
+   two-run diff. These links and joined values come from the current archive,
+   are not part of the immutable run package, and are excluded when printing.
+3. **Ranking and recommendation.** The period-aware financial-outcome ranking makes
    the stored arithmetic visible at the decision point: value of extra energy,
    added annual cost, net change versus baseline, and total net annual benefit.
    A formula strip names the run's stored electricity tariff, and each scenario
@@ -250,9 +265,10 @@ Reading order is intentional:
    full assumption list (collapsible). The cost-boundary note makes clear that
    common solar-farm costs are outside the mitigation decision, so baseline has
    no mitigation CAPEX or OPEX.
-4. **Annual KPIs.** Selected columns of `scenario_annual_summary.csv`,
+4. **Period KPIs.** Selected columns of `scenario_annual_summary.csv`,
    transposed so scenarios read across. The best stored value in each row is
-   highlighted green **and marked ▲** (information survives without colour)
+   highlighted green **and marked ▲** only for an accepted, reconciled result
+   (information survives without colour)
    using the metric's direction: higher is better for revenue, energy gain,
    net benefit, and ROI; lower is better for losses, costs, payback, and
    LCOE. Operational rows (water, crew hours, drone hours) are not ranked.
@@ -260,7 +276,7 @@ Reading order is intentional:
    (keyboard- and touch-accessible, unlike hover tooltips), and a collapsible
    "What these metrics mean" glossary spells out ROI, payback, LCOE, and
    annualized CAPEX.
-5. **Annual water balance.** Three alternative-strategy cards select the
+5. **Water balance.** Three alternative-strategy cards select the
    stored external cleaning-water use, harvested coating dew, net water
    position, litre and cubic-metre volumes, 1,000 L tank equivalents, and
    dew-eligible nights from `scenario_annual_summary.csv`. Net position and
@@ -276,7 +292,7 @@ Reading order is intentional:
    gate, dew margin, per-square-metre harvest rate, and whole-farm one-hour
    rate. The preview fixes irradiance at 0 W/m² and exposure at one hour; it
    is non-persistent and does not alter the annual record.
-7. **The daily explorer — one instrument for the year.** A metric switcher
+7. **The daily explorer — one instrument for the configured period.** A metric switcher
    redraws the main chart from the same stored daily columns: **Energy**
    (`actual_energy_kwh`, with the clean-reference dashes), **Loss**
    (`energy_loss_kwh`), **Cleanliness** (the stored scenario cleanliness
@@ -299,7 +315,9 @@ Reading order is intentional:
    field: quoted / provisional / blocked) is deliberately not in the main
    table — it lives in the collapsed "Evidence status & sources (advanced)"
    section together with sources and notes.
-9. **Artifacts.** A download link for every file plus a full-run `.zip`.
+9. **Artifacts.** A download link for every file plus a full-run `.zip`. Normal
+   activation opens a keyboard-contained native dialog preview; focus returns
+   to the triggering file when it closes, while downloading remains explicit.
 
 The sticky section nav highlights the section currently in view (scroll spy).
 Between the KPI table and explorer, a collapsed strategy-rhythm disclosure
@@ -311,7 +329,9 @@ glyphs identify baseline (bare panel), reactive
 ### Audit mode and print
 
 **Audit mode** turns source-annotated values and figures into dotted,
-clickable traces. Clicking opens a source card **anchored next to the clicked
+clickable traces. Leaf annotations become keyboard-focusable, while annotated
+containers with their own controls do not create duplicate tab stops. Clicking
+opens a source card **anchored next to the clicked
 value** naming the artifact and field; cost components also show the stored
 quantity/rate note and the matching numbered reconciliation check. While
 armed, a banner under the topbar states "AUDIT ACTIVE" and `Esc` exits. This
@@ -320,7 +340,7 @@ anchored-popover component replaces hover-only `title` tooltips everywhere
 (reconciliation chips, KPI definitions, winner-map cells), so the information
 is reachable by keyboard and touch.
 
-The print stylesheet removes application chrome, forces an A4 landscape
+The print stylesheet removes application chrome and live archive context, forces an A4 landscape
 calculation-record palette, preserves rules/hatching, and keeps the bilingual
 title block and verification stamp. Invalid and missing winner-map cells use
 diagonal drawing hatch in screen and print output.
@@ -328,7 +348,7 @@ diagonal drawing hatch in screen and print output.
 ## Compare runs
 
 The two-run page is a diff: changed resolved-config assumptions are rendered as
-minus/plus lines, identical fields are collapsed, and changed annual KPIs show
+minus/plus lines, identical fields are collapsed, and changed stored-period KPIs show
 paired values plus a directional delta. The preferred KPI direction is used
 only to colour the displayed change; it does not alter either stored run.
 Framing follows the studies: two runs of the **same** study read as

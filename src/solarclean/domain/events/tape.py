@@ -86,15 +86,19 @@ class DailyEventInputs:
     date: date
     dust_multiplier: float = 1.0
     dust_event_loss_fraction: float | None = None
-    cohort_variation_multipliers: MappingProxyType[int, float] = MappingProxyType({})
-    bird_coverage_additions: MappingProxyType[int, float] = MappingProxyType({})
+    cohort_variation_multipliers: MappingProxyType[int, float] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    bird_coverage_additions: MappingProxyType[int, float] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
 
 @dataclass(frozen=True)
 class ExogenousEventTape:
     seed: int
     events: tuple[ExogenousEvent, ...]
-    metadata: Mapping[str, object] = MappingProxyType({})
+    metadata: Mapping[str, object] = field(default_factory=lambda: MappingProxyType({}))
     _events_by_date: MappingProxyType[date, tuple[ExogenousEvent, ...]] = field(
         init=False,
         repr=False,

@@ -56,7 +56,7 @@
 
 <section class="panel diff-panel">
   <div class="panel-heading compact-heading">
-    <div><span class="step-label">Result diff</span><h2>Annual KPIs · changed values</h2></div>
+    <div><span class="step-label">Result diff</span><h2>Stored-period KPIs · changed values</h2></div>
     <span class="diff-collapse-count mono">{{ kpi_diff.identical_count }} identical KPI values collapsed</span>
   </div>
   {% if kpi_diff.rows %}
@@ -81,7 +81,7 @@
   </div>
   <p class="hint">Run A and Run B use neutral shading. Only the delta is judged: green means the stored change moved in the KPI's preferred direction, and red means it moved away. Operational quantities are directional only, not judged.</p>
   {% else %}
-  <p class="empty">No changed annual KPI values were found in the two stored summaries.</p>
+  <p class="empty">No changed stored-period KPI values were found in the two summaries.</p>
   {% endif %}
 </section>
 

@@ -4,10 +4,16 @@
 {% block title %}{{ run_id }} · SolarClean-DT{% endblock %}
 {% block body_class %}run-document{% endblock %}
 {% block content %}
+{% set period_heading = 'Annual' if period_is_full_year else 'Configured-period' %}
+{% set period_noun = 'year' if period_is_full_year else 'configured period' %}
+{% set period_value_unit = 'SAR/year' if period_is_full_year else 'SAR/configured period' %}
+{% set result_certified = recommendation and recommendation.valid and
+  recommendation.recommendation_tier != 'exploratory' and
+  (not reconciliation or reconciliation.passed) %}
 
 <div class="document-head">
   <div class="document-ident">
-    <span class="eyebrow">Annual strategy comparison</span>
+    <span class="eyebrow">{{ period_heading }} strategy comparison</span>
     <h1>Engineering comparison record</h1>
     {{ run_fingerprint(fingerprint, "medium", run_id ~ " fingerprint", element_id="run-fingerprint-source") }}
   </div>
@@ -16,79 +22,18 @@
 
 {% include "_certification.html" %}
 
-{% if calibration_priority %}
-<section class="calibration-priority" id="calibration-priority"
-         aria-labelledby="calibration-priority-title">
-  <div class="calibration-priority-heading">
-    <div>
-      <span class="certification-kicker">CALIBRATION PRIORITY / أولوية المعايرة</span>
-      <h2 id="calibration-priority-title">Where to spend calibration effort</h2>
-    </div>
-    <p>Weak-evidence parameters ranked by their stored same-study sensitivity swing. Validating
-      these inputs would most directly improve the recommendation’s evidence tier.</p>
-  </div>
-  {% if calibration_priority.rows %}
-  <div class="scroll-x">
-    <table class="data-table calibration-priority-table">
-      <thead><tr><th>#</th><th>Parameter</th><th>Evidence</th><th>Uncertain range</th>
-        <th class="num">Stored swing</th></tr></thead>
-      <tbody>
-        {% for row in calibration_priority.rows %}
-        <tr data-audit-source="{{ row.audit_source }}"
-            data-audit-detail="Display-only join of the recommendation's weak-evidence list and the newest same-study one-way sensitivity ranking.">
-          <td class="mono">{{ loop.index }}</td>
-          <th scope="row"><code>{{ row.parameter_name }}</code></th>
-          <td><span class="chip chip-evidence">{{ row.evidence_status }}</span></td>
-          <td class="mono">{{ row.uncertainty_range }}</td>
-          <td class="num mono">{{ row.swing_sar | sar }} SAR</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% if calibration_priority.run_id %}
-  <p class="hint">Sensitivity ranking:
-    <a class="mono" href="/run/{{ calibration_priority.run_id }}">{{ calibration_priority.run_id }}</a>.
-    No values were recomputed on this page.</p>
-  {% endif %}
-  {% else %}
-  {% if calibration_priority.missing_sensitivity %}
-  <p class="calibration-nudge">No same-study one-way sensitivity run exists yet. Launch one to
-    rank the low-confidence inputs by stored outcome swing.</p>
-  {% else %}
-  <p class="calibration-nudge">The newest same-study one-way run did not sweep any parameter in
-    this recommendation’s stored weak-evidence list. Re-run the sweep with those inputs selected.</p>
-  {% endif %}
-  {% endif %}
-</section>
+{% if not period_is_full_year %}
+<p class="warn-note period-integrity-note" role="note"><strong>Configured-period record.</strong>
+  Source columns keep their legacy <code>annual_*</code> names, but the displayed totals cover
+  only the dates stamped above. This record is not an annual economic recommendation.</p>
 {% endif %}
 
-<div class="run-head run-command-bar">
-  <a class="quiet-link run-back-link" href="/">&larr; back to runs</a>
-  <span class="run-head-actions">
-    {% if rerun_supported %}
-    <button type="button" id="rerun-btn" data-run-id="{{ run_id }}" title="Repeat this analysis with the run's own stored config snapshot">re-run this analysis</button>
-    {% endif %}
-    <button type="button" class="print-record" onclick="window.print()">print stamped record</button>
-    <a class="quiet-link" href="/api/runs/{{ run_id }}/download">download full run (.zip)</a>
-  </span>
-  <span id="rerun-status" class="hint" role="status"></span>
-</div>
-
-{% include "_related_runs.html" %}
-
-<nav class="section-nav" aria-label="Sections of this record">
-  <span class="section-nav-label">On this record</span>
-  {% if recommendation and ranking and ranking.ranking %}<a href="#ranking">Ranking</a>{% endif %}
-  {% if kpi_table %}<a href="#annual-kpis">Annual KPIs</a>{% endif %}
-  {% if water_balance %}<a href="#water-balance">Water balance</a>{% endif %}
-  {% if dew_simulator %}<a href="#dew-simulator">Dew simulator</a>{% endif %}
-  {% if coating_service_life %}<a href="#coating-service-life">Coating service life</a>{% endif %}
-  {% if detection_performance %}<a href="#detection-performance">Detection</a>{% endif %}
-  {% if daily_energy %}<a href="#energy-explorer">Daily explorer</a>{% endif %}
-  {% if cost_table %}<a href="#cost-components">Costs</a>{% endif %}
-  <a href="#artifact-files">Artifacts</a>
-</nav>
+<section class="record-group record-group-decision" id="decision"
+         aria-labelledby="decision-group-title">
+  <header class="record-group-heading">
+    <span class="eyebrow">Decision</span>
+    <p class="record-group-title" id="decision-group-title">Recommendation and financial outcome</p>
+  </header>
 
 {% if finding or headline or decision_strip %}
 <section class="finding-banner" aria-label="Stored finding">
@@ -102,7 +47,7 @@
        data-audit-detail="Stored net change vs baseline per scenario; bar length is |value| relative to the largest, a purely visual scale.">
     <div class="decision-heading">
       <strong>Net change vs doing nothing</strong>
-      <span class="hint">SAR/year · stored incremental figures — right of the line adds value, left loses it</span>
+      <span class="hint">{{ period_value_unit }} · stored incremental figures — right of the line adds value, left loses it</span>
     </div>
     {% for row in decision_strip.rows %}
     <div class="decision-row{{ ' decision-reference' if row.is_reference }}">
@@ -118,19 +63,20 @@
         {% if row.is_reference %}0 · reference{% else %}{{ row.display }}{% endif %}
       </span>
       {% if row.win_percent is not none %}
-      <span class="decision-win mono" title="Stored Monte Carlo win probability from the related run">wins {{ row.win_percent }}% of trials</span>
+      <span class="decision-win mono live-study-context print-exclude" title="Stored Monte Carlo win probability from the related run">live context · wins {{ row.win_percent }}% of trials</span>
       {% endif %}
     </div>
     {% endfor %}
     {% if decision_strip.mc %}
-    <p class="hint decision-mc-note" data-audit-source="monte_carlo_summary.json · scenario win_probability"
+    <p class="hint decision-mc-note live-study-context print-exclude" data-audit-source="monte_carlo_summary.json · scenario win_probability"
        data-audit-detail="Stored win probabilities from the newest same-study Monte Carlo run.">
-      Certainty from Monte Carlo run
+      <strong>Live study context:</strong> certainty from Monte Carlo run
       <a href="/run/{{ decision_strip.mc.run_id }}" class="mono">{{ decision_strip.mc.run_id }}</a>
       ({{ decision_strip.mc.reconciled_trial_count }} of {{ decision_strip.mc.trial_count }} trials reconciled).
     </p>
     {% else %}
-    <p class="hint decision-mc-note">No same-study Monte Carlo run exists yet — launch one to see
+    <p class="hint decision-mc-note live-study-context print-exclude"><strong>Live study context:</strong>
+      no same-study Monte Carlo run exists yet — launch one to see
       how seed-sensitive this margin is.</p>
     {% endif %}
   </div>
@@ -151,6 +97,31 @@
 </section>
 {% endif %}
 
+<div class="run-head run-command-bar print-exclude">
+  <a class="quiet-link run-back-link" href="/">&larr; back to runs</a>
+  <span class="run-head-actions">
+    {% if rerun_supported %}
+    <button type="button" id="rerun-btn" data-run-id="{{ run_id }}" title="Repeat this analysis with the run's own stored config snapshot">re-run this analysis</button>
+    {% endif %}
+    <button type="button" class="print-record" onclick="window.print()">print stamped record</button>
+    <a class="quiet-link" href="/api/runs/{{ run_id }}/download">download full run (.zip)</a>
+  </span>
+  <span id="rerun-status" class="hint" role="status"></span>
+</div>
+
+{% include "_related_runs.html" %}
+
+<nav class="section-nav print-exclude" aria-label="Sections of this record">
+  <span class="section-nav-label">On this record</span>
+  <a href="#decision">Decision</a>
+  {% if recommendation and ranking and ranking.ranking %}<a href="#ranking">Ranking</a>{% endif %}
+  {% if kpi_table %}<a href="#annual-kpis">{{ period_heading }} KPIs</a>{% endif %}
+  <a href="#operations">Operations</a>
+  {% if daily_energy %}<a href="#energy-explorer">Daily explorer</a>{% endif %}
+  <a href="#evidence">Evidence</a>
+  <a href="#artifact-files">Artifacts</a>
+</nav>
+
 {% if reconciliation and not reconciliation.passed %}
 {% set first_failed = (reconciliation.checks | rejectattr("passed") | list | first) %}
 <p class="warn-note"><strong>{{ first_failed.name }} failed:</strong>
@@ -160,33 +131,33 @@
 
 {% if recommendation and ranking and ranking.ranking %}
 <section class="panel" id="ranking">
-  <h2>Ranking by annual financial outcome</h2>
+  <h2>Ranking by {{ period_noun }} financial outcome</h2>
   {% if financial_ranking %}
   <div class="financial-formula" data-audit-source="scenario_annual_summary.csv · stored economics columns">
-    <strong>Total net annual benefit</strong>
+    <strong>Total net benefit for the {{ period_noun }}</strong>
     <span class="financial-operator">=</span>
-    <span>annual electricity revenue</span>
+    <span>{{ period_noun }} electricity revenue</span>
     <span class="financial-operator">−</span>
     <span>annualized CAPEX</span>
     <span class="financial-operator">−</span>
-    <span>annual OPEX</span>
+    <span>{{ period_noun }} OPEX</span>
   </div>
   <p class="hint financial-formula-note">
-    Electricity revenue = annual AC energy ×
+    Electricity revenue = {{ period_noun }} AC energy ×
     {% if financial_ranking.tariff_sar_per_kwh is not none %}<strong data-audit-source="metadata.json · economics_config.tariff_sar_per_kwh">{{ financial_ranking.tariff_sar_per_kwh | rate }} SAR/kWh</strong>{% else %}the run's stored tariff{% endif %}.
-    “Net change vs baseline” isolates whether the mitigation programme adds or removes annual
-    value compared with doing nothing.
+    “Net change vs baseline” isolates whether the mitigation programme adds or removes value
+    during the {{ period_noun }} compared with doing nothing.
   </p>
   <div class="scroll-x">
     <table class="data-table financial-ranking-table">
       <thead><tr><th>#</th><th>Scenario</th>
-        <th class="num">Value of extra energy<br><span>vs baseline · SAR/year</span></th>
-        <th class="num">Added annual cost<br><span>vs baseline · SAR/year</span></th>
-        <th class="num">Net change<br><span>vs baseline · SAR/year</span></th>
-        <th class="num">Total net annual benefit<br><span>SAR/year</span></th></tr></thead>
+        <th class="num">Value of extra energy<br><span>vs baseline · {{ period_value_unit }}</span></th>
+        <th class="num">Added {{ period_noun }} cost<br><span>vs baseline · {{ period_value_unit }}</span></th>
+        <th class="num">Net change<br><span>vs baseline · {{ period_value_unit }}</span></th>
+        <th class="num">Total net benefit<br><span>{{ period_value_unit }}</span></th></tr></thead>
       <tbody>
         {% for row in financial_ranking.rows %}
-        <tr class="{{ 'winner-row' if row.rank == 1 }}">
+        <tr class="{{ 'winner-row' if result_certified and row.rank == 1 }}">
           <td data-audit-source="scenario_ranking.json · ranking[{{ loop.index0 }}].rank">{{ row.rank }}{% if row.tied_with_previous %} (tie){% endif %}</td>
           <td>{{ strategy_label(row.scenario_id) }}</td>
           <td class="num mono" data-audit-source="{{ row.annual_audit_source }} · incremental_revenue_vs_baseline_sar">{{ row.incremental_revenue_sar | sar }}</td>
@@ -198,12 +169,12 @@
           <td></td>
           <td colspan="5">
             <details class="financial-calculation">
-              <summary>How {{ row.net_annual_benefit_sar | sar }} SAR/year is calculated</summary>
+              <summary>How {{ row.net_annual_benefit_sar | sar }} {{ period_value_unit }} is calculated</summary>
               <div class="calculation-ledger">
                 <span class="calculation-term">Electricity revenue</span>
                 <span class="calculation-inputs mono">{{ row.annual_actual_energy_kwh | display_number }} kWh ×
                   {% if financial_ranking.tariff_sar_per_kwh is not none %}{{ financial_ranking.tariff_sar_per_kwh | rate }} SAR/kWh{% else %}stored tariff{% endif %}</span>
-                <strong class="calculation-result mono" data-audit-source="{{ row.annual_audit_source }} · annual_revenue_sar">= {{ row.annual_revenue_sar | sar }} SAR/year</strong>
+                <strong class="calculation-result mono" data-audit-source="{{ row.annual_audit_source }} · annual_revenue_sar">= {{ row.annual_revenue_sar | sar }} {{ period_value_unit }}</strong>
 
                 <span class="calculation-term">Minus annualized CAPEX</span>
                 <span class="calculation-inputs">
@@ -213,18 +184,18 @@
                 </span>
                 <strong class="calculation-result mono" data-audit-source="{{ row.annual_audit_source }} · annualized_capex_sar">− {{ row.annualized_capex_sar | sar }} SAR/year</strong>
 
-                <span class="calculation-term">Minus annual OPEX</span>
+                <span class="calculation-term">Minus {{ period_noun }} OPEX</span>
                 <span class="calculation-inputs">Recurring scenario operating costs</span>
-                <strong class="calculation-result mono" data-audit-source="{{ row.annual_audit_source }} · annual_opex_sar">− {{ row.annual_opex_sar | sar }} SAR/year</strong>
+                <strong class="calculation-result mono" data-audit-source="{{ row.annual_audit_source }} · annual_opex_sar">− {{ row.annual_opex_sar | sar }} {{ period_value_unit }}</strong>
 
-                <span class="calculation-term calculation-total-label">Total net annual benefit</span>
+                <span class="calculation-term calculation-total-label">Total net benefit for the {{ period_noun }}</span>
                 <span class="calculation-inputs calculation-total-label">Revenue minus annualized scenario costs</span>
-                <strong class="calculation-result calculation-total mono" data-audit-source="{{ row.annual_audit_source }} · net_annual_benefit_sar">= {{ row.net_annual_benefit_sar | sar }} SAR/year</strong>
+                <strong class="calculation-result calculation-total mono" data-audit-source="{{ row.annual_audit_source }} · net_annual_benefit_sar">= {{ row.net_annual_benefit_sar | sar }} {{ period_value_unit }}</strong>
               </div>
               <p class="incremental-equation mono" data-audit-source="{{ row.annual_audit_source }} · incremental comparison columns">
                 Versus baseline: {{ row.incremental_revenue_sar | sar }} extra revenue −
-                {{ row.incremental_annual_cost_sar | sar }} added annual cost =
-                <strong>{{ row.incremental_net_annual_benefit_sar | sar }} SAR/year</strong>.
+                {{ row.incremental_annual_cost_sar | sar }} added {{ period_noun }} cost =
+                <strong>{{ row.incremental_net_annual_benefit_sar | sar }} {{ period_value_unit }}</strong>.
               </p>
             </details>
           </td>
@@ -240,11 +211,11 @@
   <p class="hint">This legacy run does not contain the stored incremental financial columns needed
     for the explanatory breakdown. Its accepted ranking is shown unchanged.</p>
   <table class="data-table">
-    <thead><tr><th>#</th><th>Scenario</th><th class="num">Annual AC energy (kWh)</th>
-      <th class="num">Gain vs baseline (kWh)</th><th class="num">Total net annual benefit (SAR/year)</th></tr></thead>
+    <thead><tr><th>#</th><th>Scenario</th><th class="num">{{ period_heading }} AC energy (kWh)</th>
+      <th class="num">Gain vs baseline (kWh)</th><th class="num">Total net benefit ({{ period_value_unit }})</th></tr></thead>
     <tbody>
       {% for row in ranking.ranking %}
-      <tr class="{{ 'winner-row' if row.rank == 1 }}">
+      <tr class="{{ 'winner-row' if result_certified and row.rank == 1 }}">
         <td data-audit-source="scenario_ranking.json · ranking[{{ loop.index0 }}].rank">{{ row.rank }}{% if row.tied_with_previous %} (tie){% endif %}</td>
         <td>{{ strategy_label(row.scenario_id) }}</td>
         <td class="num mono" data-audit-source="scenario_ranking.json · {{ row.scenario_id }}.annual_actual_energy_kwh">{{ row.annual_actual_energy_kwh | display_number }}</td>
@@ -276,16 +247,17 @@
 
 {% if kpi_table %}
 <section class="panel" id="annual-kpis">
-  <h2>Annual KPIs</h2>
+  <h2>{{ period_heading }} KPIs</h2>
   <table class="data-table kpi-table">
     <thead><tr><th scope="col"><span class="visually-hidden">KPI</span></th>{% for s in kpi_table.scenarios %}<th class="num" scope="col">{{ strategy_label(s) }}</th>{% endfor %}</tr></thead>
     <tbody>
       {% for row in kpi_table.rows %}
-      <tr><th scope="row"{% if row.help %} class="has-help" tabindex="0" data-pop="{{ row.help }}"{% endif %}>{{ row.label }}</th>
-        {% for v in row["values"] %}<td class="num mono{{ ' best-cell' if row.best[loop.index0] }}"
+      {% set display_label = row.label if period_is_full_year else row.label | replace('Annual ', 'Configured-period ') | replace('annual ', 'configured-period ') %}
+      <tr><th scope="row"{% if row.help %} class="has-help" tabindex="0" data-pop="{{ row.help }}"{% endif %}>{{ display_label }}</th>
+        {% for v in row["values"] %}<td class="num mono{{ ' best-cell' if result_certified and row.best[loop.index0] }}"
           data-kpi-value="{{ v }}"
           data-audit-source="{{ row.audit_sources[loop.index0] }}"
-          data-audit-detail="Stored value shown with display rounding; download the CSV for full precision.">{% if row.best[loop.index0] %}<span class="best-mark" aria-hidden="true">▲</span><span class="visually-hidden">best in row: </span>{% endif %}{{ v | display_number }}</td>{% endfor %}
+          data-audit-detail="Stored value shown with display rounding; download the CSV for full precision.">{% if result_certified and row.best[loop.index0] %}<span class="best-mark" aria-hidden="true">▲</span><span class="visually-hidden">best in row: </span>{% endif %}{{ v | display_number }}</td>{% endfor %}
       </tr>
       {% endfor %}
     </tbody>
@@ -294,23 +266,39 @@
     <summary>What these metrics mean</summary>
     <ul class="glossary">
       {% for row in kpi_table.rows %}{% if row.help %}
-      <li><strong>{{ row.label }}</strong> — {{ row.help }}</li>
+      {% set glossary_label = row.label if period_is_full_year else row.label | replace('Annual ', 'Configured-period ') | replace('annual ', 'configured-period ') %}
+      <li><strong>{{ glossary_label }}</strong> — {{ row.help }}</li>
       {% endif %}{% endfor %}
     </ul>
   </details>
+  {% if result_certified %}
   <p class="hint"><span class="best-key"></span> ▲ best value in each row (green): higher is better
     for revenue, energy gain, net benefit, and ROI; lower is better for losses, costs, payback,
     and LCOE. Operational rows (water, crew, drone hours) are not ranked. Rounded for reading —
     full precision is in
     <a href="/api/runs/{{ run_id }}/artifact/scenario_annual_summary.csv">scenario_annual_summary.csv</a>.</p>
+  {% else %}
+  <p class="hint">No “best” cells are highlighted because this run is not certified. Values are
+    preserved for inspection; full precision is in
+    <a href="/api/runs/{{ run_id }}/artifact/scenario_annual_summary.csv">scenario_annual_summary.csv</a>.</p>
+  {% endif %}
 </section>
 {% endif %}
+
+</section>
+
+<section class="record-group record-group-operations" id="operations"
+         aria-labelledby="operations-group-title">
+  <header class="record-group-heading">
+    <span class="eyebrow">Operations</span>
+    <p class="record-group-title" id="operations-group-title">Resources, performance, and daily traces</p>
+  </header>
 
 {% if water_balance %}
 <section class="panel water-balance-panel" id="water-balance">
   <div class="water-section-heading">
     <div>
-      <span class="eyebrow">Annual resource ledger</span>
+      <span class="eyebrow">{{ period_heading }} resource ledger</span>
       <h2>Water balance by strategy</h2>
     </div>
     <p>Net water position = harvested dew − external cleaning water. Each card is an
@@ -320,7 +308,7 @@
     {% for row in water_balance.rows %}
     <article class="water-strategy-card water-net-{{ row.net_tone }}"
              data-audit-source="{{ row.audit_source }}"
-             data-audit-detail="Every displayed volume and conversion is stored in the annual summary.">
+             data-audit-detail="Every displayed volume and conversion is stored in the configured-period summary.">
       <h3>{{ strategy_label(row.scenario_id) }}</h3>
       <div class="water-net">
         <span>Net water position</span>
@@ -372,7 +360,7 @@
 <section class="panel dew-simulator-panel" id="dew-simulator"
          data-endpoint="{{ dew_simulator.endpoint }}"
          data-audit-source="config_resolved.yaml · coating domain physics preview"
-         data-audit-detail="Interactive one-hour nighttime scenario; it does not modify the stored annual run.">
+         data-audit-detail="Interactive one-hour nighttime scenario; it does not modify the stored run.">
   <div class="dew-simulator-heading">
     <div>
       <span class="eyebrow">Interactive nighttime test</span>
@@ -443,7 +431,7 @@
 <section class="panel service-life-panel" id="coating-service-life">
   <div class="instrument-section-heading">
     <div>
-      <span class="eyebrow">Stored annual operating trace</span>
+      <span class="eyebrow">Stored {{ period_noun }} operating trace</span>
       <h2>Coating service life</h2>
     </div>
     <p>Age, effectiveness, energy effects, and overnight condensation are date-aligned stored
@@ -453,7 +441,7 @@
     <figure class="record-chart record-chart-wide"
             data-audit-source="scenario_daily_summary.csv · coating.extension_coating_age_days + extension_coating_effectiveness_fraction">
       <figcaption><strong>Effectiveness vs age</strong>
-        <span>Does the stored coating response persist through year-end?</span></figcaption>
+        <span>Does the stored coating response persist through {% if period_is_full_year %}year-end{% else %}the configured period{% endif %}?</span></figcaption>
       <div class="record-chart-frame">
         <canvas id="coating-effectiveness-chart" height="92" role="img"
                 aria-label="Line chart of stored coating effectiveness fraction and coating age across the run"
@@ -513,13 +501,13 @@
       <h2>Detection performance</h2>
     </div>
     <p>Did the drones see actionable contamination, and did the resulting work queue recover
-      energy? Annual counts stay separate from the stored daily detection fields.</p>
+      energy? {{ period_heading }} counts stay separate from the stored daily detection fields.</p>
   </div>
   {% if detection_performance.annual_rows %}
-  <div class="detection-facts" aria-label="Stored annual reactive operation counts">
+  <div class="detection-facts" aria-label="Stored {{ period_noun }} reactive operation counts">
     {% for row in detection_performance.annual_rows %}
     <article data-audit-source="{{ row.audit_source }}"
-             data-audit-detail="Stored annual operational counts; daily true/false detections are not summed into annual confusion totals.">
+             data-audit-detail="Stored configured-period operational counts; daily true/false detections are not summed into confusion totals.">
       <h3>{{ strategy_label(row.scenario_id) }}</h3>
       <dl>
         <div><dt>Whole-farm surveys</dt><dd class="mono">{{ row.survey_count | display_number }}</dd></div>
@@ -552,7 +540,7 @@
     </figure>
   </div>
   <p class="hint"><strong>Boundary:</strong> daily TP/FP/FN fields are read as daily diagnostics.
-    They are not added into annual confusion totals because no annual confusion-total artifact is
+    They are not added into period confusion totals because no aggregate confusion-total artifact is
     stored.</p>
 </section>
 {% endif %}
@@ -562,7 +550,7 @@
   <div class="energy-explorer-heading">
     <div>
       <h2>Daily explorer</h2>
-      <p>One instrument for the year: pick a metric, focus one strategy or compare all three.
+      <p>One instrument for the {{ period_noun }}: pick a metric, focus one strategy or compare all three.
         Hover to explore; click a date to keep its explanation open.</p>
     </div>
     <div class="explorer-pickers">
@@ -608,7 +596,7 @@
   </div>
 
   <div class="explorer-fingerprint" id="explorer-scrubber">
-    <span class="instrument-label">Shared-year fingerprint · GHI / dust / cleaning events —
+    <span class="instrument-label">{{ period_heading }} fingerprint · GHI / dust / cleaning events —
       drag across it to zoom the explorer, click to select a day</span>
     {{ run_fingerprint(none, "full", run_id ~ " full-width fingerprint", source="run-fingerprint-source") }}
     <button type="button" id="scrubber-reset" class="scrubber-reset" hidden>Reset range</button>
@@ -767,10 +755,10 @@
       <tr class="cost-total-row"><td>Annualized CAPEX
           {% if sc.capital_recovery_life_years %}<span class="hint-inline">(recovered over {{ sc.capital_recovery_life_years | display_number }} yr)</span>{% endif %}</td>
         <td class="num mono" data-audit-source="{{ sc.audit_source }} · annualized_capex_sar">{{ sc.annualized_capex_sar | sar }}</td><td class="unit">SAR/year</td></tr>
-      <tr class="cost-total-row"><td>Annual OPEX</td>
-        <td class="num mono" data-audit-source="{{ sc.audit_source }} · annual_opex_sar">{{ sc.annual_opex_sar | sar }}</td><td class="unit">SAR/year</td></tr>
-      <tr class="cost-total-row cost-grand-total"><td>Total annual cost</td>
-        <td class="num mono" data-audit-source="{{ sc.audit_source }} · total_annual_cost_sar">{{ sc.total_annual_cost_sar | sar }}</td><td class="unit">SAR/year</td></tr>
+      <tr class="cost-total-row"><td>{{ period_heading }} OPEX</td>
+        <td class="num mono" data-audit-source="{{ sc.audit_source }} · annual_opex_sar">{{ sc.annual_opex_sar | sar }}</td><td class="unit">{{ period_value_unit }}</td></tr>
+      <tr class="cost-total-row cost-grand-total"><td>Total {{ period_noun }} cost</td>
+        <td class="num mono" data-audit-source="{{ sc.audit_source }} · total_annual_cost_sar">{{ sc.total_annual_cost_sar | sar }}</td><td class="unit">{{ period_value_unit }}</td></tr>
     </tbody>
   </table>
   <details class="assumption-block evidence-block">
@@ -791,9 +779,63 @@
   </details>
   {% else %}
   <p class="empty">No cost components — the {{ sc.scenario }} scenario runs no mitigation
-    programme (total annual cost {{ sc.total_annual_cost_sar | sar }} SAR).</p>
+    programme (total {{ period_noun }} cost {{ sc.total_annual_cost_sar | sar }} SAR).</p>
   {% endif %}
   {% endfor %}
+</section>
+{% endif %}
+
+</section>
+
+<section class="record-group record-group-evidence" id="evidence"
+         aria-labelledby="evidence-group-title">
+  <header class="record-group-heading">
+    <span class="eyebrow">Evidence</span>
+    <p class="record-group-title" id="evidence-group-title">Calibration priorities and stored artifacts</p>
+  </header>
+
+{% if calibration_priority %}
+<section class="calibration-priority live-study-context print-exclude" id="calibration-priority"
+         aria-labelledby="calibration-priority-title">
+  <div class="calibration-priority-heading">
+    <div>
+      <span class="certification-kicker">LIVE STUDY CONTEXT · CALIBRATION PRIORITY / أولوية المعايرة</span>
+      <h2 id="calibration-priority-title">Where to spend calibration effort</h2>
+    </div>
+    <p>Weak-evidence parameters ranked by their stored same-study sensitivity swing. Validating
+      these inputs would most directly improve the recommendation’s evidence tier.</p>
+  </div>
+  {% if calibration_priority.rows %}
+  <div class="scroll-x">
+    <table class="data-table calibration-priority-table">
+      <thead><tr><th>#</th><th>Parameter</th><th>Evidence</th><th>Uncertain range</th>
+        <th class="num">Stored swing</th></tr></thead>
+      <tbody>
+        {% for row in calibration_priority.rows %}
+        <tr data-audit-source="{{ row.audit_source }}"
+            data-audit-detail="Display-only join of the recommendation's weak-evidence list and the newest same-study one-way sensitivity ranking.">
+          <td class="mono">{{ loop.index }}</td>
+          <th scope="row"><code>{{ row.parameter_name }}</code></th>
+          <td><span class="chip chip-evidence">{{ row.evidence_status }}</span></td>
+          <td class="mono">{{ row.uncertainty_range }}</td>
+          <td class="num mono">{{ row.swing_sar | sar }} SAR</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if calibration_priority.run_id %}
+  <p class="hint">Sensitivity ranking:
+    <a class="mono" href="/run/{{ calibration_priority.run_id }}">{{ calibration_priority.run_id }}</a>.
+    No values were recomputed on this page.</p>
+  {% endif %}
+  {% elif calibration_priority.missing_sensitivity %}
+  <p class="calibration-nudge">No same-study one-way sensitivity run exists yet. Launch one to
+    rank the low-confidence inputs by stored outcome swing.</p>
+  {% else %}
+  <p class="calibration-nudge">The newest same-study one-way run did not sweep any parameter in
+    this recommendation’s stored weak-evidence list. Re-run the sweep with those inputs selected.</p>
+  {% endif %}
 </section>
 {% endif %}
 
@@ -821,6 +863,8 @@
   {% else %}
   <p class="empty">This directory contains no artifact files to display or download.</p>
   {% endif %}
+</section>
+
 </section>
 
 {% include "_artifact_drawer.html" %}

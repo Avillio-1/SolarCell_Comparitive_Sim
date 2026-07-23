@@ -42,7 +42,13 @@ solarclean = "solarclean.cli.main:app"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"solarclean.dashboard" = ["defaults/*.yaml"]
+"solarclean.dashboard" = [
+    "defaults/*.yaml",
+    "templates/*.html",
+    "static/*.css",
+    "static/*.js",
+    "static/fonts/*",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
