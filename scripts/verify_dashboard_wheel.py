@@ -33,7 +33,6 @@ def main() -> None:
                 "wheel",
                 ".",
                 "--no-deps",
-                "--no-build-isolation",
                 "--wheel-dir",
                 str(wheel_directory),
             ],
